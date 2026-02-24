@@ -71,6 +71,7 @@ function makeConfig(skipTriage = true): AutopilotConfig {
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
       planning_model: "opus",
+      max_retries: 3,
     },
     auditor: {
       schedule: "when_idle",
