@@ -4,23 +4,27 @@ import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { AppState } from "./state";
 
 // Mock modules BEFORE importing the module under test
-const mockRunClaude = mock((): Promise<ClaudeResult> =>
-  Promise.resolve({
-    timedOut: false,
-    error: undefined,
-    costUsd: 0.1,
-    durationMs: 1000,
-    numTurns: 3,
-    result: "",
-    sessionId: undefined,
-  }),
+const mockRunClaude = mock(
+  (): Promise<ClaudeResult> =>
+    Promise.resolve({
+      timedOut: false,
+      error: undefined,
+      costUsd: 0.1,
+      durationMs: 1000,
+      numTurns: 3,
+      result: "",
+      sessionId: undefined,
+    }),
 );
 const mockUpdateIssue = mock(
   (_issueId: string, _opts: { stateId?: string; comment?: string }) =>
     Promise.resolve(),
 );
 const mockGetReadyIssues = mock(
-  (_linearIds: LinearIds, _limit?: number): Promise<Array<{ id: string; identifier: string; title: string }>> =>
+  (
+    _linearIds: LinearIds,
+    _limit?: number,
+  ): Promise<Array<{ id: string; identifier: string; title: string }>> =>
     Promise.resolve([]),
 );
 const mockBuildPrompt = mock(() => "mock-executor-prompt");
@@ -450,15 +454,23 @@ describe("fillSlots", () => {
 
     // Start executing activeIssue without awaiting — this synchronously adds
     // activeIssue.id to activeIssueIds before the first await
-    const hangingRunClaude = new Promise<typeof mockRunClaude extends (...args: any[]) => Promise<infer R> ? R : never>((resolve) => {
-      setTimeout(() => resolve({
-        timedOut: false,
-        error: undefined,
-        costUsd: 0,
-        durationMs: 0,
-        numTurns: 0,
-        result: "",
-      }), 10000);
+    const hangingRunClaude = new Promise<
+      typeof mockRunClaude extends (...args: any[]) => Promise<infer R>
+        ? R
+        : never
+    >((resolve) => {
+      setTimeout(
+        () =>
+          resolve({
+            timedOut: false,
+            error: undefined,
+            costUsd: 0,
+            durationMs: 0,
+            numTurns: 0,
+            result: "",
+          }),
+        10000,
+      );
     });
     mockRunClaude.mockReturnValue(hangingRunClaude as any);
 

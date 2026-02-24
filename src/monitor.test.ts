@@ -4,16 +4,17 @@ import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { AppState } from "./state";
 
 // Mock modules BEFORE importing the module under test
-const mockRunClaude = mock((): Promise<ClaudeResult> =>
-  Promise.resolve({
-    timedOut: false,
-    error: undefined,
-    costUsd: 0.05,
-    durationMs: 500,
-    numTurns: 2,
-    result: "",
-    sessionId: undefined,
-  }),
+const mockRunClaude = mock(
+  (): Promise<ClaudeResult> =>
+    Promise.resolve({
+      timedOut: false,
+      error: undefined,
+      costUsd: 0.05,
+      durationMs: 500,
+      numTurns: 2,
+      result: "",
+      sessionId: undefined,
+    }),
 );
 const mockGetPRStatus = mock(() =>
   Promise.resolve({
@@ -52,7 +53,9 @@ function makeIssue(
   id: string;
   identifier: string;
   title: string;
-  attachments: () => Promise<{ nodes: Array<{ sourceType: string; url: string }> }>;
+  attachments: () => Promise<{
+    nodes: Array<{ sourceType: string; url: string }>;
+  }>;
 } {
   return {
     id,
@@ -333,7 +336,13 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
   test("skips issues that already have an active fixer", async () => {
     // Make runClaude hang so activeFixerIssues isn't cleaned up between calls
     let resolveFirst: () => void;
-    const hanging = new Promise<ReturnType<typeof mockRunClaude extends (...a: any[]) => Promise<infer R> ? (...a: any[]) => Promise<R> : never>>((resolve) => {
+    const hanging = new Promise<
+      ReturnType<
+        typeof mockRunClaude extends (...a: any[]) => Promise<infer R>
+          ? (...a: any[]) => Promise<R>
+          : never
+      >
+    >((resolve) => {
       resolveFirst = () =>
         resolve({
           timedOut: false,
@@ -379,7 +388,10 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
       result: "",
     });
 
-    const failingIssue = makeIssue("throw-pr", "https://github.com/o/r/pull/80");
+    const failingIssue = makeIssue(
+      "throw-pr",
+      "https://github.com/o/r/pull/80",
+    );
     const goodIssue = makeIssue("good-pr", "https://github.com/o/r/pull/81");
     mockIssuesQuery.mockResolvedValue({
       nodes: [failingIssue, goodIssue],
