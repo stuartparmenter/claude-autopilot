@@ -23,6 +23,13 @@ export function getGitHubClient(): Octokit {
 }
 
 /**
+ * Reset the cached client. Used in tests to prevent singleton leakage.
+ */
+export function resetClient(): void {
+  _client = null;
+}
+
+/**
  * Detect owner/repo from git remote origin, with config override.
  * Supports both HTTPS and SSH remote URLs.
  */

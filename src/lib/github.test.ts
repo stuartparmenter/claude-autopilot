@@ -25,7 +25,7 @@ const mockChecksListForRef = mock(() =>
   Promise.resolve({ data: checkRunsData }),
 );
 
-// Mock octokit BEFORE importing github.ts so the Octokit constructor is replaced
+// Mock octokit so github.ts uses our mock Octokit client.
 mock.module("octokit", () => ({
   Octokit: class MockOctokit {
     rest = {
@@ -36,7 +36,7 @@ mock.module("octokit", () => ({
   },
 }));
 
-import { detectRepo, getPRStatus } from "./github";
+import { detectRepo, getPRStatus, resetClient } from "./github";
 
 // ---------------------------------------------------------------------------
 // detectRepo — config override path (no Bun.spawnSync needed)
@@ -151,8 +151,9 @@ describe("detectRepo — git remote parsing", () => {
 // ---------------------------------------------------------------------------
 
 describe("getPRStatus", () => {
-  // Reset mutable mock state before each test to a safe "success/no-issues" baseline
+  // Reset mutable mock state and client singleton before each test
   beforeEach(() => {
+    resetClient();
     prData = {
       merged: false,
       mergeable: true,

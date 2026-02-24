@@ -1,9 +1,15 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ClaudeResult } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { AppState } from "./state";
 
-// Mock modules BEFORE importing the module under test
+// Set a fake token so getGitHubClient() doesn't throw during tests
+process.env.GITHUB_TOKEN = "test-token-monitor";
+
+// ---------------------------------------------------------------------------
+// Mock functions — created once, re-wired per test via beforeEach
+// ---------------------------------------------------------------------------
+
 const mockRunClaude = mock(
   (): Promise<ClaudeResult> =>
     Promise.resolve({
@@ -17,31 +23,64 @@ const mockRunClaude = mock(
       sessionId: undefined,
     }),
 );
-const mockGetPRStatus = mock(() =>
-  Promise.resolve({
-    merged: false,
-    mergeable: null as boolean | null,
-    ciStatus: "success" as "success" | "failure" | "pending",
-    ciDetails: "",
-    branch: "feature/test",
-  }),
-);
 const mockIssuesQuery = mock(() =>
   Promise.resolve({ nodes: [] as ReturnType<typeof makeIssue>[] }),
 );
-const mockBuildPrompt = mock(() => "mock-fixer-prompt");
 
-mock.module("./lib/claude", () => ({ runClaude: mockRunClaude }));
-mock.module("./lib/github", () => ({ getPRStatus: mockGetPRStatus }));
-mock.module("./lib/linear", () => ({
-  getLinearClient: () => ({ issues: mockIssuesQuery }),
-}));
-mock.module("./lib/prompt", () => ({ buildPrompt: mockBuildPrompt }));
+// Mutable state that controls what the mock Octokit returns.
+// By mutating these objects before each test we avoid mock.module leakage
+// across test files — we mock the npm "octokit" package (not ./lib/github)
+// so github.test.ts is unaffected.
+let prData: Record<string, unknown> = {
+  merged: false,
+  mergeable: null,
+  head: { ref: "feature/test", sha: "abc123" },
+};
+let checkRunsData: Record<string, unknown> = { check_runs: [] };
 
+const mockPullsGet = mock(() => Promise.resolve({ data: prData }));
+const mockChecksListForRef = mock(() =>
+  Promise.resolve({ data: checkRunsData }),
+);
+
+import { resetClient } from "./lib/github";
 import { checkOpenPRs } from "./monitor";
 
-// Restore all module mocks after this file so other test files are not affected
-afterAll(() => mock.restore());
+// Wire module mocks before each test and restore afterwards to prevent
+// leaking into other test files in Bun's single-process test runner.
+// NOTE: We mock "octokit" (npm package) instead of "./lib/github" so that
+// github.test.ts can test the real getPRStatus without interference.
+// We intentionally do NOT mock ./lib/prompt — the real buildPrompt reads
+// from prompts/ on disk and doesn't leak across test files.
+beforeEach(() => {
+  resetClient();
+  mock.module("./lib/claude", () => ({
+    runClaude: mockRunClaude,
+    buildMcpServers: () => ({}),
+  }));
+  mock.module("./lib/linear", () => ({
+    getLinearClient: () => ({ issues: mockIssuesQuery }),
+  }));
+  mock.module("octokit", () => ({
+    Octokit: class MockOctokit {
+      rest = {
+        pulls: { get: mockPullsGet },
+        checks: { listForRef: mockChecksListForRef },
+      };
+    },
+  }));
+
+  // Reset mutable mock state to a safe baseline
+  prData = {
+    merged: false,
+    mergeable: null,
+    head: { ref: "feature/test", sha: "abc123" },
+  };
+  checkRunsData = { check_runs: [] };
+  mockPullsGet.mockImplementation(() => Promise.resolve({ data: prData }));
+});
+
+afterEach(() => mock.restore());
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,13 +195,6 @@ describe("checkOpenPRs — basic cases", () => {
       numTurns: 2,
       result: "",
     });
-    mockGetPRStatus.mockResolvedValue({
-      merged: false,
-      mergeable: null,
-      ciStatus: "success",
-      ciDetails: "",
-      branch: "feature/test",
-    });
     mockIssuesQuery.mockResolvedValue({ nodes: [] });
   });
 
@@ -175,7 +207,7 @@ describe("checkOpenPRs — basic cases", () => {
   });
 
   test("skips issues with no GitHub attachment", async () => {
-    const issue = makeIssue("no-attach"); // no prUrl → empty attachments
+    const issue = makeIssue("no-attach");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
 
     const result = await checkOpenPRs(makeOpts(state));
@@ -190,7 +222,6 @@ describe("checkOpenPRs — basic cases", () => {
     );
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
 
-    // Should not throw — just skips the issue
     const result = await checkOpenPRs(makeOpts(state));
 
     expect(result).toHaveLength(0);
@@ -199,18 +230,21 @@ describe("checkOpenPRs — basic cases", () => {
   test("parses PR number from URL and spawns fixer for ciStatus:failure", async () => {
     const issue = makeIssue("ci-fail", "https://github.com/o/r/pull/42");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
+    // Configure octokit mock: all checks completed with failure
+    prData = {
       merged: false,
       mergeable: null,
-      ciStatus: "failure",
-      ciDetails: "test: failure",
-      branch: "feature/ci-fail",
-    });
+      head: { ref: "feature/ci-fail", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
 
     const result = await checkOpenPRs(makeOpts(state));
 
     expect(result).toHaveLength(1);
-    // Await to let fixer complete and clean up activeFixerIssues
     await Promise.all(result);
   });
 });
@@ -235,13 +269,17 @@ describe("checkOpenPRs — fixer spawn conditions", () => {
   test("spawns fixer when mergeable:false (merge conflict)", async () => {
     const issue = makeIssue("conflict", "https://github.com/o/r/pull/10");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
+    // CI passes but PR has merge conflicts
+    prData = {
       merged: false,
       mergeable: false,
-      ciStatus: "success",
-      ciDetails: "",
-      branch: "feature/conflict",
-    });
+      head: { ref: "feature/conflict", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "success", name: "checks" },
+      ],
+    };
 
     const result = await checkOpenPRs(makeOpts(state));
 
@@ -252,13 +290,17 @@ describe("checkOpenPRs — fixer spawn conditions", () => {
   test("does NOT spawn fixer when ciStatus:success and mergeable:null", async () => {
     const issue = makeIssue("ok-pr", "https://github.com/o/r/pull/20");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
+    // CI passes, mergeable not yet computed
+    prData = {
       merged: false,
       mergeable: null,
-      ciStatus: "success",
-      ciDetails: "",
-      branch: "feature/ok",
-    });
+      head: { ref: "feature/ok", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "success", name: "checks" },
+      ],
+    };
 
     const result = await checkOpenPRs(makeOpts(state));
 
@@ -268,13 +310,13 @@ describe("checkOpenPRs — fixer spawn conditions", () => {
   test("does NOT spawn fixer when ciStatus:pending", async () => {
     const issue = makeIssue("pending-pr", "https://github.com/o/r/pull/30");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
+    // No checks yet → pending
+    prData = {
       merged: false,
       mergeable: null,
-      ciStatus: "pending",
-      ciDetails: "",
-      branch: "feature/pending",
-    });
+      head: { ref: "feature/pending", sha: "abc123" },
+    };
+    checkRunsData = { check_runs: [] };
 
     const result = await checkOpenPRs(makeOpts(state));
 
@@ -284,13 +326,17 @@ describe("checkOpenPRs — fixer spawn conditions", () => {
   test("does NOT spawn fixer when ciStatus:success and mergeable:true", async () => {
     const issue = makeIssue("clean-pr", "https://github.com/o/r/pull/50");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
+    // Everything green
+    prData = {
       merged: false,
       mergeable: true,
-      ciStatus: "success",
-      ciDetails: "",
-      branch: "feature/clean",
-    });
+      head: { ref: "feature/clean", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "success", name: "checks" },
+      ],
+    };
 
     const result = await checkOpenPRs(makeOpts(state));
 
@@ -312,37 +358,37 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
       numTurns: 2,
       result: "",
     });
+    // Default: CI failure so fixers get spawned
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/slot", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
   });
 
   test("stops spawning fixers when slot limit reached", async () => {
-    // 3 parallel slots, 2 running → 1 slot left
     state.addAgent("running-1", "ENG-a", "A");
     state.addAgent("running-2", "ENG-b", "B");
 
-    // 3 issues all need fixing
     const issues = [
       makeIssue("slot-1", "https://github.com/o/r/pull/61"),
       makeIssue("slot-2", "https://github.com/o/r/pull/62"),
       makeIssue("slot-3", "https://github.com/o/r/pull/63"),
     ];
     mockIssuesQuery.mockResolvedValue({ nodes: issues });
-    mockGetPRStatus.mockResolvedValue({
-      merged: false,
-      mergeable: null,
-      ciStatus: "failure",
-      ciDetails: "fail",
-      branch: "feature/slot",
-    });
 
     const result = await checkOpenPRs(makeOpts(state, makeConfig(3)));
 
-    // Only 1 slot was available
     expect(result).toHaveLength(1);
     await Promise.all(result);
   });
 
   test("skips issues that already have an active fixer", async () => {
-    // Make runClaude hang so activeFixerIssues isn't cleaned up between calls
     let resolveFirst: () => void;
     const hanging = new Promise<
       ReturnType<
@@ -366,23 +412,13 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
 
     const issue = makeIssue("dedup-issue", "https://github.com/o/r/pull/71");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
-    mockGetPRStatus.mockResolvedValue({
-      merged: false,
-      mergeable: null,
-      ciStatus: "failure",
-      ciDetails: "fail",
-      branch: "feature/dedup",
-    });
 
-    // First call: starts a fixer, adds issue.id to activeFixerIssues
     const firstResult = await checkOpenPRs(makeOpts(state));
     expect(firstResult).toHaveLength(1);
 
-    // Second call with same issue: should be skipped (already in activeFixerIssues)
     const secondResult = await checkOpenPRs(makeOpts(state));
     expect(secondResult).toHaveLength(0);
 
-    // Cleanup
     resolveFirst!();
     await Promise.all(firstResult);
   });
@@ -407,22 +443,16 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
       nodes: [failingIssue, goodIssue],
     });
 
-    let callCount = 0;
-    mockGetPRStatus.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
+    // First getPRStatus call throws (via pulls.get), second succeeds
+    let pullsCallCount = 0;
+    mockPullsGet.mockImplementation(() => {
+      pullsCallCount++;
+      if (pullsCallCount === 1) {
         return Promise.reject(new Error("GitHub API error"));
       }
-      return Promise.resolve({
-        merged: false,
-        mergeable: null,
-        ciStatus: "failure",
-        ciDetails: "fail",
-        branch: "feature/good",
-      });
+      return Promise.resolve({ data: prData });
     });
 
-    // Should not throw, should process the second issue despite first throwing
     const result = await checkOpenPRs(makeOpts(state));
 
     expect(result).toHaveLength(1);

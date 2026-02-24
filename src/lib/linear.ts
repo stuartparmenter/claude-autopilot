@@ -32,6 +32,13 @@ export function getLinearClient(): LinearClient {
 }
 
 /**
+ * Reset the cached client. Used in tests to prevent singleton leakage.
+ */
+export function resetClient(): void {
+  _client = null;
+}
+
+/**
  * Find a team by its key (e.g., "ENG").
  */
 export async function findTeam(teamKey: string): Promise<Team> {
