@@ -163,8 +163,11 @@ while (true) {
       running.add(tracked);
     }
 
-    // Check auditor
-    if (!state.getAuditorStatus().running) {
+    // Check auditor (counts against parallel limit)
+    if (
+      !state.getAuditorStatus().running &&
+      state.getRunningCount() < config.executor.parallel
+    ) {
       const shouldAudit = await shouldRunAudit({
         config,
         linearIds,
