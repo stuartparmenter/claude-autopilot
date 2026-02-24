@@ -1,5 +1,13 @@
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import * as fs from "node:fs";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { createWorktree, removeWorktree } from "./worktree";
 
@@ -41,7 +49,9 @@ beforeEach(() => {
   existsSpy = spyOn(fs, "existsSync").mockReturnValue(false);
   rmSyncSpy = spyOn(fs, "rmSync").mockReturnValue(undefined as unknown as void);
   spawnSpy = spyOn(Bun, "spawnSync").mockReturnValue(spawnOk());
-  sleepSpy = spyOn(Bun, "sleepSync").mockReturnValue(undefined as unknown as void);
+  sleepSpy = spyOn(Bun, "sleepSync").mockReturnValue(
+    undefined as unknown as void,
+  );
 });
 
 afterEach(() => mock.restore());
@@ -85,7 +95,10 @@ describe("createWorktree — executor mode", () => {
     createWorktree(PROJECT, "ENG-5");
 
     const branchDelete = spawnSpy.mock.calls.find(
-      (c) => c[0][1] === "branch" && c[0][2] === "-D" && c[0][3] === "worktree-ENG-5",
+      (c) =>
+        c[0][1] === "branch" &&
+        c[0][2] === "-D" &&
+        c[0][3] === "worktree-ENG-5",
     );
     expect(branchDelete).toBeDefined();
   });
@@ -94,16 +107,21 @@ describe("createWorktree — executor mode", () => {
     // existsSync always returns true — directory never disappears.
     existsSpy.mockReturnValue(true);
 
-    expect(() => createWorktree(PROJECT, "ENG-3")).toThrow("Cannot create worktree");
+    expect(() => createWorktree(PROJECT, "ENG-3")).toThrow(
+      "Cannot create worktree",
+    );
   });
 
   test("worktree add failure throws 'Failed to create worktree'", () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "worktree" && cmds[2] === "add") return spawnFail("branch in use");
+      if (cmds[1] === "worktree" && cmds[2] === "add")
+        return spawnFail("branch in use");
       return spawnOk();
     }) as any);
 
-    expect(() => createWorktree(PROJECT, "ENG-4")).toThrow("Failed to create worktree 'ENG-4'");
+    expect(() => createWorktree(PROJECT, "ENG-4")).toThrow(
+      "Failed to create worktree 'ENG-4'",
+    );
   });
 });
 
@@ -124,7 +142,8 @@ describe("createWorktree — fixer mode", () => {
     createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
 
     const addCall = spawnSpy.mock.calls.find(
-      (c) => c[0][1] === "worktree" && c[0][2] === "add" && !c[0].includes("-b"),
+      (c) =>
+        c[0][1] === "worktree" && c[0][2] === "add" && !c[0].includes("-b"),
     );
     expect(addCall).toBeDefined();
     expect(addCall![0]).toContain("feature/pr-branch");
@@ -144,7 +163,8 @@ describe("createWorktree — fixer mode", () => {
 
   test("worktree add failure throws", () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "worktree" && cmds[2] === "add") return spawnFail("no such branch");
+      if (cmds[1] === "worktree" && cmds[2] === "add")
+        return spawnFail("no such branch");
       return spawnOk();
     }) as any);
 
@@ -168,7 +188,10 @@ describe("removeWorktree", () => {
     expect(removeCall).toBeDefined();
 
     const branchDelete = spawnSpy.mock.calls.find(
-      (c) => c[0][1] === "branch" && c[0][2] === "-D" && c[0][3] === "worktree-ENG-1",
+      (c) =>
+        c[0][1] === "branch" &&
+        c[0][2] === "-D" &&
+        c[0][3] === "worktree-ENG-1",
     );
     expect(branchDelete).toBeDefined();
   });
@@ -184,7 +207,8 @@ describe("removeWorktree", () => {
 
   test("branch deletion failure is non-fatal (does not throw)", () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "branch" && cmds[2] === "-D") return spawnFail("branch not found");
+      if (cmds[1] === "branch" && cmds[2] === "-D")
+        return spawnFail("branch not found");
       return spawnOk();
     }) as any);
 
@@ -225,7 +249,8 @@ describe("forceRemoveDir retry logic", () => {
     // All git worktree remove attempts fail; directory never disappears.
     existsSpy.mockReturnValue(true);
     spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "worktree" && cmds[2] === "remove") return spawnFail("locked");
+      if (cmds[1] === "worktree" && cmds[2] === "remove")
+        return spawnFail("locked");
       return spawnOk();
     }) as any);
 
@@ -242,7 +267,8 @@ describe("forceRemoveDir retry logic", () => {
       throw new Error("permission denied");
     });
     spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "worktree" && cmds[2] === "remove") return spawnFail("locked");
+      if (cmds[1] === "worktree" && cmds[2] === "remove")
+        return spawnFail("locked");
       return spawnOk();
     }) as any);
 
