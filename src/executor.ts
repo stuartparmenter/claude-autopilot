@@ -48,6 +48,7 @@ export async function executeIssue(opts: {
     const result = await runClaude({
       prompt,
       cwd: projectPath,
+      label: issue.identifier,
       worktree,
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,

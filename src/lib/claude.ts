@@ -94,6 +94,7 @@ export function buildMcpServers(): Record<string, unknown> {
 export async function runClaude(opts: {
   prompt: string;
   cwd: string;
+  label?: string;
   worktree?: string;
   worktreeBranch?: string;
   timeoutMs?: number;
@@ -103,7 +104,8 @@ export async function runClaude(opts: {
   parentSignal?: AbortSignal;
   onActivity?: (entry: ActivityEntry) => void;
 }): Promise<ClaudeResult> {
-  info(`Running Claude Code agent (cwd: ${opts.cwd})...`);
+  const tag = opts.label ? `[${opts.label}] ` : "";
+  info(`${tag}Running Claude Code agent (cwd: ${opts.cwd})...`);
 
   const controller = new AbortController();
   let timedOut = false;
@@ -114,7 +116,9 @@ export async function runClaude(opts: {
     timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
-      warn(`Claude Code timed out after ${Math.round(timeoutMs / 1000)}s`);
+      warn(
+        `${tag}Claude Code timed out after ${Math.round(timeoutMs / 1000)}s`,
+      );
     }, timeoutMs);
   }
 
@@ -155,7 +159,7 @@ export async function runClaude(opts: {
       settingSources: ["project"],
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      stderr: (data: string) => warn(`[stderr] ${data.trimEnd()}`),
+      stderr: (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
     };
@@ -193,7 +197,7 @@ export async function runClaude(opts: {
         if (Date.now() - lastActivityAt > inactivityMs) {
           inactivityTimedOut = true;
           warn(
-            `Agent inactive for ${Math.round(inactivityMs / 1000)}s, aborting`,
+            `${tag}Agent inactive for ${Math.round(inactivityMs / 1000)}s, aborting`,
           );
           controller.abort();
         }
@@ -284,7 +288,7 @@ export async function runClaude(opts: {
     ]);
 
     if (outcome === "hard_kill") {
-      warn("Hard kill: SDK loop did not exit after abort, forcing close");
+      warn(`${tag}Hard kill: SDK loop did not exit after abort, forcing close`);
       try {
         q.close();
       } catch {
@@ -307,7 +311,7 @@ export async function runClaude(opts: {
     } else {
       const errMsg = e instanceof Error ? e.message : String(e);
       result.error = errMsg;
-      warn(`Claude Code error: ${errMsg}`);
+      warn(`${tag}Claude Code error: ${errMsg}`);
       emit?.({
         timestamp: Date.now(),
         type: "error",
@@ -325,7 +329,7 @@ export async function runClaude(opts: {
       try {
         removeWorktree(opts.cwd, worktreeName, { keepBranch });
       } catch (e) {
-        warn(`Worktree cleanup failed for '${worktreeName}': ${e}`);
+        warn(`${tag}Worktree cleanup failed for '${worktreeName}': ${e}`);
       }
     }
   }
@@ -337,7 +341,7 @@ export async function runClaude(opts: {
 
   if (!result.timedOut && !result.error) {
     info(
-      `Claude Code finished` +
+      `${tag}Claude Code finished` +
         (result.durationMs
           ? ` in ${Math.round(result.durationMs / 1000)}s`
           : "") +

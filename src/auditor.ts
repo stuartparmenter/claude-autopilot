@@ -78,6 +78,7 @@ export async function runAudit(opts: {
   const result = await runClaude({
     prompt,
     cwd: projectPath,
+    label: "auditor",
     timeoutMs: AUDITOR_TIMEOUT_MS,
     model: config.executor.planning_model,
     mcpServers: buildMcpServers(),
