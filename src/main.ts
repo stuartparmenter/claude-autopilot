@@ -125,7 +125,14 @@ function interruptibleSleep(ms: number, signal: AbortSignal): Promise<void> {
       return;
     }
     const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
   });
 }
 
@@ -208,13 +215,18 @@ while (!shuttingDown) {
           linearIds,
           state,
           shutdownSignal: shutdownController.signal,
-        }).finally(() => { auditorPromise = null; });
+        }).finally(() => {
+          auditorPromise = null;
+        });
       }
     }
 
     // Wait for any agent to finish or poll interval to elapse
     if (running.size > 0) {
-      const pollTimer = interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal).then(() => "poll" as const);
+      const pollTimer = interruptibleSleep(
+        POLL_INTERVAL_MS,
+        shutdownController.signal,
+      ).then(() => "poll" as const);
       await Promise.race([pollTimer, ...running]);
     } else {
       info(
@@ -236,7 +248,9 @@ const drainablePromises: Promise<unknown>[] = [...running];
 if (auditorPromise) drainablePromises.push(auditorPromise);
 
 if (drainablePromises.length > 0) {
-  info(`Waiting for ${drainablePromises.length} agent(s) to finish (up to 60s)...`);
+  info(
+    `Waiting for ${drainablePromises.length} agent(s) to finish (up to 60s)...`,
+  );
   await Promise.race([
     Promise.allSettled(drainablePromises),
     Bun.sleep(60_000),
