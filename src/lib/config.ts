@@ -55,17 +55,11 @@ export interface ProjectConfig {
   name: string;
 }
 
-export interface NotificationsConfig {
-  slack_webhook: string;
-  notify_on: string[];
-}
-
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
   project: ProjectConfig;
-  notifications: NotificationsConfig;
 }
 
 const DEFAULTS: AutopilotConfig = {
@@ -108,15 +102,6 @@ const DEFAULTS: AutopilotConfig = {
   },
   project: {
     name: "",
-  },
-  notifications: {
-    slack_webhook: "",
-    notify_on: [
-      "executor_complete",
-      "executor_blocked",
-      "auditor_complete",
-      "error",
-    ],
   },
 };
 
