@@ -228,5 +228,5 @@ After filing all issues, perform a quality review of the batch:
 2. **Be concrete**. File paths, line numbers, function names, specific error messages. Never hand-wave.
 3. **Machine-verifiable or bust**. If you can't write an acceptance criterion that a test can check, the issue isn't ready.
 4. **Conservative filing**. When in doubt, don't file. A missing issue costs nothing; a bad issue wastes executor cycles.
-5. **Respect the human**. Issues go to Triage. The human decides what's worth doing. Add `needs-input` label for anything requiring design decisions.
-6. **Search before filing**. Duplicate issues create confusion. Always check Linear first.
+5. **Search before filing**. Duplicate issues create confusion. Always check Linear first.
+6. **Ignore formatting and style**. Do NOT file issues about line endings (CRLF/LF), whitespace, formatting, or code style that a linter/formatter handles. These are noise, not improvements.

@@ -5,6 +5,9 @@ import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
 
+// Track issue IDs currently being worked on to prevent duplicates
+const activeIssueIds = new Set<string>();
+
 /**
  * Execute a single Linear issue using a Claude agent.
  * Returns a promise that resolves when the agent finishes.
@@ -22,6 +25,10 @@ export async function executeIssue(opts: {
 
   info(`Executing: ${issue.identifier} - ${issue.title}`);
   state.addAgent(agentId, issue.identifier, issue.title);
+  activeIssueIds.add(issue.id);
+
+  // Move to In Progress immediately so it's not picked up again
+  await updateIssue(issue.id, { stateId: linearIds.states.in_progress });
 
   const prompt = buildPrompt("executor", {
     ISSUE_ID: issue.identifier,
@@ -33,61 +40,65 @@ export async function executeIssue(opts: {
   const worktree = `autopilot/${issue.identifier}`;
   const timeoutMs = config.executor.timeout_minutes * 60 * 1000;
 
-  const result = await runClaude({
-    prompt,
-    cwd: projectPath,
-    worktree,
-    timeoutMs,
-    model: config.executor.model,
-    mcpServers: {
-      linear: {
-        type: "http",
-        url: "https://mcp.linear.app/mcp",
-        headers: {
-          Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+  try {
+    const result = await runClaude({
+      prompt,
+      cwd: projectPath,
+      worktree,
+      timeoutMs,
+      model: config.executor.model,
+      mcpServers: {
+        linear: {
+          type: "http",
+          url: "https://mcp.linear.app/mcp",
+          headers: {
+            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+          },
         },
       },
-    },
-    parentSignal: opts.shutdownSignal,
-    onActivity: (entry) => state.addActivity(agentId, entry),
-  });
-
-  if (result.timedOut) {
-    warn(
-      `${issue.identifier} timed out after ${config.executor.timeout_minutes} minutes`,
-    );
-    await updateIssue(issue.id, {
-      stateId: linearIds.states.blocked,
-      comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`${worktree}\` branch for any progress.`,
+      parentSignal: opts.shutdownSignal,
+      onActivity: (entry) => state.addActivity(agentId, entry),
     });
-    state.completeAgent(agentId, "timed_out", {
+
+    if (result.timedOut) {
+      warn(
+        `${issue.identifier} timed out after ${config.executor.timeout_minutes} minutes`,
+      );
+      await updateIssue(issue.id, {
+        stateId: linearIds.states.blocked,
+        comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`${worktree}\` branch for any progress.`,
+      });
+      state.completeAgent(agentId, "timed_out", {
+        costUsd: result.costUsd,
+        durationMs: result.durationMs,
+        numTurns: result.numTurns,
+        error: "Timed out",
+      });
+      return false;
+    }
+
+    if (result.error) {
+      warn(`${issue.identifier} failed: ${result.error}`);
+      state.completeAgent(agentId, "failed", {
+        costUsd: result.costUsd,
+        durationMs: result.durationMs,
+        numTurns: result.numTurns,
+        error: result.error,
+      });
+      return false;
+    }
+
+    ok(`${issue.identifier} completed successfully`);
+    if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
+    state.completeAgent(agentId, "completed", {
       costUsd: result.costUsd,
       durationMs: result.durationMs,
       numTurns: result.numTurns,
-      error: "Timed out",
     });
-    return false;
+    return true;
+  } finally {
+    activeIssueIds.delete(issue.id);
   }
-
-  if (result.error) {
-    warn(`${issue.identifier} failed: ${result.error}`);
-    state.completeAgent(agentId, "failed", {
-      costUsd: result.costUsd,
-      durationMs: result.durationMs,
-      numTurns: result.numTurns,
-      error: result.error,
-    });
-    return false;
-  }
-
-  ok(`${issue.identifier} completed successfully`);
-  if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  state.completeAgent(agentId, "completed", {
-    costUsd: result.costUsd,
-    durationMs: result.durationMs,
-    numTurns: result.numTurns,
-  });
-  return true;
 }
 
 /**
@@ -112,7 +123,8 @@ export async function fillSlots(opts: {
 
   info(`Querying Linear for ready issues (${available} slots available)...`);
 
-  const issues = await getReadyIssues(linearIds, available);
+  const allReady = await getReadyIssues(linearIds, available + activeIssueIds.size);
+  const issues = allReady.filter((i) => !activeIssueIds.has(i.id));
 
   state.updateQueue(issues.length, running);
 
