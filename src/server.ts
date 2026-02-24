@@ -36,7 +36,7 @@ export function createApp(state: AppState): Hono {
             />
             <title>claude-autopilot</title>
             <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-            <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+            <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
             <style>${raw(DASHBOARD_CSS)}</style>
           </head>
           <body>

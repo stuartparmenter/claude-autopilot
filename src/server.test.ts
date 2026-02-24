@@ -72,6 +72,13 @@ describe("routes", () => {
     expect(body).toContain("claude-autopilot");
   });
 
+  test("GET / includes htmx script tag with SRI integrity hash and crossorigin", async () => {
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain('integrity="sha384-');
+    expect(body).toContain('crossorigin="anonymous"');
+  });
+
   test("GET /api/status returns JSON with expected keys", async () => {
     const res = await app.request("/api/status");
     expect(res.status).toBe(200);
