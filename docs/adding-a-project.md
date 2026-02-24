@@ -129,14 +129,16 @@ Requirements for these commands:
 
 ### Linear state mapping
 
-If your Linear workflow uses non-default state names, map them here:
+The autopilot requires the **Triage** issue status to be enabled in Linear. It is off by default on new teams. Enable it under Settings → [Your Team] → Issue statuses & automations → Triage.
+
+Map the state names to match your Linear workflow:
 
 ```yaml
 linear:
   team: "ENG"
-  project: "my-project"        # Optional: Linear project name for filtering
+  project: "my-project"
   states:
-    triage: "Triage"           # Where auditor files new issues
+    triage: "Triage"           # Where auditor files new issues (enable this in Linear)
     ready: "Todo"              # Where executor picks up issues
     in_progress: "In Progress" # Set by executor while working
     done: "Done"               # Set by executor on success
