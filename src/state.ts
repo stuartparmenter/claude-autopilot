@@ -67,6 +67,7 @@ export class AppState {
   };
   private auditor: AuditorStatus = { running: false };
   private paused = false;
+  private issueFailureCount = new Map<string, number>();
   readonly startedAt = Date.now();
 
   addAgent(id: string, issueId: string, issueTitle: string): void {
@@ -160,6 +161,16 @@ export class AppState {
   togglePause(): boolean {
     this.paused = !this.paused;
     return this.paused;
+  }
+
+  incrementIssueFailures(issueId: string): number {
+    const count = (this.issueFailureCount.get(issueId) ?? 0) + 1;
+    this.issueFailureCount.set(issueId, count);
+    return count;
+  }
+
+  getIssueFailureCount(issueId: string): number {
+    return this.issueFailureCount.get(issueId) ?? 0;
   }
 
   toJSON(): AppStateSnapshot {
