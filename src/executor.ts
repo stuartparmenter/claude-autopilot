@@ -35,6 +35,9 @@ export async function executeIssue(opts: {
     IN_REVIEW_STATE: config.linear.states.in_review,
     BLOCKED_STATE: config.linear.states.blocked,
     PROJECT_NAME: config.project.name,
+    AUTOMERGE_INSTRUCTION: config.github.automerge
+      ? "Enable auto-merge on the PR using the GitHub MCP. Do not specify a merge method — the repository's default merge strategy will be used. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+      : "Skip — auto-merge is not enabled for this project.",
   });
 
   const worktree = issue.identifier;
