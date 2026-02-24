@@ -1,6 +1,6 @@
 import { runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { getReadyIssues, updateIssue } from "./lib/linear";
+import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
@@ -21,6 +21,7 @@ export async function executeIssue(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const { issue, config, projectPath, linearIds, state } = opts;
+  validateIdentifier(issue.identifier);
   const agentId = `exec-${issue.identifier}-${Date.now()}`;
 
   info(`Executing: ${issue.identifier} - ${issue.title}`);
