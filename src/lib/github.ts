@@ -1,4 +1,5 @@
 import { Octokit } from "octokit";
+import { withRetry } from "./retry";
 
 let _client: Octokit | null = null;
 
@@ -82,6 +83,7 @@ export interface PRStatus {
  * Get the merge and CI status of a PR.
  * Combines both legacy Status API and Checks API for full coverage.
  * Treats mergeable === null as pending (GitHub computes async).
+ * Retries on transient errors (429, 5xx, network) up to 3 times.
  */
 export async function getPRStatus(
   owner: string,
@@ -90,11 +92,10 @@ export async function getPRStatus(
 ): Promise<PRStatus> {
   const octokit = getGitHubClient();
 
-  const { data: pr } = await octokit.rest.pulls.get({
-    owner,
-    repo,
-    pull_number: prNumber,
-  });
+  const { data: pr } = await withRetry(
+    () => octokit.rest.pulls.get({ owner, repo, pull_number: prNumber }),
+    `getPR #${prNumber}`,
+  );
 
   if (pr.merged) {
     return {
@@ -108,11 +109,10 @@ export async function getPRStatus(
 
   const sha = pr.head.sha;
 
-  const { data } = await octokit.rest.checks.listForRef({
-    owner,
-    repo,
-    ref: sha,
-  });
+  const { data } = await withRetry(
+    () => octokit.rest.checks.listForRef({ owner, repo, ref: sha }),
+    `getChecks #${prNumber}`,
+  );
   const checks = data.check_runs;
 
   // Only report failure once all checks have finished — otherwise a
