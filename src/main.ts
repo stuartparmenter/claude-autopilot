@@ -18,7 +18,7 @@ import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds } from "./lib/linear";
-import { error, header, info, ok, warn } from "./lib/logger";
+import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
 import { AppState } from "./state";
@@ -52,16 +52,16 @@ const projectPath = resolveProjectPath(projectArg);
 const config = loadConfig(projectPath);
 
 if (!config.linear.team)
-  error("linear.team is not set in .claude-autopilot.yml");
+  fatal("linear.team is not set in .claude-autopilot.yml");
 if (!config.linear.project)
-  error("linear.project is not set in .claude-autopilot.yml");
+  fatal("linear.project is not set in .claude-autopilot.yml");
 if (!config.project.name)
-  error("project.name is not set in .claude-autopilot.yml");
+  fatal("project.name is not set in .claude-autopilot.yml");
 
 // --- Check environment variables ---
 
 if (!process.env.LINEAR_API_KEY) {
-  error(
+  fatal(
     "LINEAR_API_KEY environment variable is not set.\n" +
       "Create one at: https://linear.app/settings/api\n" +
       "Then: export LINEAR_API_KEY=lin_api_...",
@@ -267,7 +267,7 @@ while (true) {
     const msg = e instanceof Error ? e.message : String(e);
 
     if (isFatalError(e)) {
-      error(`Fatal error — check your API key and config: ${msg}\n${stack}`);
+      fatal(`Fatal error — check your API key and config: ${msg}\n${stack}`);
     }
 
     consecutiveFailures++;
@@ -291,7 +291,7 @@ while (true) {
         `Loop error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${msg}`,
       );
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        error(
+        fatal(
           `${MAX_CONSECUTIVE_FAILURES} consecutive failures — exiting. Last error: ${msg}`,
         );
       }
