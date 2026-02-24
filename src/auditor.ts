@@ -85,11 +85,28 @@ export async function runAudit(opts: {
       cwd: projectPath,
       label: "auditor",
       timeoutMs: AUDITOR_TIMEOUT_MS,
+      inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.planning_model,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
+
+    if (result.inactivityTimedOut) {
+      warn(
+        `Auditor inactive for ${config.executor.inactivity_timeout_minutes} minutes, timed out`,
+      );
+      state.completeAgent(agentId, "timed_out", {
+        error: "Inactivity timeout",
+      });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "timed_out",
+      });
+      return;
+    }
 
     if (result.timedOut) {
       warn("Auditor timed out after 60 minutes");

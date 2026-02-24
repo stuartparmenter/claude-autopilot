@@ -4,6 +4,7 @@ import { getPRStatus } from "./lib/github";
 import { getLinearClient } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
+import { withRetry } from "./lib/retry";
 import type { AppState } from "./state";
 
 // Track issue IDs with active fixers to prevent duplicates
@@ -28,14 +29,18 @@ export async function checkOpenPRs(opts: {
 
   // Query Linear for issues in "In Review" state
   const client = getLinearClient();
-  const result = await client.issues({
-    filter: {
-      team: { id: { eq: linearIds.teamId } },
-      state: { id: { eq: linearIds.states.in_review } },
-      project: { id: { eq: linearIds.projectId } },
-    },
-    first: 50,
-  });
+  const result = await withRetry(
+    () =>
+      client.issues({
+        filter: {
+          team: { id: { eq: linearIds.teamId } },
+          state: { id: { eq: linearIds.states.in_review } },
+          project: { id: { eq: linearIds.projectId } },
+        },
+        first: 50,
+      }),
+    "checkOpenPRs",
+  );
 
   const issues = result.nodes;
   if (issues.length === 0) {
@@ -60,7 +65,10 @@ export async function checkOpenPRs(opts: {
     }
 
     // Find the PR number from the issue's GitHub attachment
-    const attachments = await issue.attachments();
+    const attachments = await withRetry(
+      () => issue.attachments(),
+      "checkOpenPRs",
+    );
     const ghAttachment = attachments.nodes.find(
       (a) => a.sourceType === "github",
     );

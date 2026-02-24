@@ -19,7 +19,7 @@ import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb } from "./lib/db";
 import { detectRepo } from "./lib/github";
-import { resolveLinearIds } from "./lib/linear";
+import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
@@ -143,7 +143,20 @@ if (config.persistence.enabled) {
   ok(`Persistence: ${dbPath}`);
 }
 
-const app = createApp(state);
+const app = createApp(state, {
+  triggerAudit: () => {
+    runAudit({
+      config,
+      projectPath,
+      linearIds,
+      state,
+      shutdownSignal: shutdownController.signal,
+    });
+  },
+  retryIssue: async (linearIssueId: string) => {
+    await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+  },
+});
 
 const isLocalhost =
   host === "127.0.0.1" || host === "localhost" || host === "::1";
