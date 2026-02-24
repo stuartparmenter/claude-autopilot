@@ -425,6 +425,49 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
     await Promise.all(firstResult);
   });
 
+  test("retries client.issues() on transient 503 error", async () => {
+    let callCount = 0;
+    mockIssuesQuery.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.reject(
+          Object.assign(new Error("Service Unavailable"), { status: 503 }),
+        );
+      }
+      return Promise.resolve({ nodes: [] });
+    });
+
+    const result = await checkOpenPRs(makeOpts(state));
+
+    expect(result).toHaveLength(0);
+    expect(callCount).toBe(2);
+  });
+
+  test("continues processing subsequent issues when attachments() throws", async () => {
+    const failingIssue = makeIssue(
+      "fail-attach",
+      "https://github.com/o/r/pull/90",
+    );
+    const goodIssue = makeIssue(
+      "good-attach",
+      "https://github.com/o/r/pull/91",
+    );
+
+    // Make the first issue's attachments throw
+    failingIssue.attachments = () =>
+      Promise.reject(new Error("Network error")) as ReturnType<
+        (typeof failingIssue)["attachments"]
+      >;
+
+    mockIssuesQuery.mockResolvedValue({ nodes: [failingIssue, goodIssue] });
+
+    const result = await checkOpenPRs(makeOpts(state));
+
+    // goodIssue should be processed despite the first one's attachments failing
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+  });
+
   test("continues processing subsequent issues when getPRStatus throws", async () => {
     mockRunClaude.mockResolvedValue({
       timedOut: false,
