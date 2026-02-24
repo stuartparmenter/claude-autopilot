@@ -145,24 +145,21 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
-const app = createApp(
-  state,
-  { authToken: dashboardToken },
-  {
-    triggerAudit: () => {
-      runAudit({
-        config,
-        projectPath,
-        linearIds,
-        state,
-        shutdownSignal: shutdownController.signal,
-      });
-    },
-    retryIssue: async (linearIssueId: string) => {
-      await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
-    },
+const app = createApp(state, {
+  authToken: dashboardToken,
+  triggerAudit: () => {
+    runAudit({
+      config,
+      projectPath,
+      linearIds,
+      state,
+      shutdownSignal: shutdownController.signal,
+    });
   },
-);
+  retryIssue: async (linearIssueId: string) => {
+    await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+  },
+});
 
 if (!isLocalhost) {
   warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);

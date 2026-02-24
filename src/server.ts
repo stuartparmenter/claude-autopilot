@@ -22,7 +22,8 @@ function randomSaying(): string {
   return ACTIVITY_SAYINGS[Math.floor(Math.random() * ACTIVITY_SAYINGS.length)];
 }
 
-export interface DashboardActions {
+export interface DashboardOptions {
+  authToken?: string;
   triggerAudit?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
 }
@@ -123,8 +124,7 @@ function loginPage(error?: string): string {
 
 export function createApp(
   state: AppState,
-  options?: { authToken?: string },
-  actions?: DashboardActions,
+  options?: DashboardOptions,
 ): Hono {
   const app = new Hono();
 
@@ -275,7 +275,7 @@ export function createApp(
     if (state.getAuditorStatus().running) {
       return c.json({ error: "Audit already running" }, 409);
     }
-    actions?.triggerAudit?.();
+    options?.triggerAudit?.();
     return c.json({ triggered: true });
   });
 
@@ -306,8 +306,8 @@ export function createApp(
     if (!hist.linearIssueId) {
       return c.json({ error: "No Linear issue ID available for retry" }, 400);
     }
-    if (actions?.retryIssue) {
-      await actions.retryIssue(hist.linearIssueId);
+    if (options?.retryIssue) {
+      await options.retryIssue(hist.linearIssueId);
     }
     return c.json({ retried: true });
   });
