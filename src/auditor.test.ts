@@ -148,9 +148,7 @@ describe("shouldRunAudit — backlog threshold", () => {
 
   test("returns false when backlog >= threshold (exactly at threshold)", async () => {
     // readyCount=3, triageCount=2 → backlog=5, threshold=5 → false
-    mockCountIssuesInState
-      .mockResolvedValueOnce(3)
-      .mockResolvedValueOnce(2);
+    mockCountIssuesInState.mockResolvedValueOnce(3).mockResolvedValueOnce(2);
 
     const result = await shouldRunAudit({
       config: makeConfig(),
@@ -163,9 +161,7 @@ describe("shouldRunAudit — backlog threshold", () => {
 
   test("returns true when backlog < threshold", async () => {
     // readyCount=2, triageCount=1 → backlog=3, threshold=5 → true
-    mockCountIssuesInState
-      .mockResolvedValueOnce(2)
-      .mockResolvedValueOnce(1);
+    mockCountIssuesInState.mockResolvedValueOnce(2).mockResolvedValueOnce(1);
 
     const result = await shouldRunAudit({
       config: makeConfig(),
@@ -368,7 +364,9 @@ describe("runAudit — skip_triage config", () => {
       state,
     });
 
-    const calls = mockRunClaude.mock.calls as unknown as Array<[{ prompt: string }]>;
+    const calls = mockRunClaude.mock.calls as unknown as Array<
+      [{ prompt: string }]
+    >;
     expect(calls[0][0].prompt).toContain("ready-id");
   });
 
@@ -382,7 +380,9 @@ describe("runAudit — skip_triage config", () => {
       state,
     });
 
-    const calls = mockRunClaude.mock.calls as unknown as Array<[{ prompt: string }]>;
+    const calls = mockRunClaude.mock.calls as unknown as Array<
+      [{ prompt: string }]
+    >;
     expect(calls[0][0].prompt).toContain("triage-id");
   });
 });
