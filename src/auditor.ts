@@ -89,6 +89,7 @@ export async function runAudit(opts: {
       model: config.executor.planning_model,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 

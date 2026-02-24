@@ -243,6 +243,30 @@ export const DASHBOARD_CSS = `
     color: var(--bg);
     border-color: var(--yellow);
   }
+  .action-btn {
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .action-btn:hover {
+    background: var(--border);
+  }
+  .action-btn.disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .action-btn.danger {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .action-btn.danger:hover {
+    background: #3f1f1f;
+  }
   .auditor-badge {
     display: inline-block;
     font-size: 10px;

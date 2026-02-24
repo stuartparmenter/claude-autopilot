@@ -20,7 +20,12 @@ function randomSaying(): string {
   return ACTIVITY_SAYINGS[Math.floor(Math.random() * ACTIVITY_SAYINGS.length)];
 }
 
-export function createApp(state: AppState): Hono {
+export interface DashboardActions {
+  triggerAudit?: () => void;
+  retryIssue?: (linearIssueId: string) => Promise<void>;
+}
+
+export function createApp(state: AppState, actions?: DashboardActions): Hono {
   const app = new Hono();
 
   // --- HTML Shell ---
@@ -53,6 +58,12 @@ export function createApp(state: AppState): Hono {
               <div
                 id="pause-btn"
                 hx-get="/partials/pause-button"
+                hx-trigger="load, every 5s"
+                hx-swap="innerHTML"
+              ></div>
+              <div
+                id="audit-btn"
+                hx-get="/partials/audit-button"
                 hx-trigger="load, every 5s"
                 hx-swap="innerHTML"
               ></div>
@@ -105,6 +116,45 @@ export function createApp(state: AppState): Hono {
     return c.json({ paused });
   });
 
+  app.post("/api/audit", (c) => {
+    if (state.getAuditorStatus().running) {
+      return c.json({ error: "Audit already running" }, 409);
+    }
+    actions?.triggerAudit?.();
+    return c.json({ triggered: true });
+  });
+
+  app.post("/api/cancel/:agentId", (c) => {
+    const agentId = c.req.param("agentId");
+    if (!state.getAgent(agentId)) {
+      return c.json({ error: "Agent not found" }, 404);
+    }
+    const cancelled = state.cancelAgent(agentId);
+    return c.json({ cancelled });
+  });
+
+  app.post("/api/retry/:historyId", async (c) => {
+    const historyId = c.req.param("historyId");
+    const hist = state.getHistory().find((h) => h.id === historyId);
+    if (!hist) {
+      return c.json({ error: "History item not found" }, 404);
+    }
+    if (hist.status === "completed") {
+      return c.json({ error: "Cannot retry a completed issue" }, 400);
+    }
+    const alreadyRunning = state.getRunningAgents().some((a) => a.issueId === hist.issueId);
+    if (alreadyRunning) {
+      return c.json({ error: "Issue is already running" }, 409);
+    }
+    if (!hist.linearIssueId) {
+      return c.json({ error: "No Linear issue ID available for retry" }, 400);
+    }
+    if (actions?.retryIssue) {
+      await actions.retryIssue(hist.linearIssueId);
+    }
+    return c.json({ retried: true });
+  });
+
   // --- Partials for htmx ---
 
   app.get("/partials/pause-button", (c) => {
@@ -118,6 +168,22 @@ export function createApp(state: AppState): Hono {
         hx-select="button"
       >
         ${paused ? "Paused" : "Pause"}
+      </button>`,
+    );
+  });
+
+  app.get("/partials/audit-button", (c) => {
+    const auditorRunning = state.getAuditorStatus().running;
+    return c.html(
+      html`<button
+        class="action-btn ${auditorRunning ? "disabled" : ""}"
+        hx-post="/api/audit"
+        hx-target="#audit-btn"
+        hx-swap="innerHTML"
+        hx-select="button"
+        ${auditorRunning ? "disabled" : ""}
+      >
+        ${auditorRunning ? "Auditing..." : "Trigger Audit"}
       </button>`,
     );
   });
@@ -172,7 +238,7 @@ export function createApp(state: AppState): Hono {
             const elapsedStr =
               elapsed > 60 ? `${Math.floor(elapsed / 60)}m` : `${elapsed}s`;
             return `<div class="agent-card" hx-get="/partials/activity/${a.id}" hx-target="#main-panel" hx-swap="innerHTML">
-            <div><span class="status-dot running"></span><span class="issue-id">${escapeHtml(a.issueId)}</span></div>
+            <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot running"></span><span class="issue-id">${escapeHtml(a.issueId)}</span></span><button class="action-btn danger" hx-post="/api/cancel/${a.id}" hx-confirm="Cancel this agent?" onclick="event.stopPropagation()">Cancel</button></div>
             <div class="title">${escapeHtml(a.issueTitle)}</div>
             <div class="meta">${elapsedStr} &middot; ${a.activities.length} activities</div>
           </div>`;
@@ -279,8 +345,12 @@ export function createApp(state: AppState): Hono {
               ? `${Math.round(h.durationMs / 1000)}s`
               : "";
             const costStr = h.costUsd ? `$${h.costUsd.toFixed(4)}` : "";
+            const canRetry = h.status !== "completed" && h.linearIssueId;
+            const retryBtn = canRetry
+              ? `<button class="action-btn" hx-post="/api/retry/${h.id}" onclick="event.stopPropagation()">Retry</button>`
+              : "";
             return `<div class="history-card" hx-get="/partials/activity/${h.id}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
-            <div><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</span>${retryBtn}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
           </div>`;
           })

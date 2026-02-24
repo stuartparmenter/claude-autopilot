@@ -102,12 +102,14 @@ export async function runClaude(opts: {
   model?: string;
   mcpServers?: Record<string, unknown>;
   parentSignal?: AbortSignal;
+  onControllerReady?: (controller: AbortController) => void;
   onActivity?: (entry: ActivityEntry) => void;
 }): Promise<ClaudeResult> {
   const tag = opts.label ? `[${opts.label}] ` : "";
   info(`${tag}Running Claude Code agent (cwd: ${opts.cwd})...`);
 
   const controller = new AbortController();
+  opts.onControllerReady?.(controller);
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 

@@ -9,6 +9,7 @@ export interface AgentState {
   id: string;
   issueId: string;
   issueTitle: string;
+  linearIssueId?: string;
   startedAt: number;
   status: "running" | "completed" | "failed" | "timed_out";
   activities: ActivityEntry[];
@@ -22,6 +23,7 @@ export interface AgentResult {
   id: string;
   issueId: string;
   issueTitle: string;
+  linearIssueId?: string;
   status: "completed" | "failed" | "timed_out";
   startedAt: number;
   finishedAt: number;
@@ -60,6 +62,7 @@ const MAX_ACTIVITIES_PER_AGENT = 200;
 export class AppState {
   private agents = new Map<string, AgentState>();
   private history: AgentResult[] = [];
+  private controllers = new Map<string, AbortController>();
   private queue: QueueInfo = {
     readyCount: 0,
     inProgressCount: 0,
@@ -70,11 +73,12 @@ export class AppState {
   private issueFailureCount = new Map<string, number>();
   readonly startedAt = Date.now();
 
-  addAgent(id: string, issueId: string, issueTitle: string): void {
+  addAgent(id: string, issueId: string, issueTitle: string, linearIssueId?: string): void {
     this.agents.set(id, {
       id,
       issueId,
       issueTitle,
+      linearIssueId,
       startedAt: Date.now(),
       status: "running",
       activities: [],
@@ -110,6 +114,7 @@ export class AppState {
       id: agent.id,
       issueId: agent.issueId,
       issueTitle: agent.issueTitle,
+      linearIssueId: agent.linearIssueId,
       status,
       startedAt: agent.startedAt,
       finishedAt: Date.now(),
@@ -123,7 +128,20 @@ export class AppState {
       this.history = this.history.slice(0, MAX_HISTORY);
     }
 
+    this.controllers.delete(agentId);
     this.agents.delete(agentId);
+  }
+
+  registerAgentController(agentId: string, controller: AbortController): void {
+    this.controllers.set(agentId, controller);
+  }
+
+  cancelAgent(agentId: string): boolean {
+    const controller = this.controllers.get(agentId);
+    if (!controller) return false;
+    controller.abort();
+    this.controllers.delete(agentId);
+    return true;
   }
 
   updateQueue(readyCount: number, inProgressCount: number): void {
