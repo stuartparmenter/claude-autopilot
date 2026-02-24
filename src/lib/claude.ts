@@ -183,7 +183,7 @@ export async function runClaude(opts: {
               emit?.({
                 timestamp: Date.now(),
                 type: "text",
-                summary: block.text.slice(0, 120),
+                summary: block.text.slice(0, 200),
                 detail: block.text,
               });
             }
@@ -212,7 +212,7 @@ export async function runClaude(opts: {
           emit?.({
             timestamp: Date.now(),
             type: "error",
-            summary: `Agent error: ${errSummary.slice(0, 120)}`,
+            summary: `Agent error: ${errSummary.slice(0, 200)}`,
           });
         }
       }
@@ -233,7 +233,7 @@ export async function runClaude(opts: {
       emit?.({
         timestamp: Date.now(),
         type: "error",
-        summary: `Error: ${errMsg.slice(0, 120)}`,
+        summary: `Error: ${errMsg.slice(0, 200)}`,
       });
     }
   } finally {

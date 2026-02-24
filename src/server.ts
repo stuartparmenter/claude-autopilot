@@ -155,6 +155,8 @@ export function createApp(state: AppState): Hono {
                 padding: 6px 0;
                 border-bottom: 1px solid var(--border);
                 font-size: 12px;
+                word-break: break-word;
+                overflow-wrap: anywhere;
               }
               .activity-item .time {
                 color: var(--text-dim);
@@ -456,41 +458,38 @@ export function createApp(state: AppState): Hono {
 
     return c.html(html`
       <div
+        id="activity-view"
         hx-get="/partials/activity/${id}${verbose ? "?verbose=true" : ""}"
         hx-trigger="every 3s"
-        hx-swap="innerHTML"
-        hx-select="div"
+        hx-swap="outerHTML"
       >
-        <div>
-          <div style="display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border)">
-            <div>
-              <span class="status-dot ${agent.status}"></span>
-              <strong>${agent.issueId}</strong> — ${agent.issueTitle}
-            </div>
-            <div class="meta">${elapsedStr} &middot; ${String(agent.activities.length)} activities</div>
-            ${!verbose ? html`<a href="#" hx-get="/partials/activity/${id}?verbose=true" hx-target="#main-panel" hx-swap="innerHTML" style="color: var(--accent); font-size: 11px; margin-left: auto">verbose</a>` : html`<a href="#" hx-get="/partials/activity/${id}" hx-target="#main-panel" hx-swap="innerHTML" style="color: var(--accent); font-size: 11px; margin-left: auto">compact</a>`}
+        <div style="display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border)">
+          <div>
+            <span class="status-dot ${agent.status}"></span>
+            <strong>${agent.issueId}</strong> — ${agent.issueTitle}
           </div>
-          ${raw(
-            activities
-              .map((act) => {
-                const time = new Date(act.timestamp).toLocaleTimeString(
-                  "en-US",
-                  { hour12: false },
-                );
-                const detailHtml =
-                  verbose && act.detail
-                    ? `<div class="detail-text">${escapeHtml(act.detail)}</div>`
-                    : "";
-                return `<div class="activity-item">
-                  <span class="time">${time}</span>
-                  <span class="type-badge ${act.type}">${act.type}</span>
-                  ${escapeHtml(act.summary)}
-                  ${detailHtml}
-                </div>`;
-              })
-              .join(""),
-          )}
+          <div class="meta">${elapsedStr} &middot; ${String(agent.activities.length)} activities</div>
+          ${!verbose ? html`<a href="#" hx-get="/partials/activity/${id}?verbose=true" hx-target="#main-panel" hx-swap="innerHTML" style="color: var(--accent); font-size: 11px; margin-left: auto">verbose</a>` : html`<a href="#" hx-get="/partials/activity/${id}" hx-target="#main-panel" hx-swap="innerHTML" style="color: var(--accent); font-size: 11px; margin-left: auto">compact</a>`}
         </div>
+        ${raw(
+          activities
+            .map((act) => {
+              const time = new Date(act.timestamp).toLocaleTimeString("en-US", {
+                hour12: false,
+              });
+              const detailHtml =
+                verbose && act.detail
+                  ? `<div class="detail-text">${escapeHtml(act.detail)}</div>`
+                  : "";
+              return `<div class="activity-item">
+                <span class="time">${time}</span>
+                <span class="type-badge ${act.type}">${act.type}</span>
+                ${escapeHtml(act.summary)}
+                ${detailHtml}
+              </div>`;
+            })
+            .join(""),
+        )}
       </div>
     `);
   });
