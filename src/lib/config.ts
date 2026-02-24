@@ -144,6 +144,33 @@ export function deepMerge<T extends Record<string, unknown>>(
   return result;
 }
 
+function validateConfigStrings(config: AutopilotConfig): void {
+  const fields: Array<[string, string]> = [
+    ["project.name", config.project.name],
+    ["linear.team", config.linear.team],
+    ["linear.project", config.linear.project],
+    ["linear.states.triage", config.linear.states.triage],
+    ["linear.states.ready", config.linear.states.ready],
+    ["linear.states.in_progress", config.linear.states.in_progress],
+    ["linear.states.in_review", config.linear.states.in_review],
+    ["linear.states.done", config.linear.states.done],
+    ["linear.states.blocked", config.linear.states.blocked],
+  ];
+
+  for (const [key, value] of fields) {
+    if (/[\r\n]/.test(value)) {
+      throw new Error(
+        `Config validation error: "${key}" must not contain newline characters`,
+      );
+    }
+    if (value.length > 200) {
+      throw new Error(
+        `Config validation error: "${key}" exceeds the maximum length of 200 characters`,
+      );
+    }
+  }
+}
+
 export function loadConfig(projectPath: string): AutopilotConfig {
   const configPath = resolve(projectPath, ".claude-autopilot.yml");
   if (!existsSync(configPath)) {
@@ -155,10 +182,14 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   const raw = readFileSync(configPath, "utf-8");
   const parsed = (YAML.parse(raw) ?? {}) as Record<string, unknown>;
 
-  return deepMerge(
+  const config = deepMerge(
     DEFAULTS as unknown as Record<string, unknown>,
     parsed,
   ) as unknown as AutopilotConfig;
+
+  validateConfigStrings(config);
+
+  return config;
 }
 
 export function resolveProjectPath(arg?: string): string {

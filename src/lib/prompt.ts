@@ -16,7 +16,20 @@ export function loadPrompt(name: string): string {
 }
 
 /**
+ * Sanitize a value before substituting it into a prompt template.
+ * Collapses newlines to spaces and strips leading markdown heading markers
+ * to prevent prompt injection via multiline config values.
+ */
+function sanitizePromptValue(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/^\s*#+\s*/, "")
+    .trim();
+}
+
+/**
  * Substitute {{VARIABLE}} placeholders in a template string.
+ * Values are sanitized before substitution to prevent prompt injection.
  */
 export function renderPrompt(
   template: string,
@@ -24,7 +37,7 @@ export function renderPrompt(
 ): string {
   let result = template;
   for (const [key, value] of Object.entries(vars)) {
-    result = result.replaceAll(`{{${key}}}`, value);
+    result = result.replaceAll(`{{${key}}}`, sanitizePromptValue(value));
   }
   return result;
 }
