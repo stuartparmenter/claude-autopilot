@@ -35,6 +35,7 @@ export interface LinearIds {
 export interface ExecutorConfig {
   parallel: number;
   timeout_minutes: number;
+  max_retries: number;
   inactivity_timeout_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
@@ -88,6 +89,7 @@ export const DEFAULTS: AutopilotConfig = {
   executor: {
     parallel: 3,
     timeout_minutes: 30,
+    max_retries: 3,
     inactivity_timeout_minutes: 10,
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",

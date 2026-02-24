@@ -92,8 +92,19 @@ export async function executeIssue(opts: {
     }
 
     if (result.error) {
-      warn(`${issue.identifier} failed: ${result.error}`);
-      await updateIssue(issue.id, { stateId: linearIds.states.ready });
+      const failureCount = state.incrementIssueFailures(issue.id);
+      warn(
+        `${issue.identifier} failed (attempt ${failureCount}/${config.executor.max_retries}): ${result.error}`,
+      );
+      if (failureCount >= config.executor.max_retries) {
+        await updateIssue(issue.id, {
+          stateId: linearIds.states.blocked,
+          comment: `Executor failed after ${failureCount} total attempt(s) — moving to Blocked.\n\nLast error:\n\`\`\`\n${result.error}\n\`\`\``,
+        });
+      } else {
+        // Move back to Ready so it can be retried on next loop
+        await updateIssue(issue.id, { stateId: linearIds.states.ready });
+      }
       state.completeAgent(agentId, "failed", {
         ...metrics,
         error: result.error,
@@ -121,6 +132,8 @@ export async function fillSlots(opts: {
   state: AppState;
   shutdownSignal?: AbortSignal;
 }): Promise<Array<Promise<boolean>>> {
+  if (opts.shutdownSignal?.aborted) return [];
+
   const { config, projectPath, linearIds, state } = opts;
   const maxSlots = config.executor.parallel;
   const running = state.getRunningCount();

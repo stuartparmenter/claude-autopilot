@@ -298,11 +298,17 @@ This will:
 
 Open the dashboard in your browser to watch agents work in real time.
 
-### Custom port
+### Custom port or host
 
 ```bash
+# Custom port
 bun run start /path/to/your/project --port 3000
+
+# Expose dashboard to the network (WARNING: no authentication — anyone on the network can view activity and pause/resume the loop)
+bun run start /path/to/your/project --host 0.0.0.0
 ```
+
+By default, the dashboard binds to `127.0.0.1` (localhost only). Use `--host 0.0.0.0` to expose it to the network, but be aware the dashboard has no authentication.
 
 ---
 

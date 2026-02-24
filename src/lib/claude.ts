@@ -308,6 +308,13 @@ export async function runClaude(opts: {
           ? "Agent inactive, timed out"
           : "Agent timed out",
       });
+    } else if (opts.parentSignal?.aborted) {
+      result.error = "Aborted (shutdown)";
+      emit?.({
+        timestamp: Date.now(),
+        type: "error",
+        summary: "Agent aborted (shutdown)",
+      });
     } else {
       const errMsg = e instanceof Error ? e.message : String(e);
       result.error = errMsg;
