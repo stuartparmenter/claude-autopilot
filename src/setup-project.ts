@@ -14,7 +14,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { checkClaudeCli } from "./lib/claude";
 import { error, header, info, ok, warn } from "./lib/logger";
 
 const AUTOPILOT_ROOT = resolve(
@@ -42,13 +41,6 @@ if (!existsSync(PROJECT_PATH)) {
 // --- Check prerequisites ---
 
 info("Checking prerequisites...");
-
-if (!(await checkClaudeCli())) {
-  error(
-    "claude CLI not found. Install it: https://docs.anthropic.com/en/docs/claude-code",
-  );
-}
-ok("claude CLI found");
 
 // Check it's a git repo
 const gitCheck = Bun.spawnSync(
@@ -186,9 +178,7 @@ console.log("  4. Authenticate the Linear MCP (for Claude Code agents)");
 console.log("     Run 'claude' in your project directory, then type '/mcp'");
 console.log("     and authenticate the Linear connection.");
 console.log();
-console.log("  5. Validate the setup");
-console.log(`     bun run test-loop ${PROJECT_PATH}`);
-console.log();
-console.log("  6. Run the executor");
-console.log(`     bun run executor ${PROJECT_PATH} once`);
+console.log("  5. Start the loop");
+console.log(`     bun run start ${PROJECT_PATH}`);
+console.log("     Dashboard at http://localhost:7890");
 console.log();

@@ -6,7 +6,7 @@ claude-autopilot works out of the box with default settings, but tuning it for y
 
 ## Parallelism
 
-The `executor.parallel` setting controls how many executor instances run concurrently (used by n8n orchestration in Phase 2+).
+The `executor.parallel` setting controls how many executor agents run concurrently.
 
 ### Recommended progression
 
@@ -18,18 +18,35 @@ The `executor.parallel` setting controls how many executor instances run concurr
 
 ### Rate limit considerations
 
-Each executor instance makes multiple Claude Code API calls during its run. With Claude Max (subscription), you have a usage-based rate limit that replenishes over time. With API billing (per-token), the limit is higher but you pay per token.
+Each executor agent makes multiple Claude API calls during its run. With Claude Max (subscription), you have a usage-based rate limit that replenishes over time. With API billing (per-token), the limit is higher but you pay per token.
 
 Signs you are hitting rate limits:
-- Executor instances start timing out more frequently
+- Executor agents start timing out more frequently
 - Claude Code returns errors about rate limits or capacity
-- Multiple executors complete but produce lower-quality output (truncated context)
+- Multiple agents complete but produce lower-quality output (truncated context)
 
-**Mitigation:** Reduce `executor.parallel`, increase `executor.timeout_minutes` to give each instance more breathing room, or stagger executor start times in n8n.
+**Mitigation:** Reduce `executor.parallel`, increase `executor.timeout_minutes` to give each agent more breathing room.
 
 ### Worktree considerations
 
 Each parallel executor creates a git worktree. On large repositories, this means N copies of the working tree on disk. Make sure your machine has sufficient disk space and I/O bandwidth. Worktrees are lightweight (they share the `.git` directory), but they do consume space for the checked-out files.
+
+---
+
+## Model Selection
+
+The `executor.model` and `executor.planning_model` settings control which Claude models are used.
+
+| Setting | Default | Used by |
+|---------|---------|---------|
+| `executor.model` | `"sonnet"` | Executor agents (issue implementation) |
+| `executor.planning_model` | `"opus"` | Auditor (codebase analysis, issue planning) |
+
+### Recommendations
+
+- **Sonnet** for executors: Fast, cost-effective, good at following structured prompts. Best for the implement-test-commit loop.
+- **Opus** for the auditor: Higher reasoning quality for codebase-wide analysis and planning. Worth the extra cost since the auditor runs less frequently.
+- Use **Haiku** for executors on very simple issues (documentation, config changes) to save cost.
 
 ---
 
@@ -41,17 +58,17 @@ The `auditor.schedule` setting controls when the auditor runs.
 
 | Mode | Behavior | Best for |
 |------|----------|----------|
-| `manual` | Only runs when you explicitly call `bun run auditor` | Initial setup, learning the system |
+| `manual` | Only runs when you explicitly trigger it | Initial setup, learning the system |
 | `when_idle` | Runs when Ready issue count drops below `min_ready_threshold` | Steady-state operation |
 | `daily` | Runs once per day regardless of backlog | Teams that want predictable auditor cadence |
 
 ### Recommended progression
 
-1. **Start with `manual`.** Run the auditor yourself a few times. Review every issue it files to Triage. This is where you calibrate your trust in the auditor's judgment.
+1. **Start with `manual`.** Run the full loop and watch the dashboard. Review every issue the auditor files to Triage.
 
-2. **Move to `when_idle` after you trust the output.** Set `min_ready_threshold` to a value that keeps the executor fed without overwhelming Triage. Start with 5 (the default). If you find yourself promoting issues from Triage faster than the executor processes them, increase the threshold.
+2. **Move to `when_idle` after you trust the output.** Set `min_ready_threshold` to a value that keeps the executor fed without overwhelming Triage. Start with 5 (the default).
 
-3. **Tune `max_issues_per_run`.** The default is 10. Lower it if you find yourself rejecting many auditor issues (the auditor is filing low-quality issues to hit the cap). Raise it if the auditor consistently files high-quality issues and you want more.
+3. **Tune `max_issues_per_run`.** The default is 10. Lower it if you find yourself rejecting many auditor issues. Raise it if the auditor consistently files high-quality issues.
 
 ### Threshold tuning
 
@@ -94,10 +111,6 @@ The single most impactful tuning lever for executor success rate is issue granul
 
 5. **Specify constraints explicitly.** If the executor should use a specific library, follow a specific pattern, or avoid a specific approach, say so in the issue description.
 
-### What the auditor does well
-
-The auditor's Planner/Verifier pipeline is specifically designed to produce small, concrete issues. If you find yourself manually creating large, vague issues, consider writing a brief description and letting the auditor decompose it instead.
-
 ---
 
 ## Auto-Approval
@@ -121,34 +134,6 @@ The `executor.auto_approve_labels` setting lists issue labels that are safe for 
 | `error-handling` | Medium | Changing error handling can alter user-facing behavior |
 | `code-quality` | Medium | Refactoring can introduce subtle bugs |
 
-### Progression
-
-1. **Start with no auto-approval.** Review every Triage issue manually.
-2. **Enable `documentation` first.** Monitor for a week. If all auto-approved documentation issues are successful, proceed.
-3. **Add `test-coverage`.** Monitor for issues where the executor modifies production code to make tests pass (it should not, but verify).
-4. **Add `dependency-update` cautiously.** Only if your test suite catches regressions reliably.
-5. **Never auto-approve `security` or unknown labels.**
-
-```yaml
-# Conservative (recommended starting point)
-executor:
-  auto_approve_labels: []
-
-# After building trust
-executor:
-  auto_approve_labels:
-    - documentation
-    - test-coverage
-
-# Aggressive (only with comprehensive test suites)
-executor:
-  auto_approve_labels:
-    - documentation
-    - test-coverage
-    - dependency-update
-    - code-quality
-```
-
 ---
 
 ## Cost
@@ -158,12 +143,10 @@ executor:
 With a Claude Max subscription, you get a usage allowance that replenishes over time. This is the most cost-effective option for steady-state usage.
 
 Key considerations:
-- Each executor run consumes a significant amount of the allowance (reading issue, reading code, implementing, testing, pushing)
+- Each executor run consumes a significant amount of the allowance
 - The auditor consumes more than a single executor run (full codebase scan + subagent teams)
-- Rate limits apply -- you may be throttled if you run too many parallel executors
+- Rate limits apply — you may be throttled if you run too many parallel agents
 - No per-token cost, so failed attempts cost the same as successful ones
-
-Recommendation: Start with Claude Max. If you consistently hit rate limits with 3+ parallel executors, consider API billing for the executor and keep Claude Max for interactive use.
 
 ### API billing (per-token)
 
@@ -178,32 +161,37 @@ Expected cost ranges (these vary significantly by issue complexity and codebase 
 | Executor: large issue (L) | 400K-1M+ tokens | $6.00-15.00+ |
 | Auditor: single run | 200K-800K tokens | $3.00-12.00 |
 
-These are rough estimates. Actual costs depend on:
-- Codebase size (more files = more context tokens)
-- Issue complexity (more iterations = more tokens)
-- Test/lint cycle count (each retry adds tokens)
-- Auditor scope (more scan dimensions = more tokens)
-
 ### Cost optimization
 
-1. **Write smaller issues.** The strongest lever. A small issue uses 3-5x fewer tokens than a large one, and succeeds more often (so you do not pay for retries).
+1. **Write smaller issues.** The strongest lever. A small issue uses 3-5x fewer tokens than a large one, and succeeds more often.
 
-2. **Tune executor timeout.** The default 30 minutes is generous. If most of your issues complete in 10-15 minutes, reducing the timeout to 20 minutes prevents runaway costs on stuck issues.
+2. **Tune executor timeout.** The default 30 minutes is generous. If most of your issues complete in 10-15 minutes, reducing the timeout to 20 minutes prevents runaway costs.
 
-3. **Limit auditor scope.** Remove scan dimensions you do not care about:
+3. **Use model selection wisely.** Use Sonnet for executors (fast, cheap) and Opus only for the auditor where reasoning quality matters more.
+
+4. **Limit auditor scope.** Remove scan dimensions you do not care about:
 
 ```yaml
 auditor:
   scan_dimensions:
     - test-coverage
     - security
-    # Removed: error-handling, performance, code-quality,
-    #          dependency-health, documentation
 ```
 
-4. **Lower auditor issue cap.** `max_issues_per_run: 5` instead of 10 reduces auditor token usage proportionally.
+5. **Lower auditor issue cap.** `max_issues_per_run: 5` instead of 10 reduces auditor token usage proportionally.
 
-5. **Increase `min_ready_threshold`.** Running the auditor less often saves tokens. A threshold of 10 instead of 5 means the auditor runs roughly half as often.
+---
+
+## Dashboard Monitoring
+
+The web dashboard at `http://localhost:7890` provides real-time visibility. Use it to:
+
+- **Watch agent activity** — see tool calls, text output, and errors as they happen
+- **Spot stuck agents** — if an agent has been running for a long time with repetitive tool calls, the issue may be too complex
+- **Track cost** — completed agents show cost and turn count
+- **Monitor queue** — see how many Ready issues remain and how many agents are running
+
+The `/api/status` endpoint returns JSON for programmatic monitoring.
 
 ---
 
@@ -211,7 +199,7 @@ auditor:
 
 ### Executor is stuck (timing out)
 
-**Symptoms:** Issues move to Blocked with "timed out after N minutes" comments. The worktree branch may have partial changes.
+**Symptoms:** Issues move to Blocked with "timed out" comments. The worktree branch may have partial changes.
 
 **Causes and fixes:**
 
@@ -219,16 +207,12 @@ auditor:
 |-------|-----|
 | Issue is too large or complex | Break it into smaller sub-issues |
 | Test command hangs (watch mode, interactive prompt) | Fix `project.test_command` to run non-interactively |
-| Lint command hangs | Fix `project.lint_command` similarly |
-| Claude is stuck in a validation loop | Check the issue. If tests keep failing, the acceptance criteria may be unrealistic. Revise the issue |
+| Claude is stuck in a validation loop | Check the issue. If tests keep failing, the acceptance criteria may be unrealistic |
 | Timeout is too short | Increase `executor.timeout_minutes` (but first check if the issue is simply too large) |
-| External service dependency | If tests require a running database or API, make sure the test environment is available |
-
-**Recovery:** The timed-out issue moves to Blocked. Review the partial work on the worktree branch (`git log autopilot/ISSUE-ID`). Either simplify the issue and re-promote to Ready, or complete the implementation manually using the partial work as a starting point.
 
 ### Auditor files bad issues
 
-**Symptoms:** Many Triage issues are vague, duplicative, or not worth implementing. You find yourself rejecting more than 30% of auditor output.
+**Symptoms:** Many Triage issues are vague, duplicative, or not worth implementing.
 
 **Causes and fixes:**
 
@@ -236,131 +220,32 @@ auditor:
 |-------|-----|
 | CLAUDE.md lacks detail | Add more context about architecture, conventions, and priorities to CLAUDE.md |
 | Scan dimensions too broad | Remove dimensions that generate low-value issues for your project |
-| Max issues too high | Lower `max_issues_per_run`. The auditor files lower-quality issues to fill the quota |
-| Auditor prompt needs tuning | Customize `prompts/auditor.md` (see Prompt Tuning below) |
-| No Agent Teams | Set `auditor.use_agent_teams: true`. The Verifier catches bad issues before they are filed |
-
-**Recovery:** Review Triage carefully during the first few weeks. Reject bad issues (close them in Linear). The auditor does not learn from rejections automatically, but you can improve output by tuning the prompt and CLAUDE.md.
-
-### Merge conflicts
-
-**Symptoms:** Executor opens a PR with merge conflicts. Or, two PRs touch the same files and cannot both be merged.
-
-**Causes and fixes:**
-
-Worktree isolation prevents most conflicts. Each executor works on its own branch from the latest main. However, conflicts can still happen when:
-
-| Cause | Fix |
-|-------|-----|
-| Two issues modify the same file | Add `related` relations in Linear. The auditor does this automatically. Merge one PR first, then re-run the executor for the second issue |
-| Issue branch is stale (main has diverged) | The executor creates branches from the latest main at start time. If execution takes a long time, main may have moved. Reduce timeout or ensure issues are small enough to complete quickly |
-| Overlapping issues in the auditor output | The auditor's self-review phase checks for file conflicts and adds relations. If it misses one, add the relation manually in Linear |
-
-**Recovery:** Close the conflicting PR. Re-promote the issue to Ready. The executor will re-run from the latest main and produce a conflict-free implementation.
-
-### Executor produces incorrect implementation
-
-**Symptoms:** PR is opened but the implementation does not match the acceptance criteria. Tests may pass but the behavior is wrong.
-
-**Causes and fixes:**
-
-| Cause | Fix |
-|-------|-----|
-| Acceptance criteria are ambiguous | Rewrite with machine-verifiable criteria. "Endpoint returns 404 when user not found" not "Error handling is correct" |
-| CLAUDE.md is missing key context | Add the relevant conventions and gotchas to CLAUDE.md |
-| Issue is missing implementation plan | Add a step-by-step plan to the issue description. The auditor does this automatically; manual issues often lack it |
-| Codebase patterns are inconsistent | Claude follows the patterns it sees. If the codebase has multiple conflicting patterns, specify which one to follow in the issue or CLAUDE.md |
+| Max issues too high | Lower `max_issues_per_run` |
+| Auditor prompt needs tuning | Customize `prompts/auditor.md` |
 
 ---
 
 ## Prompt Tuning
 
-The prompts in `prompts/` are the primary tuning surface for behavior quality. Modify them to adapt the system to your project's specific needs.
+The prompts in `prompts/` are the primary tuning surface for behavior quality.
 
 ### Executor prompt (prompts/executor.md)
 
-The executor prompt has 6 phases. Each phase can be independently tuned.
-
-**Phase 1 (Understand):** If the executor frequently misunderstands issues, add more guidance about how to interpret your issue format. For example, if your team uses a specific section for implementation hints, tell the executor to look for it.
-
-**Phase 2 (Plan):** If the executor makes over-broad changes, strengthen the constraints:
-
-```markdown
-Constraints:
-- NEVER modify more than 5 files in a single issue
-- NEVER add new dependencies without explicit approval in the issue
-- NEVER change the project's public API unless the issue specifically requires it
-```
-
-**Phase 3 (Implement):** Add project-specific coding rules:
-
-```markdown
-### Project-specific rules
-- Always use the `AppError` class from `src/lib/errors.ts` for error responses
-- Database queries must use the query builder in `src/lib/db.ts`, never raw SQL
-- All new API endpoints must have OpenAPI annotations
-```
-
-**Phase 4 (Validate):** If your project has additional validation steps beyond test and lint:
-
-```markdown
-### Type check
-\```
-npx tsc --noEmit
-\```
-
-### Integration tests
-\```
-npm run test:integration
-\```
-```
-
-**Phase 5 (Commit and Push):** If your team has specific PR conventions, update the PR body template.
-
-**Phase 6 (Update Linear):** If you want different information in the Linear comments (e.g., token usage, execution time), add instructions here.
+The executor prompt has 6 phases. Each phase can be independently tuned. See the prompt file for details.
 
 ### Auditor prompt (prompts/auditor.md)
 
-**Phase 1 (Discover):** Customize scan dimensions for your project. Remove irrelevant ones. Add project-specific dimensions:
-
-```markdown
-### API Contract Consistency
-- REST endpoints that don't follow the project's API versioning scheme
-- Response shapes that deviate from the standard envelope format
-- Missing pagination on list endpoints that could return unbounded results
-```
-
-**Phase 2 (Deep Planning):** If the Planner produces plans that are too vague or too detailed for your project, adjust the Planner subagent prompt (`prompts/planner.md`).
-
-**Phase 3 (Synthesize and File):** Customize the issue template to match your team's conventions. If your team uses different label names, update the Labels section.
-
-**Phase 4 (Self-Review):** Add project-specific review checks:
-
-```markdown
-6. **Priority alignment**: Verify that security and reliability issues are prioritized
-   over code quality and documentation issues
-7. **Scope check**: Ensure no filed issue requires changes to the deployment pipeline
-   or infrastructure (these need human planning)
-```
-
-### Subagent prompts
-
-**Planner (prompts/planner.md):** If plans are too detailed (wasting tokens) or too vague (executor gets stuck), adjust the level of specificity required. The "Good plan step" and "Bad plan step" examples at the bottom of the prompt set the calibration bar.
-
-**Verifier (prompts/verifier.md):** If the Verifier is too strict (rejecting reasonable plans) or too lenient (approving plans with obvious gaps), adjust the verdict criteria. You can also add project-specific feasibility checks.
-
-**Security Reviewer (prompts/security-reviewer.md):** If the Security Reviewer flags too many false positives for your project's threat model, narrow the review scope. For example, if your project is an internal tool with no public endpoints, you can deprioritize the "New Attack Surface" section.
+Customize scan dimensions, issue templates, and review criteria. The auditor's subagent prompts (`planner.md`, `verifier.md`, `security-reviewer.md`) can also be tuned independently.
 
 ### Testing prompt changes
 
-After modifying a prompt:
+After modifying a prompt, start the loop and watch the dashboard:
 
-1. Run the auditor manually: `bun run auditor /path/to/project`
-2. Review the Triage issues it files. Are they better or worse than before?
-3. Run the executor on a known issue: `bun run executor /path/to/project once`
-4. Review the PR. Did the prompt change improve the output?
+```bash
+bun run start /path/to/project
+```
 
-Keep a record of prompt changes and their effects. Prompt tuning is iterative -- small changes compound over time.
+Review the agent activity in real time. Check Linear for the issues filed. Iterate.
 
 ---
 
@@ -371,10 +256,8 @@ Use this as a periodic review checklist:
 - [ ] **Executor success rate**: What percentage of Ready issues reach Done vs. Blocked? Target: >80% for small issues
 - [ ] **Auditor acceptance rate**: What percentage of Triage issues get promoted to Ready? Target: >70%
 - [ ] **Time to completion**: How long does the executor take per issue? If consistently near the timeout, issues may be too large
-- [ ] **Merge conflict rate**: How often do PRs have conflicts? If frequent, check for overlapping issues
-- [ ] **Cost per issue**: Is the per-issue cost in line with expectations? If not, check issue granularity
-- [ ] **CLAUDE.md freshness**: Does CLAUDE.md reflect the current state of the codebase? Update after major refactors
-- [ ] **Prompt effectiveness**: Have you reviewed executor and auditor output recently? Tune prompts based on patterns you see
-- [ ] **Protected paths**: Are all sensitive files listed in `project.protected_paths`?
+- [ ] **Cost per issue**: Is the per-issue cost in line with expectations? Check the dashboard
+- [ ] **CLAUDE.md freshness**: Does CLAUDE.md reflect the current state of the codebase?
+- [ ] **Prompt effectiveness**: Have you reviewed executor and auditor output recently?
 - [ ] **Parallelism**: Are you hitting rate limits? Adjust `executor.parallel` as needed
-- [ ] **Auditor threshold**: Is the Ready backlog staying in a healthy range (not empty, not overflowing)?
+- [ ] **Auditor threshold**: Is the Ready backlog staying in a healthy range?

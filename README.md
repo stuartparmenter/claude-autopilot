@@ -1,6 +1,6 @@
 # claude-autopilot
 
-A self-sustaining AI development loop using **Claude Code** + **Linear** + **n8n**.
+A self-sustaining AI development loop using **Claude Code** + **Linear**.
 
 Two automated loops keep your project moving forward:
 
@@ -28,18 +28,30 @@ Two automated loops keep your project moving forward:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Executor**: Pulls unblocked "Ready" issues from Linear, spawns Claude Code in isolated git worktrees, implements the change, runs tests, pushes a PR, and updates Linear.
+**Executor**: Pulls unblocked "Ready" issues from Linear, spawns Claude Code agents in isolated git worktrees, implements the change, runs tests, pushes a PR, and updates Linear. Runs multiple agents in parallel.
 
 **Auditor**: When the backlog runs low, scans the codebase for improvements. Uses an Agent Team (Planner + Verifier + Security Reviewer) to produce well-planned issues filed to "Triage" for human review.
 
+**Dashboard**: A web UI shows live agent activity, execution history, and queue status.
+
 **You**: Review Triage, promote good issues to Ready, and the loop continues.
+
+## Security Notice
+
+claude-autopilot runs Claude Code agents with **`bypassPermissions`** mode, which gives agents unrestricted access to read/write files and execute shell commands in the target project directory. This is necessary for autonomous operation but carries risk.
+
+**Recommendations:**
+- Run in a **container or VM** to isolate the agent's filesystem and network access
+- Use **git worktrees** (the default) so agents work on branches, not main
+- Review all PRs before merging — the human review step is your safety net
+- Set `project.protected_paths` in config to prevent modification of sensitive files
+- Start with `executor.parallel: 1` and watch the dashboard closely before scaling up
 
 ## Prerequisites
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - [Bun](https://bun.sh) runtime
 - [Linear](https://linear.app) account with API key
-- [n8n](https://n8n.io) (optional — only needed for Phase 2 automation)
+- Claude Code authenticated (the Agent SDK handles the rest)
 - Git
 
 ## Quick Start
@@ -64,12 +76,9 @@ export LINEAR_API_KEY=lin_api_...
 cd /path/to/your/project && claude
 # Then type /mcp and authenticate Linear
 
-# 6. Validate everything works
-bun run test-loop /path/to/your/project
-
-# 7. Run the executor
-bun run executor /path/to/your/project once   # One issue
-bun run executor /path/to/your/project loop   # Continuous
+# 6. Start the loop
+bun run start /path/to/your/project
+# Dashboard at http://localhost:7890
 ```
 
 ## Project Structure
@@ -78,7 +87,7 @@ bun run executor /path/to/your/project loop   # Continuous
 claude-autopilot/
 ├── README.md
 ├── LICENSE                                # MIT
-├── package.json                           # Bun project, @linear/sdk
+├── package.json                           # Bun project, dependencies
 ├── .claude/
 │   ├── settings.json                      # Agent Teams flag
 │   └── CLAUDE.md                          # Context for this repo
@@ -92,17 +101,15 @@ claude-autopilot/
 │   ├── lib/
 │   │   ├── config.ts                      # YAML config loading with types
 │   │   ├── linear.ts                      # Linear SDK wrapper
-│   │   ├── claude.ts                      # Claude CLI execution
+│   │   ├── claude.ts                      # Agent SDK wrapper with activity streaming
 │   │   ├── prompt.ts                      # Template loading and rendering
 │   │   └── logger.ts                      # Colored console output
-│   ├── setup-project.ts                   # Onboard a new project
-│   ├── executor.ts                        # Execute Linear issues
-│   ├── auditor.ts                         # Audit codebase, file issues
-│   └── test-loop.ts                       # Validate setup end-to-end
-├── n8n/
-│   ├── executor-workflow.json             # Phase 2 n8n workflow
-│   ├── auditor-workflow.json              # Phase 2 n8n workflow
-│   └── setup.md                           # n8n configuration guide
+│   ├── main.ts                            # Entry point — loop + dashboard
+│   ├── executor.ts                        # Executor module (parallel slots)
+│   ├── auditor.ts                         # Auditor module (threshold + scan)
+│   ├── server.ts                          # Hono dashboard (htmx partials)
+│   ├── state.ts                           # In-memory app state
+│   └── setup-project.ts                   # Onboard a new project
 ├── templates/
 │   ├── CLAUDE.md.template                 # Project context template
 │   ├── claude-autopilot.yml.template      # Per-project config template
@@ -113,27 +120,26 @@ claude-autopilot/
     └── tuning.md                          # Parallelism, costs, debugging
 ```
 
-## Phases
-
-### Phase 1: Scripts (start here)
-
-Run everything locally with Bun scripts. One issue at a time. No n8n required.
+## Usage
 
 ```bash
-bun run executor /path/to/project once
-bun run auditor /path/to/project
+# Start the loop (executor + auditor + dashboard)
+bun run start /path/to/project
+
+# Custom dashboard port
+bun run start /path/to/project --port 3000
+
+# Onboard a new project
+bun run setup /path/to/project
 ```
 
-### Phase 2: n8n Automation
-
-Import the n8n workflows for scheduling, parallelism (3-5 concurrent executors), and monitoring. See [n8n/setup.md](n8n/setup.md).
-
-### Phase 3: Self-Improving
-
-- Auto-approve low-risk labels (test-coverage, documentation)
-- Cost tracking and budget limits
-- Multi-project orchestration
-- Auditor learns from executor success/failure patterns
+The single `bun run start` command:
+1. Connects to Linear and resolves team/state IDs
+2. Starts a Hono web dashboard on port 7890 (configurable with `--port`)
+3. Enters the main loop:
+   - Fills executor slots (up to `executor.parallel` agents)
+   - Checks if the auditor should run (backlog threshold)
+   - Waits for any agent to finish or 5-minute poll interval
 
 ## Configuration
 
@@ -146,7 +152,10 @@ The `.claude-autopilot.yml` file in your project controls everything. Key settin
 | `project.name` | Project name | *required* |
 | `project.test_command` | Command to run tests | `""` |
 | `project.lint_command` | Command to run linter | `""` |
+| `executor.parallel` | Max concurrent agents | `3` |
 | `executor.timeout_minutes` | Max time per issue | `30` |
+| `executor.model` | Model for executor agents | `"sonnet"` |
+| `executor.planning_model` | Model for auditor/planning | `"opus"` |
 | `auditor.max_issues_per_run` | Max issues the auditor files | `10` |
 | `auditor.min_ready_threshold` | Audit when fewer Ready issues than this | `5` |
 
@@ -158,6 +167,7 @@ See [templates/claude-autopilot.yml.template](templates/claude-autopilot.yml.tem
 2. **Prompts are the product.** The TypeScript scripts are just plumbing. The prompts in `prompts/` define what Claude actually does — they're the highest-leverage thing to customize.
 3. **Humans stay in the loop.** The auditor files to Triage. A human reviews and promotes to Ready. The executor's PRs get human review before merge.
 4. **Git worktrees provide isolation.** Each executor instance works in its own worktree, so parallel execution doesn't cause conflicts.
+5. **Agent SDK for execution.** Claude Code agents are spawned via the `@anthropic-ai/claude-agent-sdk` with activity streaming for live dashboard updates.
 
 See [docs/architecture.md](docs/architecture.md) for the full system design.
 

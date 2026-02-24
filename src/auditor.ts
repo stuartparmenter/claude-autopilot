@@ -1,98 +1,114 @@
-#!/usr/bin/env bun
+import { runClaude } from "./lib/claude";
+import type { AutopilotConfig, LinearIds } from "./lib/config";
+import { countIssuesInState } from "./lib/linear";
+import { info, ok, warn } from "./lib/logger";
+import { buildAuditorPrompt } from "./lib/prompt";
+import type { AppState } from "./state";
+
+const AUDITOR_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
 /**
- * auditor.ts — Scan the codebase and file Linear issues for improvements
- *
- * Usage: bun run auditor <project-path>
+ * Check whether the auditor should run based on the backlog threshold.
  */
+export async function shouldRunAudit(opts: {
+  config: AutopilotConfig;
+  linearIds: LinearIds;
+  state: AppState;
+}): Promise<boolean> {
+  const { config, linearIds, state } = opts;
 
-import { runClaude } from "./lib/claude";
-import { loadConfig, resolveProjectPath } from "./lib/config";
-import { countIssuesInState, resolveLinearIds } from "./lib/linear";
-import { error, info, ok, warn } from "./lib/logger";
-import { buildAuditorPrompt } from "./lib/prompt";
+  if (config.auditor.schedule === "manual") {
+    return false;
+  }
 
-const projectPath = resolveProjectPath(process.argv[2]);
-const config = loadConfig(projectPath);
-
-if (!config.linear.team)
-  error("linear.team is not set in .claude-autopilot.yml");
-if (!config.project.name)
-  error("project.name is not set in .claude-autopilot.yml");
-
-info("Configuration loaded:");
-info(`  Team: ${config.linear.team}`);
-info(`  Project: ${config.linear.project || "(none)"}`);
-info(`  Triage state: ${config.linear.states.triage}`);
-info(`  Max issues per run: ${config.auditor.max_issues_per_run}`);
-info(`  Project: ${config.project.name}`);
-
-// Resolve Linear IDs
-info("Connecting to Linear...");
-const linearIds = await resolveLinearIds(config.linear);
-ok(`Connected — team ${config.linear.team}`);
-
-// Check if we should run (backlog threshold)
-const readyCount = await countIssuesInState(
-  linearIds.teamId,
-  linearIds.states.ready,
-);
-info(`Current ready issues: ${readyCount}`);
-info(`Threshold: ${config.auditor.min_ready_threshold}`);
-
-if (
-  config.auditor.schedule === "when_idle" &&
-  readyCount >= config.auditor.min_ready_threshold
-) {
-  ok(
-    `Backlog is sufficient (${readyCount} >= ${config.auditor.min_ready_threshold}), skipping audit.`,
+  const readyCount = await countIssuesInState(
+    linearIds,
+    linearIds.states.ready,
   );
-  process.exit(0);
+
+  state.updateAuditor({
+    readyCount,
+    threshold: config.auditor.min_ready_threshold,
+  });
+
+  if (readyCount >= config.auditor.min_ready_threshold) {
+    info(
+      `Backlog sufficient (${readyCount} >= ${config.auditor.min_ready_threshold}), skipping audit`,
+    );
+    return false;
+  }
+
+  info(
+    `Backlog low (${readyCount} < ${config.auditor.min_ready_threshold}), audit recommended`,
+  );
+  return true;
 }
 
-// Build the full auditor prompt with subagent references
-info("Building auditor prompt...");
+/**
+ * Run the auditor agent to scan the codebase and file improvement issues.
+ */
+export async function runAudit(opts: {
+  config: AutopilotConfig;
+  projectPath: string;
+  linearIds: LinearIds;
+  state: AppState;
+}): Promise<void> {
+  const { config, projectPath, state } = opts;
+  const agentId = `audit-${Date.now()}`;
 
-const prompt = buildAuditorPrompt({
-  LINEAR_TEAM: config.linear.team,
-  LINEAR_PROJECT: config.linear.project,
-  TRIAGE_STATE: config.linear.states.triage,
-  MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
-  PROJECT_NAME: config.project.name,
-  TECH_STACK: config.project.tech_stack,
-});
+  state.addAgent(agentId, "auditor", "Codebase audit");
+  state.updateAuditor({ running: true });
 
-// Run the auditor
-const TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+  info("Starting auditor agent...");
 
-info("Starting auditor (timeout: 60 minutes)...");
-info("The auditor will scan the codebase and file issues to Linear Triage.");
-console.log();
-console.log("==========================================");
-console.log();
+  const prompt = buildAuditorPrompt({
+    LINEAR_TEAM: config.linear.team,
+    LINEAR_PROJECT: config.linear.project,
+    TRIAGE_STATE: config.linear.states.triage,
+    MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
+    PROJECT_NAME: config.project.name,
+  });
 
-const result = await runClaude({
-  prompt,
-  cwd: projectPath,
-  timeoutMs: TIMEOUT_MS,
-});
+  const result = await runClaude({
+    prompt,
+    cwd: projectPath,
+    timeoutMs: AUDITOR_TIMEOUT_MS,
+    model: config.executor.planning_model,
+    onActivity: (entry) => state.addActivity(agentId, entry),
+  });
 
-console.log();
-console.log("==========================================");
-console.log();
+  if (result.timedOut) {
+    warn("Auditor timed out after 60 minutes");
+    state.completeAgent(agentId, "timed_out", { error: "Timed out" });
+    state.updateAuditor({
+      running: false,
+      lastRunAt: Date.now(),
+      lastResult: "timed_out",
+    });
+    return;
+  }
 
-if (result.timedOut) {
-  warn("Auditor timed out after 60 minutes");
-  warn("Partial results may have been filed to Linear");
-} else if (result.error) {
-  warn(`Auditor failed: ${result.error}`);
-} else {
+  if (result.error) {
+    warn(`Auditor failed: ${result.error}`);
+    state.completeAgent(agentId, "failed", { error: result.error });
+    state.updateAuditor({
+      running: false,
+      lastRunAt: Date.now(),
+      lastResult: "failed",
+    });
+    return;
+  }
+
   ok("Auditor completed successfully");
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  if (result.numTurns) info(`Turns: ${result.numTurns}`);
+  state.completeAgent(agentId, "completed", {
+    costUsd: result.costUsd,
+    durationMs: result.durationMs,
+    numTurns: result.numTurns,
+  });
+  state.updateAuditor({
+    running: false,
+    lastRunAt: Date.now(),
+    lastResult: "completed",
+  });
 }
-
-console.log();
-info("Check your Linear Triage queue for new issues filed by the auditor.");
-info("Review them carefully before promoting to Ready.");
-console.log();

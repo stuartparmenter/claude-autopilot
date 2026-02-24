@@ -14,12 +14,29 @@ export interface LinearConfig {
   };
 }
 
+// Resolved IDs from Linear API — used at runtime, not in config
+export interface LinearIds {
+  teamId: string;
+  teamKey: string;
+  projectId: string;
+  projectName: string;
+  states: {
+    triage: string;
+    ready: string;
+    in_progress: string;
+    done: string;
+    blocked: string;
+  };
+}
+
 export interface ExecutorConfig {
   parallel: number;
   timeout_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
   commit_pattern: string;
+  model: string;
+  planning_model: string;
 }
 
 export interface AuditorConfig {
@@ -32,12 +49,6 @@ export interface AuditorConfig {
 
 export interface ProjectConfig {
   name: string;
-  tech_stack: string;
-  test_command: string;
-  lint_command: string;
-  build_command: string;
-  key_directories: string[];
-  protected_paths: string[];
 }
 
 export interface NotificationsConfig {
@@ -71,6 +82,8 @@ const DEFAULTS: AutopilotConfig = {
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
+    model: "sonnet",
+    planning_model: "opus",
   },
   auditor: {
     schedule: "when_idle",
@@ -89,12 +102,6 @@ const DEFAULTS: AutopilotConfig = {
   },
   project: {
     name: "",
-    tech_stack: "",
-    test_command: "",
-    lint_command: "",
-    build_command: "",
-    key_directories: [],
-    protected_paths: [".env", ".claude-autopilot.yml", "CLAUDE.md"],
   },
   notifications: {
     slack_webhook: "",

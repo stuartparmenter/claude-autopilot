@@ -9,10 +9,10 @@ This guide walks you through onboarding a new project repository for claude-auto
 Before starting, make sure you have:
 
 - **Bun** installed (https://bun.sh)
-- **Claude Code CLI** installed and authenticated (https://docs.anthropic.com/en/docs/claude-code)
 - **A git repository** for the project you want to onboard
 - **A Linear account** with a team set up for the project
 - **A Linear API key** (create one at https://linear.app/settings/api)
+- **Claude Code authenticated** (the Agent SDK uses your existing auth)
 
 ---
 
@@ -26,18 +26,16 @@ bun run setup /path/to/your/project
 
 This script does the following:
 
-1. Verifies that the `claude` CLI is installed
-2. Verifies that the target path is a git repository
-3. Copies `CLAUDE.md` from the template into your project (if it does not already exist)
-4. Copies `.claude-autopilot.yml` config into your project (if it does not already exist)
-5. Creates `.claude/settings.json` with Agent Teams enabled and Linear MCP configured
-6. Adds `.claude-autopilot.yml` to `.gitignore` (it contains local config and should not be committed)
+1. Verifies that the target path is a git repository
+2. Copies `CLAUDE.md` from the template into your project (if it does not already exist)
+3. Copies `.claude-autopilot.yml` config into your project (if it does not already exist)
+4. Creates `.claude/settings.json` with Agent Teams enabled and Linear MCP configured
+5. Adds `.claude-autopilot.yml` to `.gitignore` (it contains local config and should not be committed)
 
 ### What to expect
 
 ```
 [INFO] Checking prerequisites...
-[OK]   claude CLI found
 [OK]   /path/to/your/project is a git repository
 [INFO] Setting up project files...
 [OK]   Created CLAUDE.md — fill this in with your project details
@@ -52,7 +50,6 @@ This script does the following:
 
 | Problem | Solution |
 |---------|----------|
-| "claude CLI not found" | Install Claude Code: `npm install -g @anthropic-ai/claude-code` |
 | "not a git repository" | Run `git init` in your project directory first |
 | "CLAUDE.md already exists, skipping" | This is fine. Delete the existing file and re-run if you want a fresh template |
 | ".claude-autopilot.yml already exists, skipping" | Same as above. Delete and re-run to get the default template |
@@ -61,7 +58,7 @@ This script does the following:
 
 ## Step 2: Fill in CLAUDE.md
 
-`CLAUDE.md` is the most important file in the setup. It is the context document that every Claude Code instance reads when working on your project. The quality of the executor's output is directly proportional to the quality of this file.
+`CLAUDE.md` is the most important file in the setup. It is the context document that every Claude Code agent reads when working on your project. The quality of the executor's output is directly proportional to the quality of this file.
 
 Open `CLAUDE.md` in your project and fill in every section. The template has placeholder text in `[brackets]` and HTML comments with guidance.
 
@@ -152,8 +149,10 @@ The state names must match your Linear workflow exactly (case-sensitive).
 
 ```yaml
 executor:
-  parallel: 3                           # Max concurrent executor instances (n8n only)
+  parallel: 3                           # Max concurrent executor agents
   timeout_minutes: 30                   # Kill executor after this long
+  model: "sonnet"                       # Model for executor agents
+  planning_model: "opus"                # Model for auditor/planning
   auto_approve_labels: []               # Labels that skip human PR review (Phase 3)
   branch_pattern: "autopilot/{{id}}"    # Git branch naming pattern
   commit_pattern: "{{id}}: {{title}}"   # Commit message pattern
@@ -189,8 +188,6 @@ project:
     - "CLAUDE.md"
 ```
 
-Add any files that should be off-limits to automation (CI config, deploy scripts, etc.).
-
 ### Full example
 
 ```yaml
@@ -207,6 +204,8 @@ linear:
 executor:
   parallel: 3
   timeout_minutes: 30
+  model: "sonnet"
+  planning_model: "opus"
   auto_approve_labels: []
   branch_pattern: "autopilot/{{id}}"
   commit_pattern: "{{id}}: {{title}}"
@@ -255,7 +254,7 @@ notifications:
 
 ## Step 4: Set LINEAR_API_KEY
 
-The executor and auditor scripts use the Linear SDK (`@linear/sdk`) to query and update issues. This requires an API key.
+The scripts use the Linear SDK (`@linear/sdk`) to query and update issues. This requires an API key.
 
 1. Go to https://linear.app/settings/api
 2. Create a new personal API key (or a workspace-level key for shared use)
@@ -267,14 +266,12 @@ export LINEAR_API_KEY=lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 For persistent use, add this to your shell profile (`~/.bashrc`, `~/.zshrc`) or use a secrets manager.
 
-For n8n deployments, set `LINEAR_API_KEY` as an environment variable in your n8n instance.
-
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | "LINEAR_API_KEY environment variable is not set" | Make sure the variable is exported in the shell session running the script |
-| "Linear connection failed" | Verify the key is valid and not expired. Try `curl -H "Authorization: lin_api_..." https://api.linear.app/graphql` |
+| "Linear connection failed" | Verify the key is valid and not expired |
 | "Team 'XYZ' not found in Linear" | The `linear.team` value in config must be the team **key** (e.g., "ENG"), not the team name (e.g., "Engineering"). Find it in your Linear team settings URL |
 | "State 'Todo' not found for team" | The state names in `linear.states` must exactly match your Linear workflow state names. Check Linear team settings for the exact names |
 
@@ -288,158 +285,33 @@ The Claude Code agents (both executor and auditor) use the Linear MCP server to 
 2. Run `claude` to start an interactive Claude Code session
 3. Type `/mcp` to open the MCP management interface
 4. You should see the Linear MCP server listed (set up by the setup script)
-5. Follow the authentication flow -- this will open a browser window for Linear OAuth
+5. Follow the authentication flow — this will open a browser window for Linear OAuth
 
-After authenticating, the Linear MCP will be available to all Claude Code instances running in your project directory.
-
-### How the setup script configured MCP
-
-The setup script created `.claude/settings.json` with:
-
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
-  "mcpServers": {
-    "linear": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.linear.app/mcp"]
-    }
-  }
-}
-```
-
-The `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` flag enables Agent Teams, which the auditor uses for its Planner/Verifier/Security Reviewer subagents.
-
-### Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Linear MCP not listed in `/mcp` | Check that `.claude/settings.json` exists and contains the `mcpServers.linear` entry |
-| Authentication fails | Make sure your Linear account has access to the team specified in config |
-| "Agent Teams flag not found" | Add `"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"` to the `env` section of `.claude/settings.json` |
-| MCP works interactively but not in headless mode | Ensure the MCP auth tokens are stored at the project level, not the user level. Re-authenticate from the project directory |
+After authenticating, the Linear MCP will be available to all Claude Code agents running in your project directory.
 
 ---
 
-## Step 6: Validate with test-loop
+## Step 6: Start the Loop
 
-The test-loop script creates sample issues in Linear and runs the executor on one of them. This validates the entire pipeline end-to-end.
-
-```bash
-bun run test-loop /path/to/your/project
-```
-
-### What it does
-
-1. **Pre-flight checks**: Verifies `claude` CLI, `.claude/settings.json`, `CLAUDE.md`, and Linear API connection
-2. **Resolves Linear IDs**: Confirms team and state mappings are correct
-3. **Creates labels**: Ensures `auto-audit`, `code-quality`, `documentation`, and `low` labels exist in your team
-4. **Creates 3 test issues** in the Ready state:
-   - "Add .editorconfig for consistent formatting"
-   - "Add a comment explaining the main entry point"
-   - "Verify README has installation instructions"
-5. **Runs the executor** in `once` mode to process the first test issue
-6. **Prints a checklist** of things to verify
-
-### What to check after
-
-1. **Linear**: Are the test issues visible? Did the first one move to Done or Blocked?
-2. **Git**: Run `git branch -a | grep autopilot` to see if a branch was created
-3. **GitHub**: Was a PR opened? Does it look reasonable?
-4. **Code**: Run `git log --oneline -5` to see if a commit was made
-
-### Expected output
-
-```
-=== claude-autopilot Test Loop ===
-
-[INFO] Project: /path/to/your/project
-[INFO] Linear team: ENG
-[INFO] Ready state: Todo
-
-[INFO] Checking prerequisites...
-[OK]   claude CLI available
-[OK]   .claude/settings.json exists
-
-[INFO] Testing Linear API connection...
-[OK]   Linear API connection working
-
-[INFO] Resolving Linear team and states...
-[OK]   Team: ENG → <team-id>
-
-[INFO] Ensuring labels exist...
-[OK]   Labels ready
-
-[INFO] Creating 3 test issues in Linear...
-
-[OK]   Created: ENG-42 — Add .editorconfig for consistent formatting
-[OK]   Created: ENG-43 — Add a comment explaining the main entry point
-[OK]   Created: ENG-44 — Verify README has installation instructions
-
-[INFO] Running the executor to process one test issue...
-...
-```
-
-### Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Pre-flight checks fail | Go back to the relevant step above and fix the issue |
-| Issues created but executor fails | Check the executor output for error details. Common causes: bad test/lint command, missing MCP auth, missing CLAUDE.md |
-| Executor runs but issue stays in Ready | The executor may have failed silently. Check `git branch -a` for a worktree branch. Check Linear issue comments for error details |
-| Executor completes but PR is not created | Claude may have implemented the change but failed at the push/PR step. Check that the git remote is configured and you have push access |
-| Everything works but the code quality is poor | Improve your `CLAUDE.md`. The more context you give Claude about your project, the better its output |
-
----
-
-## Step 7: Run the Executor
-
-Once validation passes, you can run the executor in two modes.
-
-### One-shot mode
-
-Process a single issue and exit:
+Once configuration is complete, start the loop:
 
 ```bash
-bun run executor /path/to/your/project once
+bun run start /path/to/your/project
 ```
 
-This is useful for testing or for running the executor manually on specific issues. The executor picks the highest-priority Ready issue that is not blocked.
+This will:
+1. Connect to Linear and resolve team/state IDs
+2. Start the web dashboard at http://localhost:7890
+3. Begin polling for Ready issues and filling executor slots
+4. Run the auditor when the backlog drops below threshold
 
-### Loop mode
+Open the dashboard in your browser to watch agents work in real time.
 
-Continuously process issues until none remain:
+### Custom port
 
 ```bash
-bun run executor /path/to/your/project loop
+bun run start /path/to/your/project --port 3000
 ```
-
-In loop mode, the executor:
-1. Picks the next Ready unblocked issue
-2. Executes it (spawns Claude in a worktree)
-3. Waits 60 seconds if no issues are found
-4. Stops after 3 consecutive empty/error cycles
-
-### Running the auditor
-
-To scan the codebase and file improvement issues:
-
-```bash
-bun run auditor /path/to/your/project
-```
-
-The auditor checks the backlog threshold first. If there are already enough Ready issues (`>= min_ready_threshold`), it exits immediately without scanning.
-
-### Setting up n8n (Phase 2)
-
-For automated, scheduled execution:
-
-1. Import the workflow templates from the `n8n/` directory into your n8n instance
-2. Configure the workflow with your project path and environment variables
-3. Set the cron schedule (recommended: every 5 minutes for executor, every 6 hours for auditor)
-4. Adjust parallelism in `.claude-autopilot.yml` (`executor.parallel`)
 
 ---
 
@@ -452,6 +324,5 @@ Use this checklist to verify your setup:
 - [ ] `.claude-autopilot.yml` configured (team key, test/lint commands at minimum)
 - [ ] `LINEAR_API_KEY` environment variable set
 - [ ] Linear MCP authenticated (ran `claude` then `/mcp` in project directory)
-- [ ] `bun run test-loop /path/to/project` completed successfully
-- [ ] Test issue was executed (moved to Done in Linear, branch created, PR opened)
-- [ ] Remaining test issues cleaned up in Linear (or run executor in loop mode to process them)
+- [ ] `bun run start /path/to/project` starts successfully and shows dashboard
+- [ ] Dashboard accessible at http://localhost:7890

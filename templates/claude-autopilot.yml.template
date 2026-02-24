@@ -1,73 +1,42 @@
 # claude-autopilot configuration
-# Copy this file to your project root as `claude-autopilot.yml` and fill in the values.
+# Copy this file to your project root as `.claude-autopilot.yml` and fill in the values.
 # See docs/adding-a-project.md for the full setup guide.
+#
+# Project-specific details (tech stack, test commands, conventions, protected files)
+# belong in your project's CLAUDE.md, not here. This file is for orchestration config only.
 
 # ─── Linear Integration ────────────────────────────────────────────────────────
-# Connect to your Linear team so the executor and auditor can manage issues.
+# Connect to your Linear workspace so the executor and auditor can manage issues.
 
 linear:
-  team: ""                    # Team key, e.g., "ENG", "PROD" — find it in Linear team settings
-  project: ""                 # Project name (optional) — scope issues to a specific project
+  team: ""                      # Team key, e.g., "ENG" — find it in Linear team settings URL
+  project: ""                   # Project name — must match a Linear project exactly
   states:
-    triage: "Triage"          # Auditor files new issues here for human review
-    ready: "Todo"             # Executor picks up issues from this state (or "Ready")
+    triage: "Triage"            # Auditor files new issues here for human review
+    ready: "Todo"               # Executor picks up issues from this state
     in_progress: "In Progress"  # Executor moves issues here while working
-    done: "Done"              # Executor moves issues here after PR is merged
-    blocked: "Backlog"        # Executor moves issues here if it gets stuck
+    done: "Done"                # Executor moves issues here on success
+    blocked: "Backlog"          # Executor moves issues here if it gets stuck
 
 # ─── Executor ──────────────────────────────────────────────────────────────────
 # The executor agent picks up Ready issues, implements them, and opens PRs.
 
 executor:
-  parallel: 3                 # Max issues to work on concurrently (start low, increase with trust)
-  timeout_minutes: 30         # Max time per issue before the executor gives up
-  auto_approve_labels: []     # Labels that skip human review, e.g., ["trivial", "auto-audit"]
-                              # Start empty and grow this list as you build confidence
-  branch_pattern: "autopilot/{{id}}"      # Git branch naming — {{id}} is the Linear issue ID
-  commit_pattern: "{{id}}: {{title}}"     # Commit message format — {{title}} is the issue title
+  parallel: 3                   # Max concurrent agents (start low, increase with trust)
+  timeout_minutes: 30           # Kill agent after this long
+  model: "sonnet"               # Model for executor agents
+  planning_model: "opus"        # Model for auditor/planning
 
 # ─── Auditor ───────────────────────────────────────────────────────────────────
 # The auditor agent scans the codebase and files improvement issues to Triage.
 
 auditor:
-  schedule: "when_idle"       # When to run: "when_idle" | "daily" | "manual"
-                              #   when_idle — runs when no executor work is pending
-                              #   daily    — runs once per day on a schedule
-                              #   manual   — only runs when explicitly triggered
-  min_ready_threshold: 5      # Only audit when fewer than N issues are in Ready state
-  max_issues_per_run: 10      # Cap on how many issues the auditor creates per run
-  use_agent_teams: true       # Use multiple specialized sub-agents for auditing
-  scan_dimensions:            # Which dimensions to scan — comment out any you want to skip
-    - test-coverage           # Find untested or under-tested code paths
-    - error-handling          # Find missing or inadequate error handling
-    - performance             # Find performance bottlenecks and optimization opportunities
-    - security                # Find security vulnerabilities and hardening opportunities
-    - code-quality            # Find code smells, duplication, and maintainability issues
-    - dependency-health       # Find outdated, deprecated, or vulnerable dependencies
-    - documentation           # Find missing or outdated documentation
+  schedule: "when_idle"         # "when_idle" | "daily" | "manual"
+  min_ready_threshold: 5        # Only audit when fewer than N issues are in Ready
+  max_issues_per_run: 10        # Cap on issues filed per audit run
 
-# ─── Project Metadata ─────────────────────────────────────────────────────────
-# Tell the agents about your project so they can work effectively.
+# ─── Project ──────────────────────────────────────────────────────────────────
+# Minimal metadata used by the orchestrator. Everything else goes in CLAUDE.md.
 
 project:
-  name: ""                    # Human-readable project name, e.g., "Acme API"
-  tech_stack: ""              # Primary tech stack, e.g., "TypeScript, Next.js, Prisma, PostgreSQL"
-  test_command: ""            # How to run tests, e.g., "npm test" or "pytest"
-  lint_command: ""            # How to lint, e.g., "npm run lint" or "ruff check ."
-  build_command: ""           # How to build, e.g., "npm run build" or "go build ./..."
-  key_directories: []         # Important directories, e.g., ["src/api", "src/services", "tests"]
-  protected_paths:            # Files the executor must NEVER modify — changes require a human
-    - ".env"                  # Environment variables and secrets
-    - "claude-autopilot.yml"  # This config file
-    - "CLAUDE.md"             # Project context file
-
-# ─── Notifications ─────────────────────────────────────────────────────────────
-# Get notified when agents complete work or run into trouble.
-
-notifications:
-  slack_webhook: ""           # Slack incoming webhook URL (leave empty to disable)
-  notify_on:                  # Which events trigger a notification
-    - executor_complete       # Executor finished an issue and opened a PR
-    - executor_blocked        # Executor got stuck and moved an issue to Blocked
-    - auditor_complete        # Auditor finished a scan and filed new issues
-    - error                   # Something went wrong (crash, timeout, auth failure)
+  name: ""                      # Human-readable project name, e.g., "Acme API"

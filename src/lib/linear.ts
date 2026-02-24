@@ -2,9 +2,11 @@ import {
   type Issue,
   type IssueLabel,
   LinearClient,
+  type Project,
+  type Team,
   type WorkflowState,
 } from "@linear/sdk";
-import type { LinearConfig } from "./config";
+import type { LinearConfig, LinearIds } from "./config";
 import { info, warn } from "./logger";
 
 let _client: LinearClient | null = null;
@@ -31,12 +33,25 @@ export function getLinearClient(): LinearClient {
 /**
  * Find a team by its key (e.g., "ENG").
  */
-export async function findTeam(teamKey: string) {
+export async function findTeam(teamKey: string): Promise<Team> {
   const client = getLinearClient();
   const teams = await client.teams({ filter: { key: { eq: teamKey } } });
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team '${teamKey}' not found in Linear`);
   return team;
+}
+
+/**
+ * Find a project by name.
+ */
+export async function findProject(projectName: string): Promise<Project> {
+  const client = getLinearClient();
+  const projects = await client.projects({
+    filter: { name: { eq: projectName } },
+  });
+  const project = projects.nodes[0];
+  if (!project) throw new Error(`Project '${projectName}' not found in Linear`);
+  return project;
 }
 
 /**
@@ -82,19 +97,19 @@ export async function findOrCreateLabel(
 }
 
 /**
- * Get ready, unblocked issues for a team, sorted by priority.
+ * Get ready, unblocked issues for a team+project, sorted by priority.
  */
 export async function getReadyIssues(
-  teamId: string,
-  readyStateId: string,
+  linearIds: LinearIds,
   limit: number = 10,
 ): Promise<Issue[]> {
   const client = getLinearClient();
 
   const result = await client.issues({
     filter: {
-      team: { id: { eq: teamId } },
-      state: { id: { eq: readyStateId } },
+      team: { id: { eq: linearIds.teamId } },
+      state: { id: { eq: linearIds.states.ready } },
+      project: { id: { eq: linearIds.projectId } },
     },
     first: limit,
   });
@@ -137,29 +152,22 @@ export async function getReadyIssues(
 }
 
 /**
- * Count issues in a given state.
+ * Count issues in a given state for the configured project.
  */
 export async function countIssuesInState(
-  teamId: string,
+  linearIds: LinearIds,
   stateId: string,
 ): Promise<number> {
   const client = getLinearClient();
-  const _result = await client.issues({
+  const result = await client.issues({
     filter: {
-      team: { id: { eq: teamId } },
+      team: { id: { eq: linearIds.teamId } },
       state: { id: { eq: stateId } },
-    },
-    first: 0,
-  });
-  // The SDK doesn't directly return a count on `first:0`, so we fetch with a high limit
-  const allResult = await client.issues({
-    filter: {
-      team: { id: { eq: teamId } },
-      state: { id: { eq: stateId } },
+      project: { id: { eq: linearIds.projectId } },
     },
     first: 250,
   });
-  return allResult.nodes.length;
+  return result.nodes.length;
 }
 
 /**
@@ -181,10 +189,11 @@ export async function updateIssue(
 }
 
 /**
- * Create an issue in Linear.
+ * Create an issue in Linear, assigned to the configured project.
  */
 export async function createIssue(opts: {
   teamId: string;
+  projectId: string;
   title: string;
   description: string;
   stateId: string;
@@ -195,6 +204,7 @@ export async function createIssue(opts: {
   const client = getLinearClient();
   const payload = await client.createIssue({
     teamId: opts.teamId,
+    projectId: opts.projectId,
     title: opts.title,
     description: opts.description,
     stateId: opts.stateId,
@@ -223,10 +233,16 @@ export async function testConnection(): Promise<boolean> {
 }
 
 /**
- * Resolve a LinearConfig to team/state IDs for use in API calls.
+ * Resolve a LinearConfig to team/project/state IDs for use in API calls.
  */
-export async function resolveLinearIds(config: LinearConfig) {
-  const team = await findTeam(config.team);
+export async function resolveLinearIds(
+  config: LinearConfig,
+): Promise<LinearIds> {
+  const [team, project] = await Promise.all([
+    findTeam(config.team),
+    findProject(config.project),
+  ]);
+
   const [triageState, readyState, inProgressState, doneState, blockedState] =
     await Promise.all([
       findState(team.id, config.states.triage),
@@ -239,6 +255,8 @@ export async function resolveLinearIds(config: LinearConfig) {
   return {
     teamId: team.id,
     teamKey: config.team,
+    projectId: project.id,
+    projectName: config.project,
     states: {
       triage: triageState.id,
       ready: readyState.id,

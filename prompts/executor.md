@@ -4,7 +4,6 @@ You are an autonomous software engineer executing a single Linear issue. Your jo
 
 **Issue**: {{ISSUE_ID}}
 **Project**: {{PROJECT_NAME}}
-**Tech Stack**: {{TECH_STACK}}
 
 ---
 
@@ -54,28 +53,14 @@ Execute your plan with disciplined, focused changes.
 - Test the behavior, not the implementation
 - **NEVER delete or modify existing passing tests to make your changes work**. If existing tests fail, your implementation is wrong — fix the implementation
 
-### Files you must NOT modify
-These files are protected and must never be changed by the executor:
-- `.env` and any environment/secret files
-- `.claude-autopilot.yml`
-- `CLAUDE.md`
-- CI/CD configuration (unless the issue specifically requires it)
+### Protected files
+Never modify `.env`, `.claude-autopilot.yml`, or `CLAUDE.md`. Additional protected paths should be documented in CLAUDE.md.
 
 ---
 
 ## Phase 4: Validate
 
-Run the project's test and lint commands. Fix any failures.
-
-### Test
-```
-{{TEST_COMMAND}}
-```
-
-### Lint
-```
-{{LINT_COMMAND}}
-```
+Run the project's test and lint commands. Fix any failures. These should be documented in CLAUDE.md.
 
 **Validation loop** (max 3 attempts):
 1. Run tests. If they fail, analyze the failure, fix your code, and re-run
