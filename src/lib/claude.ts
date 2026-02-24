@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { ActivityEntry } from "../state";
 import { info, warn } from "./logger";
@@ -12,53 +10,6 @@ export interface ClaudeResult {
   numTurns?: number;
   timedOut: boolean;
   error?: string;
-}
-
-/**
- * Create a git worktree at the given path and return the absolute path.
- * If it already exists, returns the existing path.
- */
-async function ensureWorktree(
-  repoPath: string,
-  worktreeName: string,
-): Promise<string> {
-  const worktreeDir = resolve(repoPath, ".claude", "worktrees", worktreeName);
-
-  if (existsSync(worktreeDir)) {
-    return worktreeDir;
-  }
-
-  // Create a new branch and worktree
-  const branchName = `autopilot/${worktreeName}`;
-
-  // Get the default branch
-  const defaultBranch = Bun.spawnSync(
-    ["git", "symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
-    { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
-  );
-  const baseBranch =
-    defaultBranch.exitCode === 0
-      ? defaultBranch.stdout.toString().trim().replace("origin/", "")
-      : "main";
-
-  // Create worktree with a new branch
-  const result = Bun.spawnSync(
-    ["git", "worktree", "add", "-b", branchName, worktreeDir, baseBranch],
-    { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
-  );
-
-  if (result.exitCode !== 0) {
-    // Branch might already exist, try without -b
-    const retry = Bun.spawnSync(
-      ["git", "worktree", "add", worktreeDir, branchName],
-      { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
-    );
-    if (retry.exitCode !== 0) {
-      throw new Error(`Failed to create worktree: ${retry.stderr.toString()}`);
-    }
-  }
-
-  return worktreeDir;
 }
 
 function summarizeToolUse(toolName: string, input: unknown): string {
@@ -101,15 +52,7 @@ export async function runClaude(opts: {
   parentSignal?: AbortSignal;
   onActivity?: (entry: ActivityEntry) => void;
 }): Promise<ClaudeResult> {
-  // If a worktree is requested, create it and use its path as cwd
-  let effectiveCwd = opts.cwd;
-  if (opts.worktree) {
-    info(`Setting up worktree: ${opts.worktree}`);
-    effectiveCwd = await ensureWorktree(opts.cwd, opts.worktree);
-    info(`Worktree ready at: ${effectiveCwd}`);
-  }
-
-  info(`Running Claude Code agent (cwd: ${effectiveCwd})...`);
+  info(`Running Claude Code agent (cwd: ${opts.cwd})...`);
 
   // Set up abort controller for timeout and graceful shutdown
   const controller = new AbortController();
@@ -147,7 +90,7 @@ export async function runClaude(opts: {
 
   try {
     const queryOpts: Record<string, unknown> = {
-      cwd: effectiveCwd,
+      cwd: opts.cwd,
       abortController: controller,
       // Use the full Claude Code toolkit and system prompt
       tools: { type: "preset", preset: "claude_code" },
@@ -163,6 +106,9 @@ export async function runClaude(opts: {
     }
     if (opts.model) {
       queryOpts.model = opts.model;
+    }
+    if (opts.worktree) {
+      queryOpts.extraArgs = { worktree: opts.worktree };
     }
 
     for await (const message of query({
