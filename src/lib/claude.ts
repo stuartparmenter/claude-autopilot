@@ -55,7 +55,11 @@ const TOOL_SUMMARY_FIELDS: Record<string, string> = {
   WebSearch: "query",
 };
 
-function summarizeToolUse(toolName: string, input: unknown, cwd?: string): string {
+function summarizeToolUse(
+  toolName: string,
+  input: unknown,
+  cwd?: string,
+): string {
   const inp =
     input !== null && typeof input === "object"
       ? (input as Record<string, unknown>)
@@ -233,7 +237,11 @@ export async function runClaude(opts: {
                 emit?.({
                   timestamp: Date.now(),
                   type: "tool_use",
-                  summary: summarizeToolUse(block.name, block.input, queryOpts.cwd as string),
+                  summary: summarizeToolUse(
+                    block.name,
+                    block.input,
+                    queryOpts.cwd as string,
+                  ),
                 });
               } else if (block.type === "text" && "text" in block) {
                 emit?.({
