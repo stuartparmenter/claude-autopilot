@@ -96,7 +96,9 @@ export async function runAudit(opts: {
       warn(
         `Auditor inactive for ${config.executor.inactivity_timeout_minutes} minutes, timed out`,
       );
-      state.completeAgent(agentId, "timed_out", { error: "Inactivity timeout" });
+      state.completeAgent(agentId, "timed_out", {
+        error: "Inactivity timeout",
+      });
       state.updateAuditor({
         running: false,
         lastRunAt: Date.now(),
