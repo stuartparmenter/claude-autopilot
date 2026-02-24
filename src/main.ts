@@ -134,7 +134,9 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
-const webhookTrigger = config.webhooks?.enabled ? new WebhookTrigger() : undefined;
+const webhookTrigger = config.webhooks?.enabled
+  ? new WebhookTrigger()
+  : undefined;
 const app = createApp(
   state,
   {

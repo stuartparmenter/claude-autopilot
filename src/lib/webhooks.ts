@@ -14,7 +14,8 @@ export function verifyLinearSignature(
   const expected = createHmac("sha256", secret)
     .update(rawBody, "utf-8")
     .digest("hex");
-  if (Buffer.byteLength(signature) !== Buffer.byteLength(expected)) return false;
+  if (Buffer.byteLength(signature) !== Buffer.byteLength(expected))
+    return false;
   try {
     return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   } catch {
@@ -37,7 +38,8 @@ export function verifyGitHubSignature(
   const expected =
     "sha256=" +
     createHmac("sha256", secret).update(rawBody, "utf-8").digest("hex");
-  if (Buffer.byteLength(signature) !== Buffer.byteLength(expected)) return false;
+  if (Buffer.byteLength(signature) !== Buffer.byteLength(expected))
+    return false;
   try {
     return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   } catch {
@@ -79,10 +81,7 @@ export function parseGitHubEventType(
   if (typeof body !== "object" || body === null) return "unknown";
   const payload = body as Record<string, unknown>;
 
-  if (
-    headers.event === "check_suite" &&
-    payload.action === "completed"
-  ) {
+  if (headers.event === "check_suite" && payload.action === "completed") {
     const suite = payload.check_suite as Record<string, unknown> | undefined;
     if (suite?.conclusion === "failure") return "ci_failure";
   }

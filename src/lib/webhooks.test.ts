@@ -1,5 +1,5 @@
-import { createHmac } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import {
   parseGitHubEventType,
   parseLinearEventType,
@@ -77,7 +77,9 @@ describe("verifyGitHubSignature", () => {
   });
 
   test("returns false when signature lacks sha256= prefix", () => {
-    const hex = createHmac("sha256", secret).update(body, "utf-8").digest("hex");
+    const hex = createHmac("sha256", secret)
+      .update(body, "utf-8")
+      .digest("hex");
     expect(verifyGitHubSignature(secret, body, hex)).toBe(false);
   });
 
@@ -103,36 +105,36 @@ describe("parseLinearEventType", () => {
       action: "update",
       data: { state: { name: "Todo" } },
     };
-    expect(
-      parseLinearEventType({ event: "Issue" }, body, readyState),
-    ).toBe("issue_ready");
+    expect(parseLinearEventType({ event: "Issue" }, body, readyState)).toBe(
+      "issue_ready",
+    );
   });
 
   test("returns unknown when event is not Issue", () => {
     const body = { action: "update", data: { state: { name: "Todo" } } };
-    expect(
-      parseLinearEventType({ event: "Comment" }, body, readyState),
-    ).toBe("unknown");
+    expect(parseLinearEventType({ event: "Comment" }, body, readyState)).toBe(
+      "unknown",
+    );
   });
 
   test("returns unknown when state name does not match", () => {
     const body = { action: "update", data: { state: { name: "In Progress" } } };
-    expect(
-      parseLinearEventType({ event: "Issue" }, body, readyState),
-    ).toBe("unknown");
+    expect(parseLinearEventType({ event: "Issue" }, body, readyState)).toBe(
+      "unknown",
+    );
   });
 
   test("returns unknown when body has no data field", () => {
     const body = { action: "update" };
-    expect(
-      parseLinearEventType({ event: "Issue" }, body, readyState),
-    ).toBe("unknown");
+    expect(parseLinearEventType({ event: "Issue" }, body, readyState)).toBe(
+      "unknown",
+    );
   });
 
   test("returns unknown when body is null", () => {
-    expect(
-      parseLinearEventType({ event: "Issue" }, null, readyState),
-    ).toBe("unknown");
+    expect(parseLinearEventType({ event: "Issue" }, null, readyState)).toBe(
+      "unknown",
+    );
   });
 
   test("returns unknown when event header is missing", () => {
@@ -167,7 +169,10 @@ describe("parseGitHubEventType", () => {
   });
 
   test("returns unknown for check_suite with action other than completed", () => {
-    const body = { action: "requested", check_suite: { conclusion: "failure" } };
+    const body = {
+      action: "requested",
+      check_suite: { conclusion: "failure" },
+    };
     expect(parseGitHubEventType({ event: "check_suite" }, body)).toBe(
       "unknown",
     );
