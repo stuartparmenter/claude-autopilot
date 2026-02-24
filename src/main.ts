@@ -19,6 +19,7 @@ import { loadConfig, resolveProjectPath } from "./lib/config";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
+import { WebhookTrigger } from "./lib/webhooks";
 import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
 import { AppState } from "./state";
@@ -133,7 +134,18 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
-const app = createApp(state);
+const webhookTrigger = config.webhooks?.enabled ? new WebhookTrigger() : undefined;
+const app = createApp(
+  state,
+  webhookTrigger && config.webhooks
+    ? {
+        trigger: webhookTrigger,
+        linearSecret: config.webhooks.linear_secret,
+        githubSecret: config.webhooks.github_secret,
+        readyStateName: config.linear.states.ready,
+      }
+    : undefined,
+);
 
 const isLocalhost =
   host === "127.0.0.1" || host === "localhost" || host === "::1";
@@ -320,18 +332,27 @@ while (!shuttingDown) {
     // Reset failure counter after a successful iteration
     consecutiveFailures = 0;
 
-    // Wait for any agent to finish or poll interval to elapse
+    // Wait for any agent to finish, poll interval, or webhook trigger
     if (running.size > 0) {
       const pollTimer = interruptibleSleep(
         POLL_INTERVAL_MS,
         shutdownController.signal,
       ).then(() => "poll" as const);
-      await Promise.race([pollTimer, ...running]);
+      const racers: Promise<unknown>[] = [pollTimer, ...running];
+      if (webhookTrigger) racers.push(webhookTrigger.wait());
+      await Promise.race(racers);
     } else {
       info(
         `No agents running. Polling again in ${POLL_INTERVAL_MS / 1000}s...`,
       );
-      await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      if (webhookTrigger) {
+        await Promise.race([
+          interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal),
+          webhookTrigger.wait(),
+        ]);
+      } else {
+        await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      }
     }
   } catch (e) {
     const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);

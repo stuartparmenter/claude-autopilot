@@ -66,12 +66,19 @@ export interface ProjectConfig {
   name: string;
 }
 
+export interface WebhooksConfig {
+  enabled: boolean;
+  linear_secret: string;
+  github_secret: string;
+}
+
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
   github: GithubConfig;
   project: ProjectConfig;
+  webhooks?: WebhooksConfig;
 }
 
 export const DEFAULTS: AutopilotConfig = {
@@ -129,6 +136,11 @@ export const DEFAULTS: AutopilotConfig = {
   },
   project: {
     name: "",
+  },
+  webhooks: {
+    enabled: false,
+    linear_secret: "",
+    github_secret: "",
   },
 };
 
