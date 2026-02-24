@@ -2,14 +2,14 @@
 
 A self-sustaining AI development loop using **Claude Code** + **Linear**.
 
-Two automated loops keep your project moving forward:
+Three automated loops keep your project moving forward:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        EXECUTOR LOOP                            │
 │                                                                 │
 │  Linear (Ready) ──→ Claude Code ──→ Tests ──→ PR ──→ Linear    │
-│       ↑              (worktree)      pass?     ✓     (Done)     │
+│       ↑              (worktree)      pass?     ✓    (In Review) │
 │       │                               │                         │
 │       │                               ✗                         │
 │       │                               ↓                         │
@@ -25,16 +25,27 @@ Two automated loops keep your project moving forward:
 │                       └─ Security Reviewer                      │
 │                                                                 │
 │                        AUDITOR LOOP                             │
+│                                                                 │
+│  Linear (In Review) ──→ Check PR ──→ CI failed? ──→ Fixer      │
+│                                      Conflict?       (worktree) │
+│                                         │               │       │
+│                                         ✗               ↓       │
+│                                        skip       Push fix to   │
+│                                                   existing PR   │
+│                                                                 │
+│                        MONITOR LOOP                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Executor**: Pulls unblocked "Ready" issues from Linear, spawns Claude Code agents in isolated git worktrees, implements the change, runs tests, pushes a PR, and updates Linear. Runs multiple agents in parallel.
 
+**Monitor**: Watches issues in "In Review" state. Checks their linked GitHub PRs for CI failures and merge conflicts. Spawns fixer agents to repair problems automatically. If a fix can't be applied after 3 attempts, moves the issue to "Blocked" for human attention.
+
 **Auditor**: When the backlog runs low, scans the codebase for improvements. Uses an Agent Team (Planner + Verifier + Security Reviewer) to produce well-planned issues filed to "Triage" for human review.
 
 **Dashboard**: A web UI shows live agent activity, execution history, and queue status.
 
-**You**: Review Triage, promote good issues to Ready, and the loop continues.
+**You**: Review Triage, promote good issues to Ready, review PRs, and the loop continues.
 
 ## Security Notice
 
@@ -51,6 +62,7 @@ claude-autopilot runs Claude Code agents with **`bypassPermissions`** mode, whic
 
 - [Bun](https://bun.sh) runtime
 - [Linear](https://linear.app) account with API key
+- [GitHub](https://github.com/settings/tokens) personal access token (scope: `repo`)
 - Claude Code authenticated (the Agent SDK handles the rest)
 - Git
 
@@ -69,8 +81,9 @@ bun run setup /path/to/your/project
 #    - /path/to/your/project/CLAUDE.md        (project context for Claude)
 #    - /path/to/your/project/.claude-autopilot.yml  (config)
 
-# 4. Set your Linear API key (used by both orchestrator and agents)
+# 4. Set your API keys
 export LINEAR_API_KEY=lin_api_...
+export GITHUB_TOKEN=ghp_...
 
 # 5. Start the loop
 bun run start /path/to/your/project
@@ -89,6 +102,7 @@ claude-autopilot/
 │   └── CLAUDE.md                          # Context for this repo
 ├── prompts/
 │   ├── executor.md                        # Prompt for issue execution agents
+│   ├── fixer.md                           # Prompt for PR fixer agents
 │   ├── auditor.md                         # Lead auditor prompt
 │   ├── planner.md                         # Subagent: decompose into tasks
 │   ├── verifier.md                        # Subagent: challenge and validate
@@ -97,11 +111,13 @@ claude-autopilot/
 │   ├── lib/
 │   │   ├── config.ts                      # YAML config loading with types
 │   │   ├── linear.ts                      # Linear SDK wrapper
+│   │   ├── github.ts                      # GitHub/Octokit wrapper (PR status)
 │   │   ├── claude.ts                      # Agent SDK wrapper with activity streaming
 │   │   ├── prompt.ts                      # Template loading and rendering
 │   │   └── logger.ts                      # Colored console output
 │   ├── main.ts                            # Entry point — loop + dashboard
 │   ├── executor.ts                        # Executor module (parallel slots)
+│   ├── monitor.ts                         # Monitor module (PR status + fixers)
 │   ├── auditor.ts                         # Auditor module (threshold + scan)
 │   ├── server.ts                          # Hono dashboard (htmx partials)
 │   ├── state.ts                           # In-memory app state
@@ -145,6 +161,7 @@ The `.claude-autopilot.yml` file in your project controls everything. Key settin
 |---------|-------------|---------|
 | `linear.team` | Linear team key (e.g., "ENG") | *required* |
 | `linear.states.ready` | State name for ready issues | `"Todo"` |
+| `github.repo` | GitHub repo override ("owner/repo") | auto-detect |
 | `project.name` | Project name | *required* |
 | `project.test_command` | Command to run tests | `""` |
 | `project.lint_command` | Command to run linter | `""` |
@@ -159,11 +176,12 @@ See [templates/claude-autopilot.yml.template](templates/claude-autopilot.yml.tem
 
 ## How It Works
 
-1. **Linear is the source of truth.** Issue states drive the entire system. The executor reads from Ready, writes to Done/Blocked. The auditor writes to Triage.
+1. **Linear is the source of truth.** Issue states drive the entire system. The executor reads from Ready, writes to In Review/Blocked. The monitor watches In Review. The auditor writes to Triage.
 2. **Prompts are the product.** The TypeScript scripts are just plumbing. The prompts in `prompts/` define what Claude actually does — they're the highest-leverage thing to customize.
-3. **Humans stay in the loop.** The auditor files to Triage. A human reviews and promotes to Ready. The executor's PRs get human review before merge.
-4. **Git worktrees provide isolation.** Each executor instance works in its own worktree, so parallel execution doesn't cause conflicts.
+3. **Humans stay in the loop.** The auditor files to Triage. A human reviews and promotes to Ready. The executor's PRs get human review before merge. Fixer agents only make minimal, non-destructive changes.
+4. **Git worktrees provide isolation.** Each executor and fixer instance works in its own worktree, so parallel execution doesn't cause conflicts.
 5. **Agent SDK for execution.** Claude Code agents are spawned via the `@anthropic-ai/claude-agent-sdk` with activity streaming for live dashboard updates.
+6. **PR monitoring is automatic.** The monitor checks GitHub PRs linked to In Review issues. CI failures and merge conflicts are fixed automatically; unfixable issues move to Blocked.
 
 See [docs/architecture.md](docs/architecture.md) for the full system design.
 

@@ -35,6 +35,18 @@ auditor:
   min_ready_threshold: 5        # Only audit when fewer than N issues are in Ready
   max_issues_per_run: 10        # Cap on issues filed per audit run
 
+# ─── GitHub ───────────────────────────────────────────────────────────────────
+# GitHub integration for PR monitoring, CI checks, and the fixer agent.
+
+github:
+  repo: ""                        # "owner/repo" override — leave empty to auto-detect from git remote
+  automerge: false                # Enable auto-merge on PRs created by the executor.
+                                  # GitHub will merge the PR automatically once all required
+                                  # status checks pass. Requires:
+                                  #   1. "Allow auto-merge" enabled in repo Settings > General
+                                  #   2. Branch protection rules with required status checks
+                                  # See: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request
+
 # ─── Project ──────────────────────────────────────────────────────────────────
 # Minimal metadata used by the orchestrator. Everything else goes in CLAUDE.md.
 

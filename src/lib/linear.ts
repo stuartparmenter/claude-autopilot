@@ -1,11 +1,14 @@
 import {
   type Issue,
+  type IssueLabel,
   LinearClient,
   type Project,
   type Team,
   type WorkflowState,
 } from "@linear/sdk";
 import type { LinearConfig, LinearIds } from "./config";
+import { info, warn } from "./logger";
+import { withRetry } from "./retry";
 
 let _client: LinearClient | null = null;
 
@@ -29,11 +32,21 @@ export function getLinearClient(): LinearClient {
 }
 
 /**
+ * Reset the cached client. Used in tests to prevent singleton leakage.
+ */
+export function resetClient(): void {
+  _client = null;
+}
+
+/**
  * Find a team by its key (e.g., "ENG").
  */
 export async function findTeam(teamKey: string): Promise<Team> {
   const client = getLinearClient();
-  const teams = await client.teams({ filter: { key: { eq: teamKey } } });
+  const teams = await withRetry(
+    () => client.teams({ filter: { key: { eq: teamKey } } }),
+    "findTeam",
+  );
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team '${teamKey}' not found in Linear`);
   return team;
@@ -44,9 +57,13 @@ export async function findTeam(teamKey: string): Promise<Team> {
  */
 export async function findProject(projectName: string): Promise<Project> {
   const client = getLinearClient();
-  const projects = await client.projects({
-    filter: { name: { eq: projectName } },
-  });
+  const projects = await withRetry(
+    () =>
+      client.projects({
+        filter: { name: { eq: projectName } },
+      }),
+    "findProject",
+  );
   const project = projects.nodes[0];
   if (!project) throw new Error(`Project '${projectName}' not found in Linear`);
   return project;
@@ -60,12 +77,50 @@ export async function findState(
   stateName: string,
 ): Promise<WorkflowState> {
   const client = getLinearClient();
-  const states = await client.workflowStates({
-    filter: { team: { id: { eq: teamId } }, name: { eq: stateName } },
-  });
+  const states = await withRetry(
+    () =>
+      client.workflowStates({
+        filter: { team: { id: { eq: teamId } }, name: { eq: stateName } },
+      }),
+    "findState",
+  );
   const state = states.nodes[0];
   if (!state) throw new Error(`State '${stateName}' not found for team`);
   return state;
+}
+
+/**
+ * Find or create a label by name within a team.
+ */
+export async function findOrCreateLabel(
+  teamId: string,
+  name: string,
+  color?: string,
+): Promise<IssueLabel> {
+  const client = getLinearClient();
+  const labels = await withRetry(
+    () =>
+      client.issueLabels({
+        filter: { team: { id: { eq: teamId } }, name: { eq: name } },
+      }),
+    "findOrCreateLabel",
+  );
+
+  if (labels.nodes[0]) return labels.nodes[0];
+
+  info(`Creating label '${name}'...`);
+  const payload = await withRetry(
+    () =>
+      client.createIssueLabel({
+        teamId,
+        name,
+        color: color ?? "#888888",
+      }),
+    "findOrCreateLabel",
+  );
+  const label = await payload.issueLabel;
+  if (!label) throw new Error(`Failed to create label '${name}'`);
+  return label;
 }
 
 /**
@@ -77,14 +132,18 @@ export async function getReadyIssues(
 ): Promise<Issue[]> {
   const client = getLinearClient();
 
-  const result = await client.issues({
-    filter: {
-      team: { id: { eq: linearIds.teamId } },
-      state: { id: { eq: linearIds.states.ready } },
-      project: { id: { eq: linearIds.projectId } },
-    },
-    first: limit,
-  });
+  const result = await withRetry(
+    () =>
+      client.issues({
+        filter: {
+          team: { id: { eq: linearIds.teamId } },
+          state: { id: { eq: linearIds.states.ready } },
+          project: { id: { eq: linearIds.projectId } },
+        },
+        first: limit,
+      }),
+    "getReadyIssues",
+  );
 
   // Sort by priority (lower number = higher priority in Linear)
   const sorted = [...result.nodes].sort(
@@ -95,14 +154,23 @@ export async function getReadyIssues(
   const unblocked: Issue[] = [];
 
   for (const issue of sorted) {
-    const relations = await issue.relations();
+    const relations = await withRetry(
+      () => issue.relations(),
+      "getReadyIssues",
+    );
     let isBlocked = false;
 
     for (const relation of relations.nodes) {
       if (relation.type === "blocks") {
-        const related = await relation.relatedIssue;
+        const related = await withRetry(
+          async () => relation.relatedIssue,
+          "getReadyIssues",
+        );
         if (related) {
-          const state = await related.state;
+          const state = await withRetry(
+            async () => related.state,
+            "getReadyIssues",
+          );
           if (
             state &&
             state.type !== "completed" &&
@@ -131,14 +199,18 @@ export async function countIssuesInState(
   stateId: string,
 ): Promise<number> {
   const client = getLinearClient();
-  let result = await client.issues({
-    filter: {
-      team: { id: { eq: linearIds.teamId } },
-      state: { id: { eq: stateId } },
-      project: { id: { eq: linearIds.projectId } },
-    },
-    first: 250,
-  });
+  let result = await withRetry(
+    () =>
+      client.issues({
+        filter: {
+          team: { id: { eq: linearIds.teamId } },
+          state: { id: { eq: stateId } },
+          project: { id: { eq: linearIds.projectId } },
+        },
+        first: 250,
+      }),
+    "countIssuesInState",
+  );
 
   while (result.pageInfo.hasNextPage) {
     result = await result.fetchNext();
@@ -157,11 +229,17 @@ export async function updateIssue(
   const client = getLinearClient();
 
   if (opts.stateId) {
-    await client.updateIssue(issueId, { stateId: opts.stateId });
+    await withRetry(
+      () => client.updateIssue(issueId, { stateId: opts.stateId }),
+      "updateIssue",
+    );
   }
 
   if (opts.comment) {
-    await client.createComment({ issueId, body: opts.comment });
+    await withRetry(
+      () => client.createComment({ issueId, body: opts.comment as string }),
+      "updateIssue",
+    );
   }
 }
 
@@ -179,19 +257,53 @@ export async function createIssue(opts: {
   parentId?: string;
 }): Promise<Issue> {
   const client = getLinearClient();
-  const payload = await client.createIssue({
-    teamId: opts.teamId,
-    projectId: opts.projectId,
-    title: opts.title,
-    description: opts.description,
-    stateId: opts.stateId,
-    priority: opts.priority,
-    labelIds: opts.labelIds,
-    parentId: opts.parentId,
-  });
+  const payload = await withRetry(
+    () =>
+      client.createIssue({
+        teamId: opts.teamId,
+        projectId: opts.projectId,
+        title: opts.title,
+        description: opts.description,
+        stateId: opts.stateId,
+        priority: opts.priority,
+        labelIds: opts.labelIds,
+        parentId: opts.parentId,
+      }),
+    "createIssue",
+  );
   const issue = await payload.issue;
   if (!issue) throw new Error("Failed to create issue");
   return issue;
+}
+
+/**
+ * Validate a Linear issue identifier (e.g., "ENG-123").
+ * Throws if the identifier contains path separators, spaces, or other
+ * characters that could be dangerous when used in file paths or branch names.
+ * Returns the identifier unchanged for convenience.
+ */
+export function validateIdentifier(identifier: string): string {
+  if (!/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(identifier)) {
+    throw new Error(
+      `Invalid Linear issue identifier: "${identifier}". Expected format: TEAM-123`,
+    );
+  }
+  return identifier;
+}
+
+/**
+ * Verify the Linear API connection works.
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    const client = getLinearClient();
+    const viewer = await client.viewer;
+    info(`Connected to Linear as ${viewer.name ?? viewer.email}`);
+    return true;
+  } catch (e) {
+    warn(`Linear connection failed: ${e}`);
+    return false;
+  }
 }
 
 /**
