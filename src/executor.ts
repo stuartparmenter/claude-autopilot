@@ -79,6 +79,8 @@ export async function executeIssue(opts: {
 
     if (result.error) {
       warn(`${issue.identifier} failed: ${result.error}`);
+      // Move back to Ready so it can be retried on next loop
+      await updateIssue(issue.id, { stateId: linearIds.states.ready });
       state.completeAgent(agentId, "failed", {
         costUsd: result.costUsd,
         durationMs: result.durationMs,

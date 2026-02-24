@@ -100,6 +100,8 @@ export async function runClaude(opts: {
       // Bypass all permission prompts for headless execution
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      // Capture stderr so we can diagnose startup failures (e.g. exit code 3)
+      stderr: (data: string) => warn(`[stderr] ${data.trimEnd()}`),
     };
     if (opts.mcpServers) {
       queryOpts.mcpServers = opts.mcpServers;
