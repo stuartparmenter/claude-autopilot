@@ -132,6 +132,8 @@ export async function fillSlots(opts: {
   state: AppState;
   shutdownSignal?: AbortSignal;
 }): Promise<Array<Promise<boolean>>> {
+  if (opts.shutdownSignal?.aborted) return [];
+
   const { config, projectPath, linearIds, state } = opts;
   const maxSlots = config.executor.parallel;
   const running = state.getRunningCount();
