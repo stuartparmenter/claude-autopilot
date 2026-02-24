@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { error } from "./logger";
+import { fatal } from "./logger";
 
 export interface LinearConfig {
   team: string;
@@ -35,6 +35,7 @@ export interface LinearIds {
 export interface ExecutorConfig {
   parallel: number;
   timeout_minutes: number;
+  inactivity_timeout_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
   commit_pattern: string;
@@ -51,6 +52,11 @@ export interface AuditorConfig {
   scan_dimensions: string[];
 }
 
+export interface GithubConfig {
+  repo: string; // "owner/repo" override — empty = auto-detect from git remote
+  automerge: boolean; // Enable auto-merge on PRs created by the executor
+}
+
 export interface ProjectConfig {
   name: string;
 }
@@ -59,6 +65,7 @@ export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
+  github: GithubConfig;
   project: ProjectConfig;
 }
 
@@ -78,6 +85,7 @@ export const DEFAULTS: AutopilotConfig = {
   executor: {
     parallel: 3,
     timeout_minutes: 30,
+    inactivity_timeout_minutes: 10,
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
@@ -99,6 +107,10 @@ export const DEFAULTS: AutopilotConfig = {
       "dependency-health",
       "documentation",
     ],
+  },
+  github: {
+    repo: "",
+    automerge: false,
   },
   project: {
     name: "",
@@ -151,11 +163,11 @@ export function loadConfig(projectPath: string): AutopilotConfig {
 
 export function resolveProjectPath(arg?: string): string {
   if (!arg) {
-    error("Usage: bun run <script> <project-path>");
+    fatal("Usage: bun run <script> <project-path>");
   }
   const resolved = resolve(arg);
   if (!existsSync(resolved)) {
-    error(`Project path does not exist: ${resolved}`);
+    fatal(`Project path does not exist: ${resolved}`);
   }
   return resolved;
 }

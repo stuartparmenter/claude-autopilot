@@ -1,99 +1,110 @@
-import {
-  AuthenticationLinearError,
-  FeatureNotAccessibleLinearError,
-  ForbiddenLinearError,
-  InvalidInputLinearError,
-  LinearError,
-  NetworkLinearError,
-  RatelimitedLinearError,
-} from "@linear/sdk";
 import { warn } from "./logger";
 
-const BASE_DELAY_MS = 1_000;
-const MAX_DELAY_MS = 30_000;
-const DEFAULT_MAX_RETRIES = 3;
-
-interface RetryOptions {
-  label?: string;
-  maxRetries?: number;
-}
-
-function isNonRetryable(error: unknown): boolean {
-  return (
-    error instanceof InvalidInputLinearError ||
-    error instanceof AuthenticationLinearError ||
-    error instanceof ForbiddenLinearError ||
-    error instanceof FeatureNotAccessibleLinearError
-  );
-}
-
-function isRetryable(error: unknown): boolean {
-  if (error instanceof RatelimitedLinearError) return true;
-  if (error instanceof NetworkLinearError) return true;
-  if (error instanceof TypeError) return true; // fetch failures
-  if (
-    error instanceof LinearError &&
-    error.status !== undefined &&
-    error.status >= 500
-  )
-    return true;
-  return false;
-}
-
-function retryDelayMs(error: unknown, attempt: number): number {
-  if (
-    error instanceof RatelimitedLinearError &&
-    error.retryAfter !== undefined
-  ) {
-    return Math.min(error.retryAfter * 1_000, MAX_DELAY_MS);
-  }
-  const exponential = BASE_DELAY_MS * 2 ** attempt;
-  const jitter = Math.random() * BASE_DELAY_MS;
-  return Math.min(exponential + jitter, MAX_DELAY_MS);
+export interface RetryOptions {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  shouldRetry?: (err: unknown) => boolean;
 }
 
 /**
- * Wraps an async function with exponential backoff retry logic for Linear API calls.
- *
- * Retries on: RatelimitedLinearError (using retryAfter), NetworkLinearError,
- * TypeError (fetch failures), and 5xx LinearErrors.
- *
- * Immediately rethrows: InvalidInputLinearError, AuthenticationLinearError,
- * ForbiddenLinearError, FeatureNotAccessibleLinearError.
- *
- * Defaults: base 1s, cap 30s, max 3 retries (4 total attempts).
+ * Returns true for errors worth retrying:
+ * - HTTP 429 (rate limit)
+ * - HTTP 5xx (server errors)
+ * - Network errors (ECONNRESET, ETIMEDOUT, fetch failed)
+ */
+export function isTransientError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+
+  // Duck-type check for Octokit's RequestError (.status property)
+  const statusErr = err as Error & { status?: unknown };
+  if (typeof statusErr.status === "number") {
+    return statusErr.status === 429 || statusErr.status >= 500;
+  }
+
+  // Network error codes
+  const codeErr = err as Error & { code?: unknown };
+  if (codeErr.code === "ECONNRESET" || codeErr.code === "ETIMEDOUT") {
+    return true;
+  }
+
+  // Fetch-level failure messages
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("fetch failed") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout")
+  );
+}
+
+/**
+ * Extract delay from Retry-After header (Octokit RequestError carries response.headers).
+ * Returns milliseconds, or null if not applicable.
+ */
+function retryAfterMs(err: unknown): number | null {
+  if (!(err instanceof Error)) return null;
+
+  const reqErr = err as Error & {
+    status?: unknown;
+    response?: { headers?: Record<string, string | string[] | undefined> };
+  };
+  if (reqErr.status !== 429) return null;
+
+  const header = reqErr.response?.headers?.["retry-after"];
+  if (!header) return null;
+
+  const value = Array.isArray(header) ? header[0] : header;
+  if (!value) return null;
+
+  // Seconds format
+  const seconds = Number(value);
+  if (!Number.isNaN(seconds)) return seconds * 1000;
+
+  // HTTP-date format
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return Math.max(0, date.getTime() - Date.now());
+  }
+
+  return null;
+}
+
+/**
+ * Retry fn on transient errors with exponential backoff + jitter.
+ * @param fn - Async function to call
+ * @param label - Identifier for log output (e.g., "getPR #42")
+ * @param opts - Override defaults
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  options: RetryOptions = {},
+  label: string,
+  opts: RetryOptions = {},
 ): Promise<T> {
-  const { label = "Linear API", maxRetries = DEFAULT_MAX_RETRIES } = options;
+  const maxAttempts = opts.maxAttempts ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 500;
+  const maxDelayMs = opts.maxDelayMs ?? 10_000;
+  const shouldRetry = opts.shouldRetry ?? isTransientError;
 
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
-    } catch (error) {
-      if (isNonRetryable(error) || !isRetryable(error)) {
-        throw error;
+    } catch (err) {
+      if (attempt === maxAttempts || !shouldRetry(err)) {
+        throw err;
       }
 
-      lastError = error;
+      const fromHeader = retryAfterMs(err);
+      const expo = baseDelayMs * 2 ** (attempt - 1);
+      const jitter = Math.random() * 0.3 * expo;
+      const delayMs = fromHeader ?? Math.min(expo + jitter, maxDelayMs);
 
-      if (attempt === maxRetries) {
-        break;
-      }
-
-      const delayMs = retryDelayMs(error, attempt);
-      const msg = error instanceof Error ? error.message : String(error);
       warn(
-        `${label}: attempt ${attempt + 1}/${maxRetries + 1} failed (${msg}), retrying in ${Math.round(delayMs)}ms`,
+        `[${label}] attempt ${attempt}/${maxAttempts} failed — retrying in ${Math.round(delayMs)}ms`,
       );
-
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  throw lastError;
+  // Unreachable: loop always returns or throws before exhausting attempts
+  throw new Error("unreachable");
 }

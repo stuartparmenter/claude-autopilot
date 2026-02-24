@@ -1,2 +1,4 @@
 node_modules/
 .claude-autopilot.yml
+.worktrees/
+docs/plans/

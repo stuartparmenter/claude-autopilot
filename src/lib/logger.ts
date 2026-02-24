@@ -29,9 +29,15 @@ export function warn(msg: string): void {
   );
 }
 
-export function error(msg: string): never {
+export function error(msg: string): void {
   console.error(
     `${COLORS.red}[ERROR]${COLORS.reset} ${COLORS.dim}${timestamp()}${COLORS.reset} ${msg}`,
+  );
+}
+
+export function fatal(msg: string): never {
+  console.error(
+    `${COLORS.red}[FATAL]${COLORS.reset} ${COLORS.dim}${timestamp()}${COLORS.reset} ${msg}`,
   );
   process.exit(1);
 }

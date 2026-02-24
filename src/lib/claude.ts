@@ -5,6 +5,33 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ActivityEntry } from "../state";
 import { info, warn } from "./logger";
+import { createWorktree, removeWorktree } from "./worktree";
+
+// Stagger agent spawns to avoid race conditions on ~/.claude.json.
+// Each query() waits for the previous agent to signal it has started (init
+// message) before spawning. If the agent crashes before init, the finally
+// block in runClaude releases the slot.
+let spawnGate: Promise<void> = Promise.resolve();
+
+/**
+ * Wait for the previous agent to finish starting, then reserve the slot.
+ * Returns a release function — call it when the agent emits its init message,
+ * or in the finally block if the agent never starts.
+ */
+function acquireSpawnSlot(): { ready: Promise<void>; release: () => void } {
+  const previous = spawnGate;
+  let release!: () => void;
+  let released = false;
+  spawnGate = new Promise<void>((r) => {
+    release = () => {
+      if (!released) {
+        released = true;
+        r();
+      }
+    };
+  });
+  return { ready: previous, release };
+}
 
 export interface ClaudeResult {
   result: string;
@@ -13,36 +40,52 @@ export interface ClaudeResult {
   durationMs?: number;
   numTurns?: number;
   timedOut: boolean;
+  inactivityTimedOut: boolean;
   error?: string;
 }
+
+/** Maps tool names to the input field used in their activity summary. */
+const TOOL_SUMMARY_FIELDS: Record<string, string> = {
+  Read: "file_path",
+  Write: "file_path",
+  Edit: "file_path",
+  Bash: "command",
+  Glob: "pattern",
+  Grep: "pattern",
+  WebFetch: "url",
+  WebSearch: "query",
+};
 
 function summarizeToolUse(toolName: string, input: unknown): string {
   const inp =
     input !== null && typeof input === "object"
       ? (input as Record<string, unknown>)
       : {};
-  switch (toolName) {
-    case "Read":
-      return `Read ${inp.file_path ?? "file"}`;
-    case "Write":
-      return `Write ${inp.file_path ?? "file"}`;
-    case "Edit":
-      return `Edit ${inp.file_path ?? "file"}`;
-    case "Bash":
-      return `Bash: ${String(inp.command ?? "").slice(0, 80)}`;
-    case "Glob":
-      return `Glob: ${inp.pattern ?? ""}`;
-    case "Grep":
-      return `Grep: ${inp.pattern ?? ""}`;
-    case "WebFetch":
-      return `WebFetch: ${inp.url ?? ""}`;
-    case "WebSearch":
-      return `WebSearch: ${inp.query ?? ""}`;
-    case "Task":
-      return `Task: ${inp.description ?? inp.subagent_type ?? "subagent"}`;
-    default:
-      return `Tool: ${toolName}`;
+
+  const field = TOOL_SUMMARY_FIELDS[toolName];
+  if (field) {
+    const value = String(inp[field] ?? "").slice(0, 80);
+    return `${toolName}: ${value}`;
   }
+  if (toolName === "Task") {
+    return `Task: ${inp.description ?? inp.subagent_type ?? "subagent"}`;
+  }
+  return `Tool: ${toolName}`;
+}
+
+export function buildMcpServers(): Record<string, unknown> {
+  return {
+    linear: {
+      type: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: { Authorization: `Bearer ${process.env.LINEAR_API_KEY}` },
+    },
+    github: {
+      type: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+    },
+  };
 }
 
 /**
@@ -53,7 +96,9 @@ export async function runClaude(opts: {
   prompt: string;
   cwd: string;
   worktree?: string;
+  worktreeBranch?: string;
   timeoutMs?: number;
+  inactivityMs?: number;
   model?: string;
   mcpServers?: Record<string, unknown>;
   parentSignal?: AbortSignal;
@@ -61,19 +106,17 @@ export async function runClaude(opts: {
 }): Promise<ClaudeResult> {
   info(`Running Claude Code agent (cwd: ${opts.cwd})...`);
 
-  // Set up abort controller for timeout and graceful shutdown
   const controller = new AbortController();
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   if (opts.timeoutMs) {
+    const timeoutMs = opts.timeoutMs;
     timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
-      warn(
-        `Claude Code timed out after ${Math.round((opts.timeoutMs ?? 0) / 1000)}s`,
-      );
-    }, opts.timeoutMs);
+      warn(`Claude Code timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }, timeoutMs);
   }
 
   // If a parent signal fires (e.g. Ctrl+C), abort this agent too
@@ -91,104 +134,190 @@ export async function runClaude(opts: {
   const result: ClaudeResult = {
     result: "",
     timedOut: false,
+    inactivityTimedOut: false,
   };
 
+  let worktreeName: string | undefined;
+  let inactivityTimedOut = false;
+  let loopCompleted = false;
+  let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let inactivityInterval: ReturnType<typeof setInterval> | undefined;
+  let releaseSpawnSlot: (() => void) | undefined;
+
+  const keepBranch = !!opts.worktreeBranch;
+
   try {
+    // Build query options declaratively
     const queryOpts: Record<string, unknown> = {
       cwd: opts.cwd,
       abortController: controller,
-      // Use the full Claude Code toolkit and system prompt
       tools: { type: "preset", preset: "claude_code" },
       systemPrompt: { type: "preset", preset: "claude_code" },
-      // Load project settings (.claude/settings.json, CLAUDE.md)
       settingSources: ["project"],
-      // Bypass all permission prompts for headless execution
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      // Capture stderr so we can diagnose startup failures (e.g. exit code 3)
       stderr: (data: string) => warn(`[stderr] ${data.trimEnd()}`),
+      ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
+      ...(opts.model && { model: opts.model }),
+      // Release the spawn slot as early as possible — the Setup hook fires
+      // during initialization, before SessionStart and the init message.
+      // By this point the agent is past its ~/.claude.json access.
+      hooks: {
+        Setup: [
+          {
+            hooks: [
+              async () => {
+                releaseSpawnSlot?.();
+                return {};
+              },
+            ],
+          },
+        ],
+      },
     };
-    if (opts.mcpServers) {
-      queryOpts.mcpServers = opts.mcpServers;
-    }
-    if (opts.model) {
-      queryOpts.model = opts.model;
-    }
+
+    // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {
-      queryOpts.extraArgs = { worktree: opts.worktree };
+      queryOpts.cwd = createWorktree(
+        opts.cwd,
+        opts.worktree,
+        opts.worktreeBranch,
+      );
+      worktreeName = opts.worktree;
     }
 
-    for await (const message of query({
-      prompt: opts.prompt,
-      options: queryOpts,
-    })) {
-      // Capture session ID on init
-      if (message.type === "system" && message.subtype === "init") {
-        result.sessionId = message.session_id;
-        emit?.({
-          timestamp: Date.now(),
-          type: "status",
-          summary: "Agent started",
-        });
+    // Check for shutdown before proceeding
+    if (opts.parentSignal?.aborted) {
+      if (worktreeName) {
+        removeWorktree(opts.cwd, worktreeName, { keepBranch });
       }
+      result.error = "Aborted before start";
+      return result;
+    }
 
-      // Emit activity for tool use
-      if (message.type === "assistant" && message.message) {
-        const { content } = (message as SDKAssistantMessage).message;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "tool_use" && "name" in block) {
-              emit?.({
-                timestamp: Date.now(),
-                type: "tool_use",
-                summary: summarizeToolUse(block.name, block.input),
-              });
-            } else if (block.type === "text" && "text" in block) {
-              emit?.({
-                timestamp: Date.now(),
-                type: "text",
-                summary: block.text.slice(0, 200),
-                detail: block.text,
-              });
+    // Wait for any prior agent to finish starting before we spawn
+    const spawnSlot = acquireSpawnSlot();
+    releaseSpawnSlot = spawnSlot.release;
+    await spawnSlot.ready;
+
+    // Inactivity watchdog: reset on every SDK message
+    let lastActivityAt = Date.now();
+    if (opts.inactivityMs) {
+      const inactivityMs = opts.inactivityMs;
+      inactivityInterval = setInterval(() => {
+        if (inactivityTimedOut) return;
+        if (Date.now() - lastActivityAt > inactivityMs) {
+          inactivityTimedOut = true;
+          warn(
+            `Agent inactive for ${Math.round(inactivityMs / 1000)}s, aborting`,
+          );
+          controller.abort();
+        }
+      }, 30_000);
+    }
+
+    const q = query({ prompt: opts.prompt, options: queryOpts });
+
+    const runSdkLoop = async () => {
+      for await (const message of q) {
+        lastActivityAt = Date.now();
+
+        if (message.type === "system" && message.subtype === "init") {
+          result.sessionId = message.session_id;
+          emit?.({
+            timestamp: Date.now(),
+            type: "status",
+            summary: "Agent started",
+          });
+        }
+
+        if (message.type === "assistant" && message.message) {
+          const { content } = (message as SDKAssistantMessage).message;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === "tool_use" && "name" in block) {
+                emit?.({
+                  timestamp: Date.now(),
+                  type: "tool_use",
+                  summary: summarizeToolUse(block.name, block.input),
+                });
+              } else if (block.type === "text" && "text" in block) {
+                emit?.({
+                  timestamp: Date.now(),
+                  type: "text",
+                  summary: block.text.slice(0, 200),
+                  detail: block.text,
+                });
+              }
             }
           }
         }
-      }
 
-      // Emit activity for tool results
-      if (message.type === "result") {
-        if (message.subtype === "success") {
-          result.result = message.result;
-          result.costUsd = message.total_cost_usd;
-          result.durationMs = message.duration_ms;
-          result.numTurns = message.num_turns;
-          emit?.({
-            timestamp: Date.now(),
-            type: "result",
-            summary: "Agent completed successfully",
-          });
-        } else {
-          const errResult = message as SDKResultError;
-          const errSummary = errResult.errors?.length
-            ? errResult.errors.join("; ")
-            : errResult.subtype;
-          result.error = errSummary;
-          emit?.({
-            timestamp: Date.now(),
-            type: "error",
-            summary: `Agent error: ${errSummary.slice(0, 200)}`,
-          });
+        if (message.type === "result") {
+          if (message.subtype === "success") {
+            result.result = message.result;
+            result.costUsd = message.total_cost_usd;
+            result.durationMs = message.duration_ms;
+            result.numTurns = message.num_turns;
+            emit?.({
+              timestamp: Date.now(),
+              type: "result",
+              summary: "Agent completed successfully",
+            });
+          } else {
+            const errResult = message as SDKResultError;
+            const errSummary = errResult.errors?.length
+              ? errResult.errors.join("; ")
+              : errResult.subtype;
+            result.error = errSummary;
+            emit?.({
+              timestamp: Date.now(),
+              type: "error",
+              summary: `Agent error: ${errSummary.slice(0, 200)}`,
+            });
+          }
         }
+      }
+      loopCompleted = true;
+    };
+
+    // Hard kill safety net: if abort doesn't break the loop within 60s, force-close.
+    // Use the larger of the two timeouts as baseline so the hard kill fires last.
+    const hardKillDelayMs =
+      Math.max(
+        opts.timeoutMs ?? 30 * 60 * 1000,
+        opts.inactivityMs ?? 10 * 60 * 1000,
+      ) + 60_000;
+
+    const hardKillPromise = new Promise<"hard_kill">((resolve) => {
+      hardKillTimer = setTimeout(() => resolve("hard_kill"), hardKillDelayMs);
+    });
+
+    const outcome = await Promise.race([
+      runSdkLoop().then(() => "completed" as const),
+      hardKillPromise,
+    ]);
+
+    if (outcome === "hard_kill") {
+      warn("Hard kill: SDK loop did not exit after abort, forcing close");
+      try {
+        q.close();
+      } catch {
+        // close() may throw if already dead
+      }
+      if (!result.error) {
+        result.error = "Hard kill: SDK unresponsive after abort";
       }
     }
   } catch (e: unknown) {
-    if (timedOut) {
-      result.timedOut = true;
-      result.error = "Timed out";
+    if (timedOut || inactivityTimedOut) {
+      result.error = inactivityTimedOut ? "Inactivity timeout" : "Timed out";
       emit?.({
         timestamp: Date.now(),
         type: "error",
-        summary: "Agent timed out",
+        summary: inactivityTimedOut
+          ? "Agent inactive, timed out"
+          : "Agent timed out",
       });
     } else {
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -201,13 +330,27 @@ export async function runClaude(opts: {
       });
     }
   } finally {
+    // Ensure the spawn slot is released even if we never got to init
+    releaseSpawnSlot?.();
+    if (hardKillTimer) clearTimeout(hardKillTimer);
+    if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
+
+    if (worktreeName) {
+      try {
+        removeWorktree(opts.cwd, worktreeName, { keepBranch });
+      } catch (e) {
+        warn(`Worktree cleanup failed for '${worktreeName}': ${e}`);
+      }
+    }
   }
 
-  // The abort may end the stream without throwing, so ensure timedOut is captured
-  result.timedOut = timedOut;
+  // Only mark as timed out if the loop didn't complete successfully.
+  // Fixes race where timeout fires milliseconds after the agent finishes.
+  result.timedOut = (timedOut || inactivityTimedOut) && !loopCompleted;
+  result.inactivityTimedOut = inactivityTimedOut && !loopCompleted;
 
-  if (!timedOut && !result.error) {
+  if (!result.timedOut && !result.error) {
     info(
       `Claude Code finished` +
         (result.durationMs

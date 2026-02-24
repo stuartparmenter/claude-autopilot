@@ -1,4 +1,4 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { countIssuesInState } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
@@ -80,15 +80,7 @@ export async function runAudit(opts: {
     cwd: projectPath,
     timeoutMs: AUDITOR_TIMEOUT_MS,
     model: config.executor.planning_model,
-    mcpServers: {
-      linear: {
-        type: "http",
-        url: "https://mcp.linear.app/mcp",
-        headers: {
-          Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-        },
-      },
-    },
+    mcpServers: buildMcpServers(),
     parentSignal: opts.shutdownSignal,
     onActivity: (entry) => state.addActivity(agentId, entry),
   });

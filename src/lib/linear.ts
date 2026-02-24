@@ -38,7 +38,7 @@ export async function findTeam(teamKey: string): Promise<Team> {
   const client = getLinearClient();
   const teams = await withRetry(
     () => client.teams({ filter: { key: { eq: teamKey } } }),
-    { label: "findTeam" },
+    "findTeam",
   );
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team '${teamKey}' not found in Linear`);
@@ -55,7 +55,7 @@ export async function findProject(projectName: string): Promise<Project> {
       client.projects({
         filter: { name: { eq: projectName } },
       }),
-    { label: "findProject" },
+    "findProject",
   );
   const project = projects.nodes[0];
   if (!project) throw new Error(`Project '${projectName}' not found in Linear`);
@@ -75,7 +75,7 @@ export async function findState(
       client.workflowStates({
         filter: { team: { id: { eq: teamId } }, name: { eq: stateName } },
       }),
-    { label: "findState" },
+    "findState",
   );
   const state = states.nodes[0];
   if (!state) throw new Error(`State '${stateName}' not found for team`);
@@ -96,7 +96,7 @@ export async function findOrCreateLabel(
       client.issueLabels({
         filter: { team: { id: { eq: teamId } }, name: { eq: name } },
       }),
-    { label: "findOrCreateLabel" },
+    "findOrCreateLabel",
   );
 
   if (labels.nodes[0]) return labels.nodes[0];
@@ -109,7 +109,7 @@ export async function findOrCreateLabel(
         name,
         color: color ?? "#888888",
       }),
-    { label: "findOrCreateLabel" },
+    "findOrCreateLabel",
   );
   const label = await payload.issueLabel;
   if (!label) throw new Error(`Failed to create label '${name}'`);
@@ -135,7 +135,7 @@ export async function getReadyIssues(
         },
         first: limit,
       }),
-    { label: "getReadyIssues" },
+    "getReadyIssues",
   );
 
   // Sort by priority (lower number = higher priority in Linear)
@@ -147,20 +147,20 @@ export async function getReadyIssues(
   const unblocked: Issue[] = [];
 
   for (const issue of sorted) {
-    const relations = await withRetry(() => issue.relations(), {
-      label: "getReadyIssues",
-    });
+    const relations = await withRetry(() => issue.relations(), "getReadyIssues");
     let isBlocked = false;
 
     for (const relation of relations.nodes) {
       if (relation.type === "blocks") {
-        const related = await withRetry(async () => relation.relatedIssue, {
-          label: "getReadyIssues",
-        });
+        const related = await withRetry(
+          async () => relation.relatedIssue,
+          "getReadyIssues",
+        );
         if (related) {
-          const state = await withRetry(async () => related.state, {
-            label: "getReadyIssues",
-          });
+          const state = await withRetry(
+            async () => related.state,
+            "getReadyIssues",
+          );
           if (
             state &&
             state.type !== "completed" &&
@@ -199,7 +199,7 @@ export async function countIssuesInState(
         },
         first: 250,
       }),
-    { label: "countIssuesInState" },
+    "countIssuesInState",
   );
 
   while (result.pageInfo.hasNextPage) {
@@ -221,14 +221,14 @@ export async function updateIssue(
   if (opts.stateId) {
     await withRetry(
       () => client.updateIssue(issueId, { stateId: opts.stateId }),
-      { label: "updateIssue" },
+      "updateIssue",
     );
   }
 
   if (opts.comment) {
     await withRetry(
       () => client.createComment({ issueId, body: opts.comment as string }),
-      { label: "updateIssue" },
+      "updateIssue",
     );
   }
 }
@@ -259,11 +259,26 @@ export async function createIssue(opts: {
         labelIds: opts.labelIds,
         parentId: opts.parentId,
       }),
-    { label: "createIssue" },
+    "createIssue",
   );
   const issue = await payload.issue;
   if (!issue) throw new Error("Failed to create issue");
   return issue;
+}
+
+/**
+ * Verify the Linear API connection works.
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    const client = getLinearClient();
+    const viewer = await client.viewer;
+    info(`Connected to Linear as ${viewer.name ?? viewer.email}`);
+    return true;
+  } catch (e) {
+    warn(`Linear connection failed: ${e}`);
+    return false;
+  }
 }
 
 /**
