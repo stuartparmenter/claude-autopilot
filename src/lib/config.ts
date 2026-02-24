@@ -53,6 +53,7 @@ export interface AuditorConfig {
 
 export interface GithubConfig {
   repo: string; // "owner/repo" override — empty = auto-detect from git remote
+  automerge: boolean; // Enable auto-merge on PRs created by the executor
 }
 
 export interface ProjectConfig {
@@ -107,6 +108,7 @@ export const DEFAULTS: AutopilotConfig = {
   },
   github: {
     repo: "",
+    automerge: false,
   },
   project: {
     name: "",
