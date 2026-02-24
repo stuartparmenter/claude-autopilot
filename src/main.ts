@@ -16,8 +16,10 @@ import {
 import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
+import { detectRepo } from "./lib/github";
 import { resolveLinearIds } from "./lib/linear";
 import { error, header, info, ok, warn } from "./lib/logger";
+import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
 import { AppState } from "./state";
 
@@ -66,6 +68,15 @@ if (!process.env.LINEAR_API_KEY) {
   );
 }
 
+if (!process.env.GITHUB_TOKEN) {
+  error(
+    "GITHUB_TOKEN environment variable is not set.\n" +
+      "Create one at: https://github.com/settings/tokens\n" +
+      "Required scopes: repo (for PR monitoring and GitHub MCP).\n" +
+      "Then: export GITHUB_TOKEN=ghp_...",
+  );
+}
+
 // The Agent SDK accepts ANTHROPIC_API_KEY or Claude Code subscription auth.
 // Check common env vars so the user gets a clear message instead of a cryptic
 // failure minutes into the run when the first agent spawns.
@@ -94,6 +105,14 @@ info(`Max parallel: ${config.executor.parallel}`);
 info(
   `Model: ${config.executor.model} (planning: ${config.executor.planning_model})`,
 );
+
+// --- Detect GitHub repo ---
+
+const { owner: ghOwner, repo: ghRepo } = detectRepo(
+  projectPath,
+  config.github.repo || undefined,
+);
+ok(`GitHub repo: ${ghOwner}/${ghRepo}`);
 
 // --- Connect to Linear ---
 
@@ -179,6 +198,21 @@ while (true) {
     }
 
     if (shuttingDown) break;
+
+    // Check open PRs and spawn fixers for failures/conflicts
+    const fixerPromises = await checkOpenPRs({
+      owner: ghOwner,
+      repo: ghRepo,
+      config,
+      projectPath,
+      linearIds,
+      state,
+      shutdownSignal: shutdownController.signal,
+    });
+    for (const p of fixerPromises) {
+      const tracked = p.finally(() => running.delete(tracked));
+      running.add(tracked);
+    }
 
     // Fill executor slots
     const newPromises = await fillSlots({

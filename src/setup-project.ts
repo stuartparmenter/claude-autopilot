@@ -114,6 +114,13 @@ if (existsSync(settingsPath)) {
     warn("Linear MCP not found -you may need to add it manually");
     warn("See .claude/settings.json in the autopilot repo for the config");
   }
+
+  if (existing.includes("githubcopilot.com/mcp")) {
+    ok("GitHub MCP already configured");
+  } else {
+    warn("GitHub MCP not found -you may need to add it manually");
+    warn("See .claude/settings.json in the autopilot repo for the config");
+  }
 } else {
   const settings = {
     env: {
@@ -131,10 +138,23 @@ if (existsSync(settingsPath)) {
           "Authorization: Bearer ${LINEAR_API_KEY}",
         ],
       },
+      github: {
+        command: "npx",
+        args: [
+          "-y",
+          "mcp-remote",
+          "https://api.githubcopilot.com/mcp/",
+          "--header",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional literal for JSON output
+          "Authorization: Bearer ${GITHUB_TOKEN}",
+        ],
+      },
     },
   };
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-  ok("Created .claude/settings.json with Linear MCP and Agent Teams");
+  ok(
+    "Created .claude/settings.json with Linear MCP, GitHub MCP, and Agent Teams",
+  );
 }
 
 // --- Add to .gitignore ---
@@ -176,11 +196,13 @@ console.log();
 console.log("  3. Set your Linear API key");
 console.log("     export LINEAR_API_KEY=lin_api_...");
 console.log("     Get one at: https://linear.app/settings/api");
-console.log(
-  "     The Linear MCP uses this key automatically (no OAuth needed).",
-);
 console.log();
-console.log("  4. Start the loop");
+console.log("  4. Set your GitHub token");
+console.log("     export GITHUB_TOKEN=ghp_...");
+console.log("     Get one at: https://github.com/settings/tokens");
+console.log("     Required scopes: repo (for PR monitoring and GitHub MCP)");
+console.log();
+console.log("  5. Start the loop");
 console.log(`     bun run start ${PROJECT_PATH}`);
 console.log("     Dashboard at http://localhost:7890");
 console.log();

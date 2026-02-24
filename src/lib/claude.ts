@@ -6,6 +6,22 @@ import {
 import type { ActivityEntry } from "../state";
 import { info, warn } from "./logger";
 
+// Stagger agent spawns to avoid race conditions on ~/.claude.json.
+// Each query() call waits for the previous one to finish starting up.
+const SPAWN_DELAY_MS = 2000;
+let spawnGate: Promise<void> = Promise.resolve();
+
+function acquireSpawnSlot(): Promise<void> {
+  const previous = spawnGate;
+  let release: () => void;
+  spawnGate = new Promise((r) => {
+    release = r;
+  });
+  return previous.then(() => {
+    setTimeout(() => release(), SPAWN_DELAY_MS);
+  });
+}
+
 export interface ClaudeResult {
   result: string;
   sessionId?: string;
@@ -117,6 +133,9 @@ export async function runClaude(opts: {
     if (opts.worktree) {
       queryOpts.extraArgs = { worktree: opts.worktree };
     }
+
+    // Wait for any prior agent to finish starting before we spawn
+    await acquireSpawnSlot();
 
     for await (const message of query({
       prompt: opts.prompt,

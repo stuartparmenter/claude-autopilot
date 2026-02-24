@@ -55,6 +55,13 @@ export async function executeIssue(opts: {
             Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
           },
         },
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: {
+            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          },
+        },
       },
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),

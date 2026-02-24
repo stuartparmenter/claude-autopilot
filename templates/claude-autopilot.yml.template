@@ -35,6 +35,12 @@ auditor:
   min_ready_threshold: 5        # Only audit when fewer than N issues are in Ready
   max_issues_per_run: 10        # Cap on issues filed per audit run
 
+# ─── GitHub ───────────────────────────────────────────────────────────────────
+# GitHub integration for PR monitoring, CI checks, and the fixer agent.
+
+github:
+  repo: ""                        # "owner/repo" override — leave empty to auto-detect from git remote
+
 # ─── Project ──────────────────────────────────────────────────────────────────
 # Minimal metadata used by the orchestrator. Everything else goes in CLAUDE.md.
 
