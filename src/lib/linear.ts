@@ -149,7 +149,9 @@ export async function getReadyIssues(
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      warn(`Skipping issue ${issue.identifier}: failed to check relations — ${msg}`);
+      warn(
+        `Skipping issue ${issue.identifier}: failed to check relations — ${msg}`,
+      );
     }
   }
 
