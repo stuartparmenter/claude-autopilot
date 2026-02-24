@@ -71,6 +71,7 @@ export async function runClaude(opts: {
   prompt: string;
   cwd: string;
   worktree?: string;
+  worktreeBranch?: string;
   timeoutMs?: number;
   inactivityMs?: number;
   model?: string;
@@ -143,7 +144,7 @@ export async function runClaude(opts: {
     }
     // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {
-      const wtPath = createWorktree(opts.cwd, opts.worktree);
+      const wtPath = createWorktree(opts.cwd, opts.worktree, opts.worktreeBranch);
       queryOpts.cwd = wtPath;
       worktreeCreated = true;
     }
@@ -151,7 +152,7 @@ export async function runClaude(opts: {
     // Check for shutdown before proceeding
     if (opts.parentSignal?.aborted) {
       if (worktreeCreated && opts.worktree) {
-        removeWorktree(opts.cwd, opts.worktree);
+        removeWorktree(opts.cwd, opts.worktree, { keepBranch: !!opts.worktreeBranch });
       }
       result.error = "Aborted before start";
       return result;
@@ -300,7 +301,7 @@ export async function runClaude(opts: {
 
     if (worktreeCreated && opts.worktree) {
       try {
-        removeWorktree(opts.cwd, opts.worktree);
+        removeWorktree(opts.cwd, opts.worktree, { keepBranch: !!opts.worktreeBranch });
       } catch (e) {
         warn(`Worktree cleanup failed for '${opts.worktree}': ${e}`);
       }
