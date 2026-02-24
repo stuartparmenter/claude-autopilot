@@ -218,4 +218,33 @@ linear:
 `);
     expect(() => loadConfig(dir)).toThrow(/linear\.states\.ready/);
   });
+
+  test("brainstorm config defaults are set", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.auditor.brainstorm_features).toBe(true);
+    expect(config.auditor.brainstorm_dimensions).toEqual([
+      "user-facing-features",
+      "developer-experience",
+      "integrations",
+      "scalability",
+    ]);
+    expect(config.auditor.max_ideas_per_run).toBe(5);
+  });
+
+  test("brainstorm config can be overridden", () => {
+    const dir = writeConfig(`
+auditor:
+  brainstorm_features: false
+  max_ideas_per_run: 3
+  brainstorm_dimensions:
+    - user-facing-features
+`);
+    const config = loadConfig(dir);
+    expect(config.auditor.brainstorm_features).toBe(false);
+    expect(config.auditor.max_ideas_per_run).toBe(3);
+    expect(config.auditor.brainstorm_dimensions).toEqual([
+      "user-facing-features",
+    ]);
+  });
 });

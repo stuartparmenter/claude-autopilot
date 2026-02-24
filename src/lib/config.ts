@@ -50,6 +50,9 @@ export interface AuditorConfig {
   use_agent_teams: boolean;
   skip_triage: boolean;
   scan_dimensions: string[];
+  brainstorm_features: boolean;
+  brainstorm_dimensions: string[];
+  max_ideas_per_run: number;
 }
 
 export interface GithubConfig {
@@ -107,6 +110,14 @@ export const DEFAULTS: AutopilotConfig = {
       "dependency-health",
       "documentation",
     ],
+    brainstorm_features: true,
+    brainstorm_dimensions: [
+      "user-facing-features",
+      "developer-experience",
+      "integrations",
+      "scalability",
+    ],
+    max_ideas_per_run: 5,
   },
   github: {
     repo: "",

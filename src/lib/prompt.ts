@@ -60,6 +60,7 @@ export function buildAuditorPrompt(vars: Record<string, string>): string {
   const planner = loadPrompt("planner");
   const verifier = loadPrompt("verifier");
   const security = loadPrompt("security-reviewer");
+  const productManager = buildPrompt("product-manager", vars);
 
   return `${auditor}
 
@@ -79,5 +80,9 @@ ${verifier}
 
 ## Security Reviewer Subagent Prompt
 
-${security}`;
+${security}
+
+## Product Manager Subagent Prompt
+
+${productManager}`;
 }
