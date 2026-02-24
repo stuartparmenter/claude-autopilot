@@ -67,10 +67,6 @@ export async function runAudit(opts: {
     ? config.linear.states.ready
     : config.linear.states.triage;
 
-  const featureTargetState = config.linear.states.triage;
-
-  const brainstormDimensions = config.auditor.brainstorm_dimensions.join(", ");
-
   const prompt = buildAuditorPrompt({
     LINEAR_TEAM: config.linear.team,
     LINEAR_PROJECT: config.linear.project,
@@ -78,14 +74,15 @@ export async function runAudit(opts: {
     MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
     PROJECT_NAME: config.project.name,
     BRAINSTORM_FEATURES: String(config.auditor.brainstorm_features),
-    BRAINSTORM_DIMENSIONS: brainstormDimensions,
+    BRAINSTORM_DIMENSIONS: config.auditor.brainstorm_dimensions.join(", "),
     MAX_IDEAS_PER_RUN: String(config.auditor.max_ideas_per_run),
-    FEATURE_TARGET_STATE: featureTargetState,
+    FEATURE_TARGET_STATE: config.linear.states.triage,
   });
 
   const result = await runClaude({
     prompt,
     cwd: projectPath,
+    label: "auditor",
     timeoutMs: AUDITOR_TIMEOUT_MS,
     model: config.executor.planning_model,
     mcpServers: buildMcpServers(),

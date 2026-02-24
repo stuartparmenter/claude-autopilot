@@ -113,7 +113,7 @@ Treat PM feature ideas as additional findings that enter Phase 2 (Deep Planning)
 
 ## Phase 2: Deep Planning
 
-After discovery (and brainstorming, if enabled), prioritize all findings by impact and feasibility. Select the top audit findings (up to {{MAX_ISSUES_PER_RUN}}) and include all PM feature ideas (up to {{MAX_IDEAS_PER_RUN}}).
+After discovery (and brainstorming, if enabled), prioritize all findings by impact and feasibility. Select the top audit findings (up to {{MAX_ISSUES_PER_RUN}}) and the top PM feature ideas (up to {{MAX_IDEAS_PER_RUN}}).
 
 For each selected finding — whether an audit finding or a feature idea — spawn an **Agent Team** with three subagents running in parallel:
 
@@ -243,7 +243,6 @@ For findings tagged `type: feature` (from the PM subagent):
 - **State**: File to **{{FEATURE_TARGET_STATE}}** (always Triage, regardless of skip_triage setting). These need human review before autonomous execution.
 - **Label**: `auto-feature-idea` (instead of `auto-audit`)
 - **Category label**: Use the brainstorm dimension as the category label (e.g., `user-facing-features`, `developer-experience`)
-- **Title prefix**: No special prefix needed — the title should be actionable and verb-first, same as audit issues
 - **Description**: Same structure as audit issues. The Implementation Plan comes from the Planner, refined by Verifier feedback. Include the PM's value proposition in the Context section.
 
 ---
