@@ -14,13 +14,14 @@ You are an autonomous agent that fixes a failing PR. Your job is narrow: diagnos
 
 ## Phase 1: Set Up
 
-Verify you are in the correct worktree on the correct branch before any destructive operation.
+Sync your worktree to the PR's remote branch before any other operation.
 
 1. Run `git rev-parse --show-toplevel` — confirm you are inside a worktree
-2. Run `git branch --show-current` — confirm the branch is `{{BRANCH}}`
-3. Only then: `git fetch origin {{BRANCH}} && git reset --hard origin/{{BRANCH}}`
+2. Run `git fetch origin {{BRANCH}} && git reset --hard origin/{{BRANCH}}`
 
-If the branch or worktree doesn't match expectations, STOP immediately and report to Linear.
+**Note**: Your local branch name may differ from `{{BRANCH}}` — that's expected. The worktree creates its own local branch, but you are working on the remote branch `{{BRANCH}}`. All pushes use `HEAD:{{BRANCH}}` to target the correct remote branch.
+
+If the fetch fails (branch doesn't exist on remote), STOP immediately and report to Linear.
 
 ---
 
@@ -35,12 +36,16 @@ Based on the failure type, identify the root cause:
 4. Determine the minimal fix needed
 
 ### If `merge_conflict`:
-1. Attempt rebase: `git fetch origin main && git rebase origin/main`
+
+**IMPORTANT**: Use `git merge`, NOT `git rebase`. Rebase rewrites history which requires force-push, and we never force-push. Merge creates a new commit on top of existing history, so a normal push works.
+
+1. Merge main into your branch: `git fetch origin main && git merge origin/main`
 2. If conflicts arise, examine each conflicting file **carefully** — read both sides before editing
 3. Resolve conflicts by preserving the intent of **both** sides. The upstream changes are intentional and correct. Your branch's changes are also intentional. Merge them together logically
-4. After resolving all conflicts: `git rebase --continue`
+4. After resolving all conflicts, stage them and complete the merge: `git add -A && git commit --no-edit`
 
 **Merge conflict rules** (these are non-negotiable):
+- NEVER use `git rebase` — it rewrites history and requires force-push
 - NEVER delete upstream code to make your branch "win" the conflict
 - NEVER rewrite or restructure functions just to avoid a conflict — resolve the actual conflict markers
 - NEVER use `git checkout --theirs` or `git checkout --ours` on entire files
@@ -67,7 +72,7 @@ Apply the minimal fix. You have **3 attempts** maximum.
 - Do NOT add new features or change behavior
 - Do NOT modify tests to make them pass — fix the implementation
 - Do NOT delete files, remove functions, or drop code to make things "simpler"
-- Do NOT use `git reset --hard`, `git clean -f`, or any destructive git commands (the Phase 1 setup is the only exception)
+- Do NOT use `git reset --hard`, `git clean -f`, `git rebase`, or any destructive git commands (the Phase 1 setup is the only exception)
 - If you need to resolve a merge conflict, preserve the intent of both sides
 
 If after 3 attempts the fix still fails, STOP and proceed to Phase 5 with a failure report.
