@@ -223,6 +223,21 @@ export async function createIssue(opts: {
 }
 
 /**
+ * Validate a Linear issue identifier (e.g., "ENG-123").
+ * Throws if the identifier contains path separators, spaces, or other
+ * characters that could be dangerous when used in file paths or branch names.
+ * Returns the identifier unchanged for convenience.
+ */
+export function validateIdentifier(identifier: string): string {
+  if (!/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(identifier)) {
+    throw new Error(
+      `Invalid Linear issue identifier: "${identifier}". Expected format: TEAM-123`,
+    );
+  }
+  return identifier;
+}
+
+/**
  * Verify the Linear API connection works.
  */
 export async function testConnection(): Promise<boolean> {
