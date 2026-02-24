@@ -1,6 +1,6 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { getReadyIssues, updateIssue } from "./lib/linear";
+import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
@@ -21,6 +21,7 @@ export async function executeIssue(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const { issue, config, projectPath, linearIds, state } = opts;
+  validateIdentifier(issue.identifier);
   const agentId = `exec-${issue.identifier}-${Date.now()}`;
 
   info(`Executing: ${issue.identifier} - ${issue.title}`);
@@ -35,6 +36,9 @@ export async function executeIssue(opts: {
     IN_REVIEW_STATE: config.linear.states.in_review,
     BLOCKED_STATE: config.linear.states.blocked,
     PROJECT_NAME: config.project.name,
+    AUTOMERGE_INSTRUCTION: config.github.automerge
+      ? "Enable auto-merge on the PR using the GitHub MCP. Do not specify a merge method — the repository's default merge strategy will be used. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+      : "Skip — auto-merge is not enabled for this project.",
   });
 
   const worktree = issue.identifier;
@@ -44,21 +48,33 @@ export async function executeIssue(opts: {
     const result = await runClaude({
       prompt,
       cwd: projectPath,
+      label: issue.identifier,
       worktree,
       timeoutMs,
+      inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
-      mcpServers: {
-        linear: {
-          type: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-          },
-        },
-      },
+      mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
+
+    const metrics = {
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
+    };
+
+    if (result.inactivityTimedOut) {
+      warn(
+        `${issue.identifier} was inactive for ${config.executor.inactivity_timeout_minutes} minutes, returning to Ready`,
+      );
+      await updateIssue(issue.id, { stateId: linearIds.states.ready });
+      state.completeAgent(agentId, "timed_out", {
+        ...metrics,
+        error: "Inactivity timeout",
+      });
+      return false;
+    }
 
     if (result.timedOut) {
       warn(
@@ -69,9 +85,7 @@ export async function executeIssue(opts: {
         comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`worktree-${worktree}\` branch for any progress.`,
       });
       state.completeAgent(agentId, "timed_out", {
-        costUsd: result.costUsd,
-        durationMs: result.durationMs,
-        numTurns: result.numTurns,
+        ...metrics,
         error: "Timed out",
       });
       return false;
@@ -79,12 +93,9 @@ export async function executeIssue(opts: {
 
     if (result.error) {
       warn(`${issue.identifier} failed: ${result.error}`);
-      // Move back to Ready so it can be retried on next loop
       await updateIssue(issue.id, { stateId: linearIds.states.ready });
       state.completeAgent(agentId, "failed", {
-        costUsd: result.costUsd,
-        durationMs: result.durationMs,
-        numTurns: result.numTurns,
+        ...metrics,
         error: result.error,
       });
       return false;
@@ -92,11 +103,7 @@ export async function executeIssue(opts: {
 
     ok(`${issue.identifier} completed successfully`);
     if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-    state.completeAgent(agentId, "completed", {
-      costUsd: result.costUsd,
-      durationMs: result.durationMs,
-      numTurns: result.numTurns,
-    });
+    state.completeAgent(agentId, "completed", metrics);
     return true;
   } finally {
     activeIssueIds.delete(issue.id);

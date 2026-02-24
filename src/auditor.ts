@@ -1,4 +1,4 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { countIssuesInState } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
@@ -74,22 +74,19 @@ export async function runAudit(opts: {
       TARGET_STATE: targetState,
       MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
       PROJECT_NAME: config.project.name,
+      BRAINSTORM_FEATURES: String(config.auditor.brainstorm_features),
+      BRAINSTORM_DIMENSIONS: config.auditor.brainstorm_dimensions.join(", "),
+      MAX_IDEAS_PER_RUN: String(config.auditor.max_ideas_per_run),
+      FEATURE_TARGET_STATE: config.linear.states.triage,
     });
 
     const result = await runClaude({
       prompt,
       cwd: projectPath,
+      label: "auditor",
       timeoutMs: AUDITOR_TIMEOUT_MS,
       model: config.executor.planning_model,
-      mcpServers: {
-        linear: {
-          type: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-          },
-        },
-      },
+      mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
