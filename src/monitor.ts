@@ -172,7 +172,9 @@ async function fixPR(opts: {
       prompt,
       cwd: projectPath,
       worktree,
+      worktreeBranch: branch,
       timeoutMs,
+      inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
       mcpServers: {
         linear: {
@@ -194,12 +196,25 @@ async function fixPR(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
+    const metrics = {
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
+    };
+
+    if (result.inactivityTimedOut) {
+      warn(`Fixer for ${issueIdentifier} inactive, timed out`);
+      state.completeAgent(agentId, "timed_out", {
+        ...metrics,
+        error: "Inactivity timeout",
+      });
+      return false;
+    }
+
     if (result.timedOut) {
       warn(`Fixer for ${issueIdentifier} timed out`);
       state.completeAgent(agentId, "timed_out", {
-        costUsd: result.costUsd,
-        durationMs: result.durationMs,
-        numTurns: result.numTurns,
+        ...metrics,
         error: "Timed out",
       });
       return false;
@@ -208,9 +223,7 @@ async function fixPR(opts: {
     if (result.error) {
       warn(`Fixer for ${issueIdentifier} failed: ${result.error}`);
       state.completeAgent(agentId, "failed", {
-        costUsd: result.costUsd,
-        durationMs: result.durationMs,
-        numTurns: result.numTurns,
+        ...metrics,
         error: result.error,
       });
       return false;
@@ -218,11 +231,7 @@ async function fixPR(opts: {
 
     ok(`Fixer for ${issueIdentifier} completed successfully`);
     if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-    state.completeAgent(agentId, "completed", {
-      costUsd: result.costUsd,
-      durationMs: result.durationMs,
-      numTurns: result.numTurns,
-    });
+    state.completeAgent(agentId, "completed", metrics);
     return true;
   } finally {
     activeFixerIssues.delete(issueId);
