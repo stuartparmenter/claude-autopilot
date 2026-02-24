@@ -8,13 +8,14 @@
     "setup": "bun run src/setup-project.ts",
     "check": "bunx biome check ./src",
     "typecheck": "bunx tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test ./src/lib/ && bun test ./src/state.test.ts ./src/executor.test.ts ./src/monitor.test.ts",
     "test:watch": "bun test --watch"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.52",
     "@linear/sdk": "^75.0.0",
     "hono": "^4.12.2",
+    "octokit": "^5.0.5",
     "yaml": "^2.8.2"
   },
   "devDependencies": {

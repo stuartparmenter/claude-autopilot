@@ -51,6 +51,10 @@ export interface AuditorConfig {
   scan_dimensions: string[];
 }
 
+export interface GithubConfig {
+  repo: string; // "owner/repo" override — empty = auto-detect from git remote
+}
+
 export interface ProjectConfig {
   name: string;
 }
@@ -59,6 +63,7 @@ export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
+  github: GithubConfig;
   project: ProjectConfig;
 }
 
@@ -99,6 +104,9 @@ export const DEFAULTS: AutopilotConfig = {
       "dependency-health",
       "documentation",
     ],
+  },
+  github: {
+    repo: "",
   },
   project: {
     name: "",
