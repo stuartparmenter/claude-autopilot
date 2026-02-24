@@ -1,6 +1,6 @@
 import { runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { findPRByBranch, getPRStatus } from "./lib/github";
+import { getPRStatus } from "./lib/github";
 import { getLinearClient } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
@@ -59,19 +59,30 @@ export async function checkOpenPRs(opts: {
       break;
     }
 
-    // Derive branch name from issue identifier and find the PR
-    const branch = `worktree-${issue.identifier}`;
-    const pr = await findPRByBranch(owner, repo, branch);
-    if (!pr) {
-      continue; // No PR yet — executor may still be pushing
+    // Find the PR number from the issue's GitHub attachment
+    const attachments = await issue.attachments();
+    const ghAttachment = attachments.nodes.find(
+      (a) => a.sourceType === "github",
+    );
+    if (!ghAttachment?.url) {
+      continue; // No PR linked yet — executor may still be pushing
     }
+
+    const prMatch = ghAttachment.url.match(/\/pull\/(\d+)/);
+    if (!prMatch) {
+      warn(
+        `Could not parse PR number from attachment URL: ${ghAttachment.url}`,
+      );
+      continue;
+    }
+    const prNumber = Number.parseInt(prMatch[1], 10);
 
     let status: Awaited<ReturnType<typeof getPRStatus>>;
     try {
-      status = await getPRStatus(owner, repo, pr.number);
+      status = await getPRStatus(owner, repo, prNumber);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      warn(`Failed to get status for PR #${pr.number}: ${msg}`);
+      warn(`Failed to get status for PR #${prNumber}: ${msg}`);
       continue;
     }
 
@@ -81,8 +92,8 @@ export async function checkOpenPRs(opts: {
       const promise = fixPR({
         issueId: issue.id,
         issueIdentifier: issue.identifier,
-        prNumber: pr.number,
-        branch,
+        prNumber,
+        branch: status.branch,
         failureType: "ci_failure",
         ...opts,
       });
@@ -94,8 +105,8 @@ export async function checkOpenPRs(opts: {
       const promise = fixPR({
         issueId: issue.id,
         issueIdentifier: issue.identifier,
-        prNumber: pr.number,
-        branch,
+        prNumber,
+        branch: status.branch,
         failureType: "merge_conflict",
         ...opts,
       });

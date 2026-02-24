@@ -70,34 +70,10 @@ export function detectRepo(
   );
 }
 
-/**
- * Find an open PR by head branch name.
- * Returns the PR number or undefined if no open PR exists for the branch.
- */
-export async function findPRByBranch(
-  owner: string,
-  repo: string,
-  branch: string,
-): Promise<{ number: number; sha: string } | undefined> {
-  const octokit = getGitHubClient();
-
-  const { data: pulls } = await octokit.rest.pulls.list({
-    owner,
-    repo,
-    state: "open",
-    head: `${owner}:${branch}`,
-    per_page: 1,
-  });
-  if (pulls.length > 0) {
-    return { number: pulls[0].number, sha: pulls[0].head.sha };
-  }
-
-  return undefined;
-}
-
 export interface PRStatus {
   merged: boolean;
   mergeable: boolean | null;
+  branch: string;
   ciStatus: "success" | "failure" | "pending";
   ciDetails: string;
 }
@@ -124,6 +100,7 @@ export async function getPRStatus(
     return {
       merged: true,
       mergeable: null,
+      branch: pr.head.ref,
       ciStatus: "success",
       ciDetails: "",
     };
@@ -186,6 +163,7 @@ export async function getPRStatus(
   return {
     merged: false,
     mergeable: pr.mergeable,
+    branch: pr.head.ref,
     ciStatus,
     ciDetails: failureDetails.join("\n"),
   };
