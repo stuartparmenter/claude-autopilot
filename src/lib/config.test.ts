@@ -243,6 +243,8 @@ auditor:
     const config = loadConfig(dir);
     expect(config.auditor.brainstorm_features).toBe(false);
     expect(config.auditor.max_ideas_per_run).toBe(3);
-    expect(config.auditor.brainstorm_dimensions).toEqual(["user-facing-features"]);
+    expect(config.auditor.brainstorm_dimensions).toEqual([
+      "user-facing-features",
+    ]);
   });
 });
