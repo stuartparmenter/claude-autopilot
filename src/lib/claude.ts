@@ -144,6 +144,21 @@ export async function runClaude(opts: {
       stderr: (data: string) => warn(`[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
+      // Release the spawn slot as early as possible — the Setup hook fires
+      // during initialization, before SessionStart and the init message.
+      // By this point the agent is past its ~/.claude.json access.
+      hooks: {
+        Setup: [
+          {
+            hooks: [
+              async () => {
+                releaseSpawnSlot?.();
+                return {};
+              },
+            ],
+          },
+        ],
+      },
     };
 
     // Self-managed worktrees: create before spawning, clean up in finally
@@ -194,8 +209,6 @@ export async function runClaude(opts: {
 
         if (message.type === "system" && message.subtype === "init") {
           result.sessionId = message.session_id;
-          // Agent is up and done touching ~/.claude.json — let the next one spawn
-          releaseSpawnSlot?.();
           emit?.({
             timestamp: Date.now(),
             type: "status",
