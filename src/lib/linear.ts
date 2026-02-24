@@ -1,11 +1,13 @@
 import {
   type Issue,
+  type IssueLabel,
   LinearClient,
   type Project,
   type Team,
   type WorkflowState,
 } from "@linear/sdk";
 import type { LinearConfig, LinearIds } from "./config";
+import { info, warn } from "./logger";
 
 let _client: LinearClient | null = null;
 
@@ -66,6 +68,32 @@ export async function findState(
   const state = states.nodes[0];
   if (!state) throw new Error(`State '${stateName}' not found for team`);
   return state;
+}
+
+/**
+ * Find or create a label by name within a team.
+ */
+export async function findOrCreateLabel(
+  teamId: string,
+  name: string,
+  color?: string,
+): Promise<IssueLabel> {
+  const client = getLinearClient();
+  const labels = await client.issueLabels({
+    filter: { team: { id: { eq: teamId } }, name: { eq: name } },
+  });
+
+  if (labels.nodes[0]) return labels.nodes[0];
+
+  info(`Creating label '${name}'...`);
+  const payload = await client.createIssueLabel({
+    teamId,
+    name,
+    color: color ?? "#888888",
+  });
+  const label = await payload.issueLabel;
+  if (!label) throw new Error(`Failed to create label '${name}'`);
+  return label;
 }
 
 /**
@@ -192,6 +220,21 @@ export async function createIssue(opts: {
   const issue = await payload.issue;
   if (!issue) throw new Error("Failed to create issue");
   return issue;
+}
+
+/**
+ * Verify the Linear API connection works.
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    const client = getLinearClient();
+    const viewer = await client.viewer;
+    info(`Connected to Linear as ${viewer.name ?? viewer.email}`);
+    return true;
+  } catch (e) {
+    warn(`Linear connection failed: ${e}`);
+    return false;
+  }
 }
 
 /**

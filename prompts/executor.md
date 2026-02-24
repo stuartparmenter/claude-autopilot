@@ -62,12 +62,13 @@ Never modify `.env`, `.claude-autopilot.yml`, or `CLAUDE.md`. Additional protect
 
 ## Phase 4: Validate
 
-Run the project's test and lint commands. Fix any failures. These should be documented in CLAUDE.md.
+Run the project's validation commands. The specific commands should be documented in CLAUDE.md.
 
 **Validation loop** (max 3 attempts):
-1. Run tests. If they fail, analyze the failure, fix your code, and re-run
-2. Run linting. If it fails, fix the issues and re-run
-3. If after 3 full attempts tests or lint still fail, STOP. Do not keep trying. Move to Phase 6 with a failure report
+1. Run **tests**. If they fail, analyze the failure, fix your code, and re-run
+2. Run **linting**. If it fails, fix the issues and re-run
+3. If after 3 full attempts tests or lint still fail, STOP. Move to Phase 6 with a failure report
+4. Once tests and lint pass, run the **formatter** as the final step. Formatting is always last — lint fixes can change code structure, so the formatter normalizes everything right before commit
 
 **Rules**:
 - Fix YOUR code to pass tests, never modify tests to pass your code
@@ -82,20 +83,28 @@ Create a clean commit and PR.
 
 **IMPORTANT**: You are running inside a git worktree. Your working directory is already on the correct branch. Do NOT run `git checkout`, `git switch`, or `cd` to any other directory. All git operations must happen in the current working directory.
 
-1. **Branch**: You are already on the `worktree-{{ISSUE_ID}}` branch. Do NOT create or switch branches.
-2. **Commit message**: `{{ISSUE_ID}}: <concise description of what changed>`
+1. **Rebase on latest main**: Before committing, pull the latest changes and rebase your work on top:
+   ```
+   git fetch origin main && git rebase origin/main
+   ```
+   If there are merge conflicts, resolve them carefully — preserve the intent of both your changes and the upstream changes. After resolving, re-run validation (Phase 4) to confirm nothing broke.
+2. **Branch**: You are already on the `worktree-{{ISSUE_ID}}` branch. Do NOT create or switch branches.
+3. **Commit message**: `{{ISSUE_ID}}: <concise description of what changed>`
    - First line: issue ID + summary (under 72 chars)
    - Blank line
    - Body: brief explanation of the approach if non-obvious
-3. **Push** the branch with `git push -u origin worktree-{{ISSUE_ID}}`
-4. **Create PR**:
+4. **Final check**: Run the formatter and linter one last time after staging. If anything fails, fix it, amend the commit, and re-run until clean.
+5. **Push** the branch with `git push -u origin worktree-{{ISSUE_ID}}`
+6. **Create PR** using the GitHub MCP `create_pull_request` tool:
    - Title: `{{ISSUE_ID}}: <concise description>`
+   - Base branch: `main`
    - Body must include:
      - **Summary**: 1-3 sentences on what changed and why
      - **Changes**: Bullet list of specific changes
      - **Testing**: What tests were added/modified
      - **Issue**: Link to the Linear issue
    - Request no reviewers (human will review from Linear)
+7. **Auto-merge**: {{AUTOMERGE_INSTRUCTION}}
 
 ---
 
