@@ -313,10 +313,23 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
                 verbose && act.detail
                   ? `<div class="detail-text">${escapeHtml(act.detail)}</div>`
                   : "";
+              // For tool_use, parse "ToolName: detail" format and show tool name as badge
+              // For text, skip the badge entirely and just show the text
+              let badgeHtml = `<span class="type-badge ${act.type}">${act.type}</span>`;
+              let summaryText = act.summary;
+              if (act.type === "tool_use") {
+                const colonIdx = act.summary.indexOf(": ");
+                if (colonIdx !== -1) {
+                  badgeHtml = `<span class="type-badge ${act.type}">${act.summary.slice(0, colonIdx)}</span>`;
+                  summaryText = act.summary.slice(colonIdx + 2);
+                }
+              } else if (act.type === "text") {
+                badgeHtml = "";
+              }
               return `<div class="activity-item">
                 <span class="time">${time}</span>
-                <span class="type-badge ${act.type}">${act.type}</span>
-                ${escapeHtml(act.summary)}
+                ${badgeHtml}
+                ${escapeHtml(summaryText)}
                 ${detailHtml}
               </div>`;
             })
