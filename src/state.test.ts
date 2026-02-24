@@ -243,6 +243,43 @@ describe("AppState — togglePause", () => {
   });
 });
 
+describe("AppState — issue failure counter", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("getIssueFailureCount returns 0 for unknown issue", () => {
+    expect(state.getIssueFailureCount("unknown-id")).toBe(0);
+  });
+
+  test("incrementIssueFailures returns 1 on first call", () => {
+    expect(state.incrementIssueFailures("issue-1")).toBe(1);
+  });
+
+  test("incrementIssueFailures returns incrementing counts", () => {
+    expect(state.incrementIssueFailures("issue-1")).toBe(1);
+    expect(state.incrementIssueFailures("issue-1")).toBe(2);
+    expect(state.incrementIssueFailures("issue-1")).toBe(3);
+  });
+
+  test("getIssueFailureCount reflects incremented value", () => {
+    state.incrementIssueFailures("issue-1");
+    state.incrementIssueFailures("issue-1");
+    expect(state.getIssueFailureCount("issue-1")).toBe(2);
+  });
+
+  test("counters are independent per issue ID", () => {
+    state.incrementIssueFailures("issue-1");
+    state.incrementIssueFailures("issue-1");
+    state.incrementIssueFailures("issue-2");
+    expect(state.getIssueFailureCount("issue-1")).toBe(2);
+    expect(state.getIssueFailureCount("issue-2")).toBe(1);
+    expect(state.getIssueFailureCount("issue-3")).toBe(0);
+  });
+});
+
 describe("AppState — toJSON", () => {
   let state: AppState;
 
