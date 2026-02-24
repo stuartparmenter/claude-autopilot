@@ -25,7 +25,7 @@ export async function executeIssue(opts: {
   const agentId = `exec-${issue.identifier}-${Date.now()}`;
 
   info(`Executing: ${issue.identifier} - ${issue.title}`);
-  state.addAgent(agentId, issue.identifier, issue.title);
+  state.addAgent(agentId, issue.identifier, issue.title, issue.id);
   activeIssueIds.add(issue.id);
 
   // Move to In Progress immediately so it's not picked up again
@@ -55,6 +55,7 @@ export async function executeIssue(opts: {
       model: config.executor.model,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 

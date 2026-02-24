@@ -247,4 +247,65 @@ auditor:
       "user-facing-features",
     ]);
   });
+
+  test("poll_interval_minutes defaults to 5", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.executor.poll_interval_minutes).toBe(5);
+  });
+
+  test("poll_interval_minutes can be overridden", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: 2
+`);
+    const config = loadConfig(dir);
+    expect(config.executor.poll_interval_minutes).toBe(2);
+  });
+
+  test("poll_interval_minutes accepts boundary value 0.5", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: 0.5
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("poll_interval_minutes accepts boundary value 60", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: 60
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("poll_interval_minutes throws below 0.5", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: 0.4
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.poll_interval_minutes must be a number between 0.5 and 60",
+    );
+  });
+
+  test("poll_interval_minutes throws above 60", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: 61
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.poll_interval_minutes must be a number between 0.5 and 60",
+    );
+  });
+
+  test("poll_interval_minutes throws for non-numeric value", () => {
+    const dir = writeConfig(`
+executor:
+  poll_interval_minutes: "fast"
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.poll_interval_minutes must be a number between 0.5 and 60",
+    );
+  });
 });

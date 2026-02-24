@@ -17,7 +17,7 @@ import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { detectRepo } from "./lib/github";
-import { resolveLinearIds } from "./lib/linear";
+import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
@@ -123,6 +123,7 @@ header("claude-autopilot v0.2.0");
 info(`Project: ${projectPath}`);
 info(`Team: ${config.linear.team}, Project: ${config.linear.project}`);
 info(`Max parallel: ${config.executor.parallel}`);
+info(`Poll interval: ${config.executor.poll_interval_minutes}m`);
 info(
   `Model: ${config.executor.model} (planning: ${config.executor.planning_model})`,
 );
@@ -144,7 +145,24 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
-const app = createApp(state, { authToken: dashboardToken });
+const app = createApp(
+  state,
+  { authToken: dashboardToken },
+  {
+    triggerAudit: () => {
+      runAudit({
+        config,
+        projectPath,
+        linearIds,
+        state,
+        shutdownSignal: shutdownController.signal,
+      });
+    },
+    retryIssue: async (linearIssueId: string) => {
+      await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+    },
+  },
+);
 
 if (!isLocalhost) {
   warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);
@@ -252,7 +270,7 @@ function isFatalError(e: unknown): boolean {
 
 // --- Main loop ---
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const POLL_INTERVAL_MS = config.executor.poll_interval_minutes * 60 * 1000;
 const BASE_BACKOFF_MS = 10_000; // 10s
 const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CONSECUTIVE_FAILURES = 5;
@@ -319,9 +337,14 @@ while (!shuttingDown) {
           linearIds,
           state,
           shutdownSignal: shutdownController.signal,
-        }).finally(() => {
-          auditorPromise = null;
-        });
+        })
+          .catch((e) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            warn(`Auditor error: ${msg}`);
+          })
+          .finally(() => {
+            auditorPromise = null;
+          });
       }
     }
 

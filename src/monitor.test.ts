@@ -128,6 +128,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       timeout_minutes: 30,
       max_retries: 3,
       inactivity_timeout_minutes: 10,
+      poll_interval_minutes: 5,
       auto_approve_labels: [],
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",

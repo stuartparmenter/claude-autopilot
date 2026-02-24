@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { createApp, escapeHtml, formatDuration } from "./server";
 import { AppState } from "./state";
 
@@ -245,5 +245,165 @@ describe("routes", () => {
     const res = await app.request("/partials/activity/unknown-id");
     const body = await res.text();
     expect(body).toContain("Agent not found");
+  });
+});
+
+describe("POST /api/audit", () => {
+  let state: AppState;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    state = new AppState();
+    app = createApp(state);
+  });
+
+  test("returns 409 when audit is already running", async () => {
+    state.updateAuditor({ running: true });
+    const res = await app.request("/api/audit", { method: "POST" });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Audit already running");
+  });
+
+  test("triggers audit and returns triggered: true when not running", async () => {
+    const triggerAudit = mock(() => {});
+    const appWithActions = createApp(state, { triggerAudit });
+    const res = await appWithActions.request("/api/audit", { method: "POST" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { triggered: boolean };
+    expect(json.triggered).toBe(true);
+    expect(triggerAudit).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns triggered: true even without actions configured", async () => {
+    const res = await app.request("/api/audit", { method: "POST" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { triggered: boolean };
+    expect(json.triggered).toBe(true);
+  });
+});
+
+describe("POST /api/cancel/:agentId", () => {
+  let state: AppState;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    state = new AppState();
+    app = createApp(state);
+  });
+
+  test("returns 404 for unknown agent", async () => {
+    const res = await app.request("/api/cancel/no-such-agent", {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Agent not found");
+  });
+
+  test("cancels a running agent and returns cancelled: true", async () => {
+    state.addAgent("agent-1", "ENG-1", "Test issue");
+    const controller = new AbortController();
+    state.registerAgentController("agent-1", controller);
+    const res = await app.request("/api/cancel/agent-1", { method: "POST" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { cancelled: boolean };
+    expect(json.cancelled).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  test("returns cancelled: false if no controller registered", async () => {
+    state.addAgent("agent-1", "ENG-1", "Test issue");
+    const res = await app.request("/api/cancel/agent-1", { method: "POST" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { cancelled: boolean };
+    expect(json.cancelled).toBe(false);
+  });
+});
+
+describe("POST /api/retry/:historyId", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    // Create an agent and complete it as failed
+    state.addAgent("exec-ENG-5-123", "ENG-5", "Some issue", "linear-uuid-5");
+    state.completeAgent("exec-ENG-5-123", "failed", { error: "timed out" });
+  });
+
+  test("returns 404 for unknown history item", async () => {
+    const app = createApp(state);
+    const res = await app.request("/api/retry/no-such-id", { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+
+  test("returns 400 when retrying a completed issue", async () => {
+    state.addAgent("exec-ENG-6-456", "ENG-6", "Another", "linear-uuid-6");
+    state.completeAgent("exec-ENG-6-456", "completed");
+    const app = createApp(state);
+    const res = await app.request("/api/retry/exec-ENG-6-456", {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Cannot retry a completed issue");
+  });
+
+  test("returns 409 when issue is already running", async () => {
+    state.addAgent("exec-ENG-5-999", "ENG-5", "Some issue");
+    const app = createApp(state);
+    const res = await app.request("/api/retry/exec-ENG-5-123", {
+      method: "POST",
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test("returns 400 when no linearIssueId available", async () => {
+    // Add history item without linearIssueId
+    state.addAgent("exec-ENG-7-789", "ENG-7", "No uuid");
+    state.completeAgent("exec-ENG-7-789", "failed");
+    const app = createApp(state);
+    const res = await app.request("/api/retry/exec-ENG-7-789", {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("No Linear issue ID available for retry");
+  });
+
+  test("calls retryIssue and returns retried: true for failed issue", async () => {
+    const retryIssue = mock(async (_id: string) => {});
+    const app = createApp(state, { retryIssue });
+    const res = await app.request("/api/retry/exec-ENG-5-123", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { retried: boolean };
+    expect(json.retried).toBe(true);
+    expect(retryIssue).toHaveBeenCalledWith("linear-uuid-5");
+  });
+});
+
+describe("GET /partials/audit-button", () => {
+  let state: AppState;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    state = new AppState();
+    app = createApp(state);
+  });
+
+  test("shows 'Trigger Audit' when auditor is not running", async () => {
+    const res = await app.request("/partials/audit-button");
+    const body = await res.text();
+    expect(body).toContain("Trigger Audit");
+  });
+
+  test("shows 'Auditing...' and disabled when auditor is running", async () => {
+    state.updateAuditor({ running: true });
+    const res = await app.request("/partials/audit-button");
+    const body = await res.text();
+    expect(body).toContain("Auditing...");
+    expect(body).toContain("disabled");
   });
 });

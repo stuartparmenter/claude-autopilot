@@ -61,67 +61,95 @@ export async function runAudit(opts: {
   state.addAgent(agentId, "auditor", "Codebase audit");
   state.updateAuditor({ running: true });
 
-  info("Starting auditor agent...");
+  try {
+    info("Starting auditor agent...");
 
-  const targetState = config.auditor.skip_triage
-    ? config.linear.states.ready
-    : config.linear.states.triage;
+    const targetState = config.auditor.skip_triage
+      ? config.linear.states.ready
+      : config.linear.states.triage;
 
-  const prompt = buildAuditorPrompt({
-    LINEAR_TEAM: config.linear.team,
-    LINEAR_PROJECT: config.linear.project,
-    TARGET_STATE: targetState,
-    MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
-    PROJECT_NAME: config.project.name,
-    BRAINSTORM_FEATURES: String(config.auditor.brainstorm_features),
-    BRAINSTORM_DIMENSIONS: config.auditor.brainstorm_dimensions.join(", "),
-    MAX_IDEAS_PER_RUN: String(config.auditor.max_ideas_per_run),
-    FEATURE_TARGET_STATE: config.linear.states.triage,
-  });
+    const prompt = buildAuditorPrompt({
+      LINEAR_TEAM: config.linear.team,
+      LINEAR_PROJECT: config.linear.project,
+      TARGET_STATE: targetState,
+      MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
+      PROJECT_NAME: config.project.name,
+      BRAINSTORM_FEATURES: String(config.auditor.brainstorm_features),
+      BRAINSTORM_DIMENSIONS: config.auditor.brainstorm_dimensions.join(", "),
+      MAX_IDEAS_PER_RUN: String(config.auditor.max_ideas_per_run),
+      FEATURE_TARGET_STATE: config.linear.states.triage,
+    });
 
-  const result = await runClaude({
-    prompt,
-    cwd: projectPath,
-    label: "auditor",
-    timeoutMs: AUDITOR_TIMEOUT_MS,
-    model: config.executor.planning_model,
-    mcpServers: buildMcpServers(),
-    parentSignal: opts.shutdownSignal,
-    onActivity: (entry) => state.addActivity(agentId, entry),
-  });
+    const result = await runClaude({
+      prompt,
+      cwd: projectPath,
+      label: "auditor",
+      timeoutMs: AUDITOR_TIMEOUT_MS,
+      inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
+      model: config.executor.planning_model,
+      mcpServers: buildMcpServers(),
+      parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
+      onActivity: (entry) => state.addActivity(agentId, entry),
+    });
 
-  if (result.timedOut) {
-    warn("Auditor timed out after 60 minutes");
-    state.completeAgent(agentId, "timed_out", { error: "Timed out" });
+    if (result.inactivityTimedOut) {
+      warn(
+        `Auditor inactive for ${config.executor.inactivity_timeout_minutes} minutes, timed out`,
+      );
+      state.completeAgent(agentId, "timed_out", {
+        error: "Inactivity timeout",
+      });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "timed_out",
+      });
+      return;
+    }
+
+    if (result.timedOut) {
+      warn("Auditor timed out after 60 minutes");
+      state.completeAgent(agentId, "timed_out", { error: "Timed out" });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "timed_out",
+      });
+      return;
+    }
+
+    if (result.error) {
+      warn(`Auditor failed: ${result.error}`);
+      state.completeAgent(agentId, "failed", { error: result.error });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "failed",
+      });
+      return;
+    }
+
+    ok("Auditor completed successfully");
+    if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
+    state.completeAgent(agentId, "completed", {
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
+    });
     state.updateAuditor({
       running: false,
       lastRunAt: Date.now(),
-      lastResult: "timed_out",
+      lastResult: "completed",
     });
-    return;
-  }
-
-  if (result.error) {
-    warn(`Auditor failed: ${result.error}`);
-    state.completeAgent(agentId, "failed", { error: result.error });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    warn(`Auditor crashed: ${msg}`);
+    state.completeAgent(agentId, "failed", { error: msg });
     state.updateAuditor({
       running: false,
       lastRunAt: Date.now(),
       lastResult: "failed",
     });
-    return;
   }
-
-  ok("Auditor completed successfully");
-  if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  state.completeAgent(agentId, "completed", {
-    costUsd: result.costUsd,
-    durationMs: result.durationMs,
-    numTurns: result.numTurns,
-  });
-  state.updateAuditor({
-    running: false,
-    lastRunAt: Date.now(),
-    lastResult: "completed",
-  });
 }

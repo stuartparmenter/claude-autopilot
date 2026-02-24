@@ -37,6 +37,7 @@ export interface ExecutorConfig {
   timeout_minutes: number;
   max_retries: number;
   inactivity_timeout_minutes: number;
+  poll_interval_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
   commit_pattern: string;
@@ -91,6 +92,7 @@ export const DEFAULTS: AutopilotConfig = {
     timeout_minutes: 30,
     max_retries: 3,
     inactivity_timeout_minutes: 10,
+    poll_interval_minutes: 5,
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
@@ -201,6 +203,17 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   ) as unknown as AutopilotConfig;
 
   validateConfigStrings(config);
+
+  if (
+    typeof config.executor.poll_interval_minutes !== "number" ||
+    Number.isNaN(config.executor.poll_interval_minutes) ||
+    config.executor.poll_interval_minutes < 0.5 ||
+    config.executor.poll_interval_minutes > 60
+  ) {
+    throw new Error(
+      "Config validation error: executor.poll_interval_minutes must be a number between 0.5 and 60",
+    );
+  }
 
   return config;
 }

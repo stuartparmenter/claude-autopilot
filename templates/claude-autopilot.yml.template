@@ -24,6 +24,7 @@ linear:
 executor:
   parallel: 3                   # Max concurrent agents (start low, increase with trust)
   timeout_minutes: 30           # Kill agent after this long
+  poll_interval_minutes: 5      # How often to poll Linear/GitHub (0.5-60, default: 5)
   model: "sonnet"               # Model for executor agents
   planning_model: "opus"        # Model for auditor/planning
 
