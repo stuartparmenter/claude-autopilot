@@ -171,7 +171,7 @@ export function createApp(state: AppState): Hono {
             const elapsed = Math.round((Date.now() - a.startedAt) / 1000);
             const elapsedStr =
               elapsed > 60 ? `${Math.floor(elapsed / 60)}m` : `${elapsed}s`;
-            return `<div class="agent-card" hx-get="/partials/activity/${a.id}" hx-target="#main-panel" hx-swap="innerHTML">
+            return `<div class="agent-card" hx-get="/partials/activity/${escapeHtml(a.id)}" hx-target="#main-panel" hx-swap="innerHTML">
             <div><span class="status-dot running"></span><span class="issue-id">${escapeHtml(a.issueId)}</span></div>
             <div class="title">${escapeHtml(a.issueTitle)}</div>
             <div class="meta">${elapsedStr} &middot; ${a.activities.length} activities</div>
@@ -279,7 +279,7 @@ export function createApp(state: AppState): Hono {
               ? `${Math.round(h.durationMs / 1000)}s`
               : "";
             const costStr = h.costUsd ? `$${h.costUsd.toFixed(4)}` : "";
-            return `<div class="history-card" hx-get="/partials/activity/${h.id}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
+            return `<div class="history-card" hx-get="/partials/activity/${escapeHtml(h.id)}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
             <div><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
           </div>`;
@@ -307,5 +307,6 @@ export function escapeHtml(str: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

@@ -45,11 +45,11 @@ describe("escapeHtml", () => {
     expect(escapeHtml('say "hello"')).toBe("say &quot;hello&quot;");
   });
 
-  test("single quote is intentionally NOT escaped", () => {
-    expect(escapeHtml("it's fine")).toBe("it's fine");
+  test("escapes single quote", () => {
+    expect(escapeHtml("it's fine")).toBe("it&#39;s fine");
   });
 
-  test("escapes all four entities in one string", () => {
+  test("escapes all five entities in one string", () => {
     expect(escapeHtml('<a href="x">a & b</a>')).toBe(
       "&lt;a href=&quot;x&quot;&gt;a &amp; b&lt;/a&gt;",
     );
@@ -104,6 +104,29 @@ describe("routes", () => {
     const res = await app.request("/partials/agents");
     const body = await res.text();
     expect(body).toContain("ENG-42");
+  });
+
+  test("GET /partials/agents escapes agent ID in hx-get attribute", async () => {
+    state.addAgent("exec-ENG-42-<script>", "ENG-42", "Fix the thing");
+    const res = await app.request("/partials/agents");
+    const body = await res.text();
+    expect(body).toContain(
+      'hx-get="/partials/activity/exec-ENG-42-&lt;script&gt;"',
+    );
+    expect(body).not.toContain(
+      'hx-get="/partials/activity/exec-ENG-42-<script>"',
+    );
+  });
+
+  test("GET /partials/history escapes agent ID in hx-get attribute", async () => {
+    state.addAgent('exec-ENG-42-"xss"', "ENG-42", "Fix the thing");
+    state.completeAgent('exec-ENG-42-"xss"', "completed");
+    const res = await app.request("/partials/history");
+    const body = await res.text();
+    expect(body).toContain(
+      'hx-get="/partials/activity/exec-ENG-42-&quot;xss&quot;"',
+    );
+    expect(body).not.toContain('hx-get="/partials/activity/exec-ENG-42-"xss""');
   });
 
   test("GET /partials/history with empty state shows 'No completed agents yet'", async () => {
