@@ -15,16 +15,17 @@ export async function executeIssue(opts: {
   projectPath: string;
   linearIds: LinearIds;
   state: AppState;
+  shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const { issue, config, projectPath, linearIds, state } = opts;
   const agentId = `exec-${issue.identifier}-${Date.now()}`;
 
-  info(`Executing: ${issue.identifier} — ${issue.title}`);
+  info(`Executing: ${issue.identifier} - ${issue.title}`);
   state.addAgent(agentId, issue.identifier, issue.title);
 
   const prompt = buildPrompt("executor", {
     ISSUE_ID: issue.identifier,
-    DONE_STATE: config.linear.states.done,
+    IN_REVIEW_STATE: config.linear.states.in_review,
     BLOCKED_STATE: config.linear.states.blocked,
     PROJECT_NAME: config.project.name,
   });
@@ -38,6 +39,16 @@ export async function executeIssue(opts: {
     worktree,
     timeoutMs,
     model: config.executor.model,
+    mcpServers: {
+      linear: {
+        type: "http",
+        url: "https://mcp.linear.app/mcp",
+        headers: {
+          Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+        },
+      },
+    },
+    parentSignal: opts.shutdownSignal,
     onActivity: (entry) => state.addActivity(agentId, entry),
   });
 
@@ -88,6 +99,7 @@ export async function fillSlots(opts: {
   projectPath: string;
   linearIds: LinearIds;
   state: AppState;
+  shutdownSignal?: AbortSignal;
 }): Promise<Array<Promise<boolean>>> {
   const { config, projectPath, linearIds, state } = opts;
   const maxSlots = config.executor.parallel;
@@ -122,6 +134,7 @@ export async function fillSlots(opts: {
       projectPath,
       linearIds,
       state,
+      shutdownSignal: opts.shutdownSignal,
     }),
   );
 }

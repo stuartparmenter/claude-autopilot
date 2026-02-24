@@ -1,5 +1,17 @@
 {
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "mcpServers": {
+    "linear": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.linear.app/mcp",
+        "--header",
+        "Authorization: Bearer ${LINEAR_API_KEY}"
+      ]
+    }
   }
 }

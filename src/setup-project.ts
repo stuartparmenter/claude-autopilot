@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * setup-project.ts — Onboard a new project repository for claude-autopilot
+ * setup-project.ts - Onboard a new project repository for claude-autopilot
  *
  * Usage: bun run setup <project-path>
  */
@@ -14,10 +14,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { error, header, info, ok, warn } from "./lib/logger";
 
 const AUTOPILOT_ROOT = resolve(
-  dirname(new URL(import.meta.url).pathname),
+  dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 
@@ -70,7 +71,7 @@ if (existsSync(claudeMdPath)) {
     "utf-8",
   );
   writeFileSync(claudeMdPath, template);
-  ok("Created CLAUDE.md — fill this in with your project details");
+  ok("Created CLAUDE.md -fill this in with your project details");
 }
 
 // --- Copy config template ---
@@ -86,7 +87,7 @@ if (existsSync(configPath)) {
     "utf-8",
   );
   writeFileSync(configPath, template);
-  ok("Created .claude-autopilot.yml — fill this in with your project config");
+  ok("Created .claude-autopilot.yml -fill this in with your project config");
 }
 
 // --- Set up .claude/settings.json ---
@@ -104,7 +105,7 @@ if (existsSync(settingsPath)) {
   if (existing.includes("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")) {
     ok("Agent Teams already configured");
   } else {
-    warn("Agent Teams flag not found — you may need to add it manually");
+    warn("Agent Teams flag not found -you may need to add it manually");
     warn(
       'Add to .claude/settings.json: "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" }',
     );
@@ -113,10 +114,8 @@ if (existsSync(settingsPath)) {
   if (existing.includes("mcp.linear.app")) {
     ok("Linear MCP already configured");
   } else {
-    warn("Linear MCP not found — you may need to add it manually");
-    warn(
-      "Run: claude mcp add --transport http linear https://mcp.linear.app/mcp",
-    );
+    warn("Linear MCP not found -you may need to add it manually");
+    warn("See .claude/settings.json in the autopilot repo for the config");
   }
 } else {
   const settings = {
@@ -126,7 +125,13 @@ if (existsSync(settingsPath)) {
     mcpServers: {
       linear: {
         command: "npx",
-        args: ["-y", "mcp-remote", "https://mcp.linear.app/mcp"],
+        args: [
+          "-y",
+          "mcp-remote",
+          "https://mcp.linear.app/mcp",
+          "--header",
+          "Authorization: Bearer ${LINEAR_API_KEY}",
+        ],
       },
     },
   };
@@ -162,7 +167,7 @@ console.log("Next steps:");
 console.log();
 console.log("  1. Fill in your project details in CLAUDE.md");
 console.log(
-  "     This is the most important file — it tells Claude about your project.",
+  "     This is the most important file -it tells Claude about your project.",
 );
 console.log(`     ${claudeMdPath}`);
 console.log();
@@ -173,12 +178,9 @@ console.log();
 console.log("  3. Set your Linear API key");
 console.log("     export LINEAR_API_KEY=lin_api_...");
 console.log("     Get one at: https://linear.app/settings/api");
+console.log("     The Linear MCP uses this key automatically (no OAuth needed).");
 console.log();
-console.log("  4. Authenticate the Linear MCP (for Claude Code agents)");
-console.log("     Run 'claude' in your project directory, then type '/mcp'");
-console.log("     and authenticate the Linear connection.");
-console.log();
-console.log("  5. Start the loop");
+console.log("  4. Start the loop");
 console.log(`     bun run start ${PROJECT_PATH}`);
 console.log("     Dashboard at http://localhost:7890");
 console.log();

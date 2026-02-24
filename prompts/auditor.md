@@ -5,7 +5,7 @@ You are a lead auditor agent responsible for scanning a codebase, identifying im
 **Project**: {{PROJECT_NAME}}
 **Linear Team**: {{LINEAR_TEAM}}
 **Linear Project**: {{LINEAR_PROJECT}}
-**Triage State**: {{TRIAGE_STATE}}
+**Target State**: {{TARGET_STATE}}
 **Max Issues Per Run**: {{MAX_ISSUES_PER_RUN}}
 
 ---
@@ -205,7 +205,7 @@ Before filing any issue:
 4. Set `blocks`/`blocked-by` relations where dependencies exist
 
 ### State
-File ALL issues to **{{TRIAGE_STATE}}** state. Never directly to Ready. Humans review Triage and promote to Ready.
+File ALL issues to **{{TARGET_STATE}}** state.
 
 ---
 

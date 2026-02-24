@@ -21,25 +21,26 @@ export async function shouldRunAudit(opts: {
     return false;
   }
 
-  const readyCount = await countIssuesInState(
-    linearIds,
-    linearIds.states.ready,
-  );
+  const [readyCount, triageCount] = await Promise.all([
+    countIssuesInState(linearIds, linearIds.states.ready),
+    countIssuesInState(linearIds, linearIds.states.triage),
+  ]);
+  const backlogCount = readyCount + triageCount;
 
   state.updateAuditor({
-    readyCount,
+    readyCount: backlogCount,
     threshold: config.auditor.min_ready_threshold,
   });
 
-  if (readyCount >= config.auditor.min_ready_threshold) {
+  if (backlogCount >= config.auditor.min_ready_threshold) {
     info(
-      `Backlog sufficient (${readyCount} >= ${config.auditor.min_ready_threshold}), skipping audit`,
+      `Backlog sufficient (${readyCount} ready + ${triageCount} triage = ${backlogCount} >= ${config.auditor.min_ready_threshold}), skipping audit`,
     );
     return false;
   }
 
   info(
-    `Backlog low (${readyCount} < ${config.auditor.min_ready_threshold}), audit recommended`,
+    `Backlog low (${readyCount} ready + ${triageCount} triage = ${backlogCount} < ${config.auditor.min_ready_threshold}), audit recommended`,
   );
   return true;
 }
@@ -52,6 +53,7 @@ export async function runAudit(opts: {
   projectPath: string;
   linearIds: LinearIds;
   state: AppState;
+  shutdownSignal?: AbortSignal;
 }): Promise<void> {
   const { config, projectPath, state } = opts;
   const agentId = `audit-${Date.now()}`;
@@ -61,10 +63,14 @@ export async function runAudit(opts: {
 
   info("Starting auditor agent...");
 
+  const targetState = config.auditor.skip_triage
+    ? config.linear.states.ready
+    : config.linear.states.triage;
+
   const prompt = buildAuditorPrompt({
     LINEAR_TEAM: config.linear.team,
     LINEAR_PROJECT: config.linear.project,
-    TRIAGE_STATE: config.linear.states.triage,
+    TARGET_STATE: targetState,
     MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
     PROJECT_NAME: config.project.name,
   });
@@ -74,6 +80,16 @@ export async function runAudit(opts: {
     cwd: projectPath,
     timeoutMs: AUDITOR_TIMEOUT_MS,
     model: config.executor.planning_model,
+    mcpServers: {
+      linear: {
+        type: "http",
+        url: "https://mcp.linear.app/mcp",
+        headers: {
+          Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+        },
+      },
+    },
+    parentSignal: opts.shutdownSignal,
     onActivity: (entry) => state.addActivity(agentId, entry),
   });
 

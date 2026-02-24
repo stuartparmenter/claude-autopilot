@@ -2,6 +2,23 @@ import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import type { AppState } from "./state";
 
+const ACTIVITY_SAYINGS = [
+  "Working...",
+  "Thinking...",
+  "Still going...",
+  "Processing...",
+  "On it...",
+  "Crunching...",
+  "Making progress...",
+  "Busy...",
+  "Humming along...",
+  "In the zone...",
+];
+
+function randomSaying(): string {
+  return ACTIVITY_SAYINGS[Math.floor(Math.random() * ACTIVITY_SAYINGS.length)];
+}
+
 export function createApp(state: AppState): Hono {
   const app = new Hono();
 
@@ -17,6 +34,7 @@ export function createApp(state: AppState): Hono {
               content="width=device-width, initial-scale=1"
             />
             <title>claude-autopilot</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
             <script src="https://unpkg.com/htmx.org@2.0.4"></script>
             <style>
               *,
@@ -272,6 +290,22 @@ export function createApp(state: AppState): Hono {
                 color: var(--purple);
                 margin-left: 8px;
               }
+              .activity-status {
+                padding: 10px 0;
+                font-size: 11px;
+                color: var(--text-dim);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+              }
+              .activity-status .dot {
+                display: inline-block;
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--green);
+                animation: pulse 2s infinite;
+              }
             </style>
           </head>
           <body>
@@ -489,6 +523,7 @@ export function createApp(state: AppState): Hono {
             })
             .join(""),
         )}
+        ${agent.status === "running" ? html`<div class="activity-status"><span class="dot"></span> ${randomSaying()}</div>` : ""}
       </div>
     `);
   });

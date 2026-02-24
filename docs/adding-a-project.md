@@ -256,7 +256,7 @@ notifications:
 
 ## Step 4: Set LINEAR_API_KEY
 
-The scripts use the Linear SDK (`@linear/sdk`) to query and update issues. This requires an API key.
+The `LINEAR_API_KEY` is used by both the orchestrator scripts (via `@linear/sdk`) and the Claude Code agents (via the Linear MCP server). A single API key handles both.
 
 1. Go to https://linear.app/settings/api
 2. Create a new personal API key (or a workspace-level key for shared use)
@@ -268,6 +268,8 @@ export LINEAR_API_KEY=lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 For persistent use, add this to your shell profile (`~/.bashrc`, `~/.zshrc`) or use a secrets manager.
 
+The setup script configures the Linear MCP server in `.claude/settings.json` to pass this key automatically via the `Authorization: Bearer` header — no separate OAuth flow is needed.
+
 ### Troubleshooting
 
 | Problem | Solution |
@@ -276,24 +278,11 @@ For persistent use, add this to your shell profile (`~/.bashrc`, `~/.zshrc`) or 
 | "Linear connection failed" | Verify the key is valid and not expired |
 | "Team 'XYZ' not found in Linear" | The `linear.team` value in config must be the team **key** (e.g., "ENG"), not the team name (e.g., "Engineering"). Find it in your Linear team settings URL |
 | "State 'Todo' not found for team" | The state names in `linear.states` must exactly match your Linear workflow state names. Check Linear team settings for the exact names |
+| Agent can't file Linear issues | Verify `LINEAR_API_KEY` is exported in the shell where you run `bun run start`. The MCP server inherits it from the environment |
 
 ---
 
-## Step 5: Authenticate Linear MCP
-
-The Claude Code agents (both executor and auditor) use the Linear MCP server to read and update issues directly. This requires a separate authentication step.
-
-1. Open a terminal in your project directory
-2. Run `claude` to start an interactive Claude Code session
-3. Type `/mcp` to open the MCP management interface
-4. You should see the Linear MCP server listed (set up by the setup script)
-5. Follow the authentication flow — this will open a browser window for Linear OAuth
-
-After authenticating, the Linear MCP will be available to all Claude Code agents running in your project directory.
-
----
-
-## Step 6: Start the Loop
+## Step 5: Start the Loop
 
 Once configuration is complete, start the loop:
 
@@ -323,8 +312,7 @@ Use this checklist to verify your setup:
 
 - [ ] `bun run setup /path/to/project` completed successfully
 - [ ] `CLAUDE.md` filled in with project details (architecture, commands, conventions)
-- [ ] `.claude-autopilot.yml` configured (team key, test/lint commands at minimum)
+- [ ] `.claude-autopilot.yml` configured (team key, project name at minimum)
 - [ ] `LINEAR_API_KEY` environment variable set
-- [ ] Linear MCP authenticated (ran `claude` then `/mcp` in project directory)
 - [ ] `bun run start /path/to/project` starts successfully and shows dashboard
 - [ ] Dashboard accessible at http://localhost:7890

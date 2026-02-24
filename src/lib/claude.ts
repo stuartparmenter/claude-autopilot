@@ -97,6 +97,8 @@ export async function runClaude(opts: {
   worktree?: string;
   timeoutMs?: number;
   model?: string;
+  mcpServers?: Record<string, unknown>;
+  parentSignal?: AbortSignal;
   onActivity?: (entry: ActivityEntry) => void;
 }): Promise<ClaudeResult> {
   // If a worktree is requested, create it and use its path as cwd
@@ -109,7 +111,7 @@ export async function runClaude(opts: {
 
   info(`Running Claude Code agent (cwd: ${effectiveCwd})...`);
 
-  // Set up abort controller for timeout
+  // Set up abort controller for timeout and graceful shutdown
   const controller = new AbortController();
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -122,6 +124,19 @@ export async function runClaude(opts: {
         `Claude Code timed out after ${Math.round((opts.timeoutMs ?? 0) / 1000)}s`,
       );
     }, opts.timeoutMs);
+  }
+
+  // If a parent signal fires (e.g. Ctrl+C), abort this agent too
+  if (opts.parentSignal) {
+    if (opts.parentSignal.aborted) {
+      controller.abort();
+    } else {
+      opts.parentSignal.addEventListener(
+        "abort",
+        () => controller.abort(),
+        { once: true },
+      );
+    }
   }
 
   const emit = opts.onActivity;
@@ -143,6 +158,9 @@ export async function runClaude(opts: {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
     };
+    if (opts.mcpServers) {
+      queryOpts.mcpServers = opts.mcpServers;
+    }
     if (opts.model) {
       queryOpts.model = opts.model;
     }

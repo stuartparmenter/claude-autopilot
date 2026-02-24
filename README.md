@@ -69,14 +69,10 @@ bun run setup /path/to/your/project
 #    - /path/to/your/project/CLAUDE.md        (project context for Claude)
 #    - /path/to/your/project/.claude-autopilot.yml  (config)
 
-# 4. Set your Linear API key
+# 4. Set your Linear API key (used by both orchestrator and agents)
 export LINEAR_API_KEY=lin_api_...
 
-# 5. Authenticate Linear MCP (for Claude Code agents)
-cd /path/to/your/project && claude
-# Then type /mcp and authenticate Linear
-
-# 6. Start the loop
+# 5. Start the loop
 bun run start /path/to/your/project
 # Dashboard at http://localhost:7890
 ```

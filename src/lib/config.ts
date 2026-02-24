@@ -9,6 +9,7 @@ export interface LinearConfig {
     triage: string;
     ready: string;
     in_progress: string;
+    in_review: string;
     done: string;
     blocked: string;
   };
@@ -24,6 +25,7 @@ export interface LinearIds {
     triage: string;
     ready: string;
     in_progress: string;
+    in_review: string;
     done: string;
     blocked: string;
   };
@@ -44,6 +46,7 @@ export interface AuditorConfig {
   min_ready_threshold: number;
   max_issues_per_run: number;
   use_agent_teams: boolean;
+  skip_triage: boolean;
   scan_dimensions: string[];
 }
 
@@ -72,6 +75,7 @@ const DEFAULTS: AutopilotConfig = {
       triage: "Triage",
       ready: "Todo",
       in_progress: "In Progress",
+      in_review: "In Review",
       done: "Done",
       blocked: "Backlog",
     },
@@ -90,6 +94,7 @@ const DEFAULTS: AutopilotConfig = {
     min_ready_threshold: 5,
     max_issues_per_run: 10,
     use_agent_teams: true,
+    skip_triage: true,
     scan_dimensions: [
       "test-coverage",
       "error-handling",

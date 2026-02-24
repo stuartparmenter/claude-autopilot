@@ -92,7 +92,7 @@ info(
 
 info("Connecting to Linear...");
 const linearIds = await resolveLinearIds(config.linear);
-ok(`Connected — team ${config.linear.team}, project ${config.linear.project}`);
+ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 
 // --- Init state and server ---
 
@@ -106,6 +106,31 @@ const server = Bun.serve({
 
 ok(`Dashboard: http://localhost:${server.port}`);
 console.log();
+
+// --- Graceful shutdown ---
+
+const shutdownController = new AbortController();
+let shuttingDown = false;
+
+function shutdown() {
+  if (shuttingDown) {
+    info("Force quitting...");
+    process.exit(1);
+  }
+  shuttingDown = true;
+  console.log();
+  info("Shutting down - aborting running agents...");
+  shutdownController.abort();
+  server.stop();
+  // Give agents a moment to clean up, then exit
+  setTimeout(() => {
+    info("Shutdown complete.");
+    process.exit(0);
+  }, 3000);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // --- Main loop ---
 
@@ -122,12 +147,15 @@ while (true) {
       continue;
     }
 
+    if (shuttingDown) break;
+
     // Fill executor slots
     const newPromises = await fillSlots({
       config,
       projectPath,
       linearIds,
       state,
+      shutdownSignal: shutdownController.signal,
     });
     for (const p of newPromises) {
       // Each promise self-removes from the set when it settles
@@ -143,7 +171,13 @@ while (true) {
         state,
       });
       if (shouldAudit) {
-        runAudit({ config, projectPath, linearIds, state });
+        runAudit({
+          config,
+          projectPath,
+          linearIds,
+          state,
+          shutdownSignal: shutdownController.signal,
+        });
       }
     }
 

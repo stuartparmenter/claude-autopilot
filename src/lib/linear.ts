@@ -243,14 +243,21 @@ export async function resolveLinearIds(
     findProject(config.project),
   ]);
 
-  const [triageState, readyState, inProgressState, doneState, blockedState] =
-    await Promise.all([
-      findState(team.id, config.states.triage),
-      findState(team.id, config.states.ready),
-      findState(team.id, config.states.in_progress),
-      findState(team.id, config.states.done),
-      findState(team.id, config.states.blocked),
-    ]);
+  const [
+    triageState,
+    readyState,
+    inProgressState,
+    inReviewState,
+    doneState,
+    blockedState,
+  ] = await Promise.all([
+    findState(team.id, config.states.triage),
+    findState(team.id, config.states.ready),
+    findState(team.id, config.states.in_progress),
+    findState(team.id, config.states.in_review),
+    findState(team.id, config.states.done),
+    findState(team.id, config.states.blocked),
+  ]);
 
   return {
     teamId: team.id,
@@ -261,6 +268,7 @@ export async function resolveLinearIds(
       triage: triageState.id,
       ready: readyState.id,
       in_progress: inProgressState.id,
+      in_review: inReviewState.id,
       done: doneState.id,
       blocked: blockedState.id,
     },

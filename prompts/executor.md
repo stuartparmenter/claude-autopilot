@@ -105,7 +105,7 @@ Use the Linear MCP to update the issue.
    - List of files changed
    - Any decisions made or assumptions
    - Link to the PR
-2. Move the issue to **{{DONE_STATE}}**
+2. Move the issue to **{{IN_REVIEW_STATE}}** (Done happens when the PR merges)
 
 ### On failure:
 1. Add a comment to the issue with:
