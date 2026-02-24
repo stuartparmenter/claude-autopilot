@@ -1,0 +1,159 @@
+# CLAUDE.md
+
+<!-- TODO: Replace all placeholder text in [brackets] with your project's details. -->
+<!-- TODO: Remove these HTML comments once the file is filled in. -->
+
+## Project Overview
+
+[Describe your project in 2-3 sentences. What does it do? Who uses it? What problem does it solve?]
+
+<!-- Example: "Acme API is a REST service that powers the Acme dashboard. It handles user authentication, data aggregation from third-party sources, and real-time notifications. Built for internal use by the product and engineering teams." -->
+
+## Architecture
+
+[Describe the high-level architecture: services, data flow, and key components.]
+
+<!-- TODO: Include a brief description of each service/component and how they interact. -->
+
+- **[Service/Component Name]** — [What it does, what it talks to]
+- **[Service/Component Name]** — [What it does, what it talks to]
+- **[Database/Queue/Cache]** — [Technology, what it stores, who reads/writes]
+
+Data flow: [Describe the primary data flow, e.g., "Client -> API Gateway -> Service -> Database"]
+
+## Tech Stack
+
+<!-- TODO: List languages, frameworks, databases, and key libraries. -->
+
+| Layer         | Technology                          |
+|---------------|-------------------------------------|
+| Language      | [e.g., TypeScript, Python, Go]      |
+| Framework     | [e.g., Next.js, FastAPI, Gin]       |
+| Database      | [e.g., PostgreSQL, MongoDB]         |
+| Cache         | [e.g., Redis, Memcached]            |
+| Queue         | [e.g., RabbitMQ, SQS, none]        |
+| ORM/DB Client | [e.g., Prisma, SQLAlchemy, GORM]    |
+| Testing       | [e.g., Jest, pytest, go test]       |
+| CI/CD         | [e.g., GitHub Actions, CircleCI]    |
+
+## Directory Structure
+
+<!-- TODO: Show the top-level directory layout with brief explanations. -->
+
+```
+.
+├── src/                    # [Application source code]
+│   ├── api/                # [Route handlers / controllers]
+│   ├── services/           # [Business logic]
+│   ├── models/             # [Database models / schemas]
+│   ├── utils/              # [Shared utilities]
+│   └── config/             # [Configuration and environment]
+├── tests/                  # [Test files, mirroring src/ structure]
+├── migrations/             # [Database migrations]
+├── scripts/                # [Build and automation scripts]
+├── docs/                   # [Documentation]
+├── package.json            # [Dependencies and scripts (or equivalent)]
+└── CLAUDE.md               # [This file]
+```
+
+## Development Commands
+
+<!-- TODO: Fill in the exact commands for your project. -->
+
+```bash
+# Install dependencies
+[e.g., npm install / pip install -r requirements.txt / go mod download]
+
+# Run tests
+[e.g., npm test / pytest / go test ./...]
+
+# Run tests for a specific file or module
+[e.g., npm test -- path/to/test / pytest path/to/test.py]
+
+# Lint / format
+[e.g., npm run lint / ruff check . / golangci-lint run]
+
+# Auto-fix lint issues
+[e.g., npm run lint:fix / ruff check --fix .]
+
+# Start dev server
+[e.g., npm run dev / uvicorn main:app --reload / go run .]
+
+# Build for production
+[e.g., npm run build / docker build . / go build -o bin/app]
+
+# Database migrations
+[e.g., npx prisma migrate dev / alembic upgrade head]
+```
+
+## Code Conventions
+
+<!-- TODO: List the coding conventions that this project follows. -->
+
+- **Naming**: [e.g., camelCase for variables/functions, PascalCase for classes/components]
+- **File naming**: [e.g., kebab-case.ts, snake_case.py]
+- **Imports**: [e.g., absolute imports from src/, grouped by stdlib/external/internal]
+- **Error handling**: [e.g., always use custom error classes, never swallow errors silently]
+- **Types**: [e.g., strict TypeScript with no `any`, type hints required in Python]
+- **Comments**: [e.g., JSDoc for public APIs, inline comments for non-obvious logic only]
+- **Branching**: [e.g., feature branches off main, squash merge]
+- **Commits**: [e.g., conventional commits format: "feat:", "fix:", "chore:"]
+
+## Key Files
+
+<!-- TODO: List the most important files someone needs to know about. -->
+
+| File                        | Purpose                                      |
+|-----------------------------|----------------------------------------------|
+| `[path/to/entry-point]`    | [Application entry point]                    |
+| `[path/to/config]`         | [Main configuration file]                    |
+| `[path/to/routes]`         | [API route definitions]                      |
+| `[path/to/schema]`         | [Database schema / models definition]        |
+| `[path/to/auth]`           | [Authentication logic]                       |
+| `[path/to/types]`          | [Shared type definitions]                    |
+
+## Common Patterns
+
+<!-- TODO: Show the step-by-step process for common development tasks. -->
+
+### Adding a new API endpoint
+
+1. [e.g., Define the route in `src/api/routes/`]
+2. [e.g., Create or update the service in `src/services/`]
+3. [e.g., Add input validation schema in `src/schemas/`]
+4. [e.g., Write tests in `tests/api/`]
+5. [e.g., Update API documentation if applicable]
+
+### Adding a new database model
+
+1. [e.g., Define the model in `src/models/`]
+2. [e.g., Generate and run migration: `npx prisma migrate dev`]
+3. [e.g., Create the corresponding service in `src/services/`]
+4. [e.g., Add seed data if needed in `scripts/seed.ts`]
+
+### Writing tests
+
+- [e.g., Place test files next to source files as `*.test.ts` or in `tests/` mirroring the src structure]
+- [e.g., Use factories/fixtures from `tests/helpers/` for test data]
+- [e.g., Mock external services using `tests/__mocks__/`]
+- [e.g., Each test should be independent — no shared mutable state between tests]
+
+## Things to Watch Out For
+
+<!-- TODO: List gotchas, footguns, and non-obvious behaviors that trip people up. -->
+
+- [e.g., The `users` table has a soft-delete column — always filter by `deleted_at IS NULL`]
+- [e.g., Environment variable `API_KEY` must be set even in test mode or auth middleware crashes]
+- [e.g., The `payments` service has retry logic — don't wrap calls to it in your own retry loop]
+- [e.g., Database migrations are not reversible in production — always test locally first]
+- [e.g., The CI pipeline runs lint before tests — fix lint errors first to avoid wasted test runs]
+
+## claude-autopilot Integration
+
+This project is managed by [claude-autopilot](https://github.com/your-org/claude-autopilot). The automation agents interact with this project as follows:
+
+- **Executor agent** picks up issues in the **Ready** (Todo) state in Linear, creates a branch, implements the change, and opens a PR.
+- **Auditor agent** scans the codebase for improvements and files new issues to **Triage** in Linear for human review.
+- **Protected files** listed in `claude-autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
+
+<!-- TODO: Update the link above and adjust terminology to match your Linear workflow states. -->

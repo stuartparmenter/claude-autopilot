@@ -1,0 +1,72 @@
+[
+  {
+    "name": "auto-audit",
+    "color": "#888888",
+    "description": "Filed by the auditor agent"
+  },
+  {
+    "name": "auto-executed",
+    "color": "#3b82f6",
+    "description": "Implemented by the executor agent"
+  },
+  {
+    "name": "needs-input",
+    "color": "#f59e0b",
+    "description": "Requires human design decision"
+  },
+  {
+    "name": "test-coverage",
+    "color": "#22c55e",
+    "description": "Test coverage improvements"
+  },
+  {
+    "name": "error-handling",
+    "color": "#ef4444",
+    "description": "Error handling improvements"
+  },
+  {
+    "name": "performance",
+    "color": "#a855f7",
+    "description": "Performance optimizations"
+  },
+  {
+    "name": "security",
+    "color": "#991b1b",
+    "description": "Security fixes and hardening"
+  },
+  {
+    "name": "code-quality",
+    "color": "#06b6d4",
+    "description": "Code quality and maintainability"
+  },
+  {
+    "name": "dependency-update",
+    "color": "#f97316",
+    "description": "Dependency updates"
+  },
+  {
+    "name": "documentation",
+    "color": "#84cc16",
+    "description": "Documentation improvements"
+  },
+  {
+    "name": "critical",
+    "color": "#991b1b",
+    "description": "Critical severity"
+  },
+  {
+    "name": "important",
+    "color": "#f59e0b",
+    "description": "Important severity"
+  },
+  {
+    "name": "moderate",
+    "color": "#3b82f6",
+    "description": "Moderate severity"
+  },
+  {
+    "name": "low",
+    "color": "#888888",
+    "description": "Low severity"
+  }
+]
