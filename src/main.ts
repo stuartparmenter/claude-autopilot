@@ -3,7 +3,7 @@
 /**
  * main.ts — Single entry point for claude-autopilot.
  *
- * Usage: bun run start <project-path> [--port 7890]
+ * Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]
  */
 
 import {
@@ -28,10 +28,14 @@ import { AppState } from "./state";
 const args = process.argv.slice(2);
 let projectArg: string | undefined;
 let port = 7890;
+let host = "127.0.0.1";
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--port" && args[i + 1]) {
     port = Number.parseInt(args[i + 1], 10);
+    i++;
+  } else if (args[i] === "--host" && args[i + 1]) {
+    host = args[i + 1];
     i++;
   } else if (!args[i].startsWith("-")) {
     projectArg = args[i];
@@ -39,12 +43,17 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!projectArg) {
-  console.log("Usage: bun run start <project-path> [--port 7890]");
+  console.log(
+    "Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]",
+  );
   console.log();
   console.log("Start the claude-autopilot loop with a web dashboard.");
   console.log();
   console.log("Options:");
-  console.log("  --port <number>  Dashboard port (default: 7890)");
+  console.log("  --port <number>   Dashboard port (default: 7890)");
+  console.log(
+    "  --host <address>  Dashboard bind address (default: 127.0.0.1)",
+  );
   process.exit(1);
 }
 
@@ -125,12 +134,26 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 const state = new AppState();
 const app = createApp(state);
 
+const isLocalhost =
+  host === "127.0.0.1" || host === "localhost" || host === "::1";
+
+if (!isLocalhost) {
+  warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);
+  warn("  The dashboard has NO authentication. Anyone on the network can:");
+  warn("  - View all agent activity, issue titles, and execution history");
+  warn("  - Pause and resume the executor loop via POST /api/pause");
+  warn(
+    "  Consider using --host 127.0.0.1 (the default) or adding a reverse proxy with auth.",
+  );
+}
+
 const server = Bun.serve({
   port,
+  hostname: host,
   fetch: app.fetch,
 });
 
-ok(`Dashboard: http://localhost:${server.port}`);
+ok(`Dashboard: http://${isLocalhost ? "localhost" : host}:${server.port}`);
 console.log();
 
 // --- Graceful shutdown ---

@@ -141,13 +141,16 @@ bun run start /path/to/project
 # Custom dashboard port
 bun run start /path/to/project --port 3000
 
+# Expose dashboard to the network (WARNING: no authentication)
+bun run start /path/to/project --host 0.0.0.0
+
 # Onboard a new project
 bun run setup /path/to/project
 ```
 
 The single `bun run start` command:
 1. Connects to Linear and resolves team/state IDs
-2. Starts a Hono web dashboard on port 7890 (configurable with `--port`)
+2. Starts a Hono web dashboard on port 7890, bound to `127.0.0.1` by default (configurable with `--port` and `--host`)
 3. Enters the main loop:
    - Fills executor slots (up to `executor.parallel` agents)
    - Checks if the auditor should run (backlog threshold)
