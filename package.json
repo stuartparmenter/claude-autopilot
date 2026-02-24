@@ -12,7 +12,7 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.51",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.52",
     "@linear/sdk": "^75.0.0",
     "hono": "^4.12.2",
     "yaml": "^2.8.2"
