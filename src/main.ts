@@ -10,7 +10,7 @@ import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { resolveLinearIds } from "./lib/linear";
-import { error, header, info, ok } from "./lib/logger";
+import { error, header, info, ok, warn } from "./lib/logger";
 import { createApp } from "./server";
 import { AppState } from "./state";
 
@@ -177,6 +177,9 @@ while (true) {
           linearIds,
           state,
           shutdownSignal: shutdownController.signal,
+        }).catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          warn(`Auditor error: ${msg}`);
         });
       }
     }

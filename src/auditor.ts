@@ -61,70 +61,81 @@ export async function runAudit(opts: {
   state.addAgent(agentId, "auditor", "Codebase audit");
   state.updateAuditor({ running: true });
 
-  info("Starting auditor agent...");
+  try {
+    info("Starting auditor agent...");
 
-  const targetState = config.auditor.skip_triage
-    ? config.linear.states.ready
-    : config.linear.states.triage;
+    const targetState = config.auditor.skip_triage
+      ? config.linear.states.ready
+      : config.linear.states.triage;
 
-  const prompt = buildAuditorPrompt({
-    LINEAR_TEAM: config.linear.team,
-    LINEAR_PROJECT: config.linear.project,
-    TARGET_STATE: targetState,
-    MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
-    PROJECT_NAME: config.project.name,
-  });
+    const prompt = buildAuditorPrompt({
+      LINEAR_TEAM: config.linear.team,
+      LINEAR_PROJECT: config.linear.project,
+      TARGET_STATE: targetState,
+      MAX_ISSUES_PER_RUN: String(config.auditor.max_issues_per_run),
+      PROJECT_NAME: config.project.name,
+    });
 
-  const result = await runClaude({
-    prompt,
-    cwd: projectPath,
-    timeoutMs: AUDITOR_TIMEOUT_MS,
-    model: config.executor.planning_model,
-    mcpServers: {
-      linear: {
-        type: "http",
-        url: "https://mcp.linear.app/mcp",
-        headers: {
-          Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+    const result = await runClaude({
+      prompt,
+      cwd: projectPath,
+      timeoutMs: AUDITOR_TIMEOUT_MS,
+      model: config.executor.planning_model,
+      mcpServers: {
+        linear: {
+          type: "http",
+          url: "https://mcp.linear.app/mcp",
+          headers: {
+            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+          },
         },
       },
-    },
-    parentSignal: opts.shutdownSignal,
-    onActivity: (entry) => state.addActivity(agentId, entry),
-  });
+      parentSignal: opts.shutdownSignal,
+      onActivity: (entry) => state.addActivity(agentId, entry),
+    });
 
-  if (result.timedOut) {
-    warn("Auditor timed out after 60 minutes");
-    state.completeAgent(agentId, "timed_out", { error: "Timed out" });
+    if (result.timedOut) {
+      warn("Auditor timed out after 60 minutes");
+      state.completeAgent(agentId, "timed_out", { error: "Timed out" });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "timed_out",
+      });
+      return;
+    }
+
+    if (result.error) {
+      warn(`Auditor failed: ${result.error}`);
+      state.completeAgent(agentId, "failed", { error: result.error });
+      state.updateAuditor({
+        running: false,
+        lastRunAt: Date.now(),
+        lastResult: "failed",
+      });
+      return;
+    }
+
+    ok("Auditor completed successfully");
+    if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
+    state.completeAgent(agentId, "completed", {
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
+    });
     state.updateAuditor({
       running: false,
       lastRunAt: Date.now(),
-      lastResult: "timed_out",
+      lastResult: "completed",
     });
-    return;
-  }
-
-  if (result.error) {
-    warn(`Auditor failed: ${result.error}`);
-    state.completeAgent(agentId, "failed", { error: result.error });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    warn(`Auditor crashed: ${msg}`);
+    state.completeAgent(agentId, "failed", { error: msg });
     state.updateAuditor({
       running: false,
       lastRunAt: Date.now(),
       lastResult: "failed",
     });
-    return;
   }
-
-  ok("Auditor completed successfully");
-  if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  state.completeAgent(agentId, "completed", {
-    costUsd: result.costUsd,
-    durationMs: result.durationMs,
-    numTurns: result.numTurns,
-  });
-  state.updateAuditor({
-    running: false,
-    lastRunAt: Date.now(),
-    lastResult: "completed",
-  });
 }

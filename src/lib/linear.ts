@@ -123,28 +123,33 @@ export async function getReadyIssues(
   const unblocked: Issue[] = [];
 
   for (const issue of sorted) {
-    const relations = await issue.relations();
-    let isBlocked = false;
+    try {
+      const relations = await issue.relations();
+      let isBlocked = false;
 
-    for (const relation of relations.nodes) {
-      if (relation.type === "blocks") {
-        const related = await relation.relatedIssue;
-        if (related) {
-          const state = await related.state;
-          if (
-            state &&
-            state.type !== "completed" &&
-            state.type !== "canceled"
-          ) {
-            isBlocked = true;
-            break;
+      for (const relation of relations.nodes) {
+        if (relation.type === "blocks") {
+          const related = await relation.relatedIssue;
+          if (related) {
+            const state = await related.state;
+            if (
+              state &&
+              state.type !== "completed" &&
+              state.type !== "canceled"
+            ) {
+              isBlocked = true;
+              break;
+            }
           }
         }
       }
-    }
 
-    if (!isBlocked) {
-      unblocked.push(issue);
+      if (!isBlocked) {
+        unblocked.push(issue);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warn(`Skipping issue ${issue.identifier}: failed to check relations — ${msg}`);
     }
   }
 
