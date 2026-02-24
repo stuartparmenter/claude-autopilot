@@ -147,7 +147,10 @@ export async function getReadyIssues(
   const unblocked: Issue[] = [];
 
   for (const issue of sorted) {
-    const relations = await withRetry(() => issue.relations(), "getReadyIssues");
+    const relations = await withRetry(
+      () => issue.relations(),
+      "getReadyIssues",
+    );
     let isBlocked = false;
 
     for (const relation of relations.nodes) {
