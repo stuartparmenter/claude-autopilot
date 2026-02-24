@@ -45,6 +45,21 @@ function summarizeToolUse(toolName: string, input: unknown): string {
   }
 }
 
+export function buildMcpServers(): Record<string, unknown> {
+  return {
+    linear: {
+      type: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: { Authorization: `Bearer ${process.env.LINEAR_API_KEY}` },
+    },
+    github: {
+      type: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+    },
+  };
+}
+
 /**
  * Run Claude Code with the Agent SDK.
  * Sends a prompt, runs it against a codebase directory, and returns structured results.

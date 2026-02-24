@@ -1,4 +1,4 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getReadyIssues, updateIssue } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
@@ -47,15 +47,7 @@ export async function executeIssue(opts: {
       worktree,
       timeoutMs,
       model: config.executor.model,
-      mcpServers: {
-        linear: {
-          type: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-          },
-        },
-      },
+      mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
