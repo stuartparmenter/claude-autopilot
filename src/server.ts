@@ -220,15 +220,14 @@ export function createApp(state: AppState): Hono {
               }
               .detail-text {
                 margin-top: 4px;
-                padding: 6px 8px;
+                padding: 8px 10px;
                 background: var(--bg);
-                border-radius: 4px;
+                border-left: 2px solid var(--border);
+                border-radius: 0 4px 4px 0;
                 font-size: 11px;
                 color: var(--text-dim);
                 white-space: pre-wrap;
                 word-break: break-word;
-                max-height: 120px;
-                overflow-y: auto;
               }
               .history-card {
                 padding: 8px 16px;
