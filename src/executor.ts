@@ -1,6 +1,6 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { getReadyIssues, updateIssue } from "./lib/linear";
+import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
 import { info, ok, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
@@ -21,6 +21,7 @@ export async function executeIssue(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const { issue, config, projectPath, linearIds, state } = opts;
+  validateIdentifier(issue.identifier);
   const agentId = `exec-${issue.identifier}-${Date.now()}`;
 
   info(`Executing: ${issue.identifier} - ${issue.title}`);
@@ -35,6 +36,9 @@ export async function executeIssue(opts: {
     IN_REVIEW_STATE: config.linear.states.in_review,
     BLOCKED_STATE: config.linear.states.blocked,
     PROJECT_NAME: config.project.name,
+    AUTOMERGE_INSTRUCTION: config.github.automerge
+      ? "Enable auto-merge on the PR using the GitHub MCP. Do not specify a merge method — the repository's default merge strategy will be used. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+      : "Skip — auto-merge is not enabled for this project.",
   });
 
   const worktree = issue.identifier;
@@ -44,26 +48,12 @@ export async function executeIssue(opts: {
     const result = await runClaude({
       prompt,
       cwd: projectPath,
+      label: issue.identifier,
       worktree,
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
-      mcpServers: {
-        linear: {
-          type: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-          },
-        },
-        github: {
-          type: "http",
-          url: "https://api.githubcopilot.com/mcp/",
-          headers: {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          },
-        },
-      },
+      mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),
     });

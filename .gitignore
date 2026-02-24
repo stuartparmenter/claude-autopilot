@@ -1,3 +1,26 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
 .claude-autopilot.yml
+
+# Build artifacts
+*.tsbuildinfo
+
+# Worktrees
 .worktrees/
+.claude/worktrees/
+
+# Editor
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated docs
+docs/plans/

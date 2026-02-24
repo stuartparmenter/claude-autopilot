@@ -104,6 +104,7 @@ Create a clean commit and PR.
      - **Testing**: What tests were added/modified
      - **Issue**: Link to the Linear issue
    - Request no reviewers (human will review from Linear)
+7. **Auto-merge**: {{AUTOMERGE_INSTRUCTION}}
 
 ---
 

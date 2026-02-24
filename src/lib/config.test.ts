@@ -4,6 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULTS, deepMerge, loadConfig } from "./config";
 
+let tmpDir: string;
+
+function writeConfig(content: string): string {
+  writeFileSync(join(tmpDir, ".claude-autopilot.yml"), content, "utf-8");
+  return tmpDir;
+}
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "autopilot-test-"));
+});
+
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
 describe("deepMerge", () => {
   test("empty source returns target unchanged", () => {
     const result = deepMerge({ a: 1 }, {});
@@ -63,16 +78,6 @@ describe("deepMerge", () => {
 });
 
 describe("loadConfig", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "autopilot-test-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
   test("throws on missing config file", () => {
     expect(() => loadConfig("/nonexistent/path")).toThrow(
       "Config file not found",
@@ -116,5 +121,130 @@ describe("loadConfig", () => {
     const config = loadConfig(tmpDir);
     expect(config.linear.states.ready).toBe("Backlog");
     expect(config.linear.states.done).toBe("Done");
+  });
+
+  test("loads a valid config without throwing", () => {
+    const dir = writeConfig(`
+project:
+  name: My Project
+linear:
+  team: ENG
+  project: my-project
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("throws if project.name contains a newline", () => {
+    const dir = writeConfig(`
+project:
+  name: |
+    foo
+    bar
+linear:
+  team: ENG
+  project: my-project
+`);
+    expect(() => loadConfig(dir)).toThrow(/project\.name/);
+    expect(() => loadConfig(dir)).toThrow(/newline/);
+  });
+
+  test("throws if linear.team contains a newline", () => {
+    const dir = writeConfig(`
+project:
+  name: My Project
+linear:
+  team: |
+    ENG
+    EVIL
+  project: my-project
+`);
+    expect(() => loadConfig(dir)).toThrow(/linear\.team/);
+  });
+
+  test("throws if a config string exceeds 200 characters", () => {
+    const longName = "x".repeat(201);
+    const dir = writeConfig(`
+project:
+  name: "${longName}"
+linear:
+  team: ENG
+  project: my-project
+`);
+    expect(() => loadConfig(dir)).toThrow(/project\.name/);
+    expect(() => loadConfig(dir)).toThrow(/200/);
+  });
+
+  test("accepts values at exactly 200 characters", () => {
+    const exactName = "x".repeat(200);
+    const dir = writeConfig(`
+project:
+  name: "${exactName}"
+linear:
+  team: ENG
+  project: my-project
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("accepts legitimate state names", () => {
+    const dir = writeConfig(`
+project:
+  name: My Project (v2)
+linear:
+  team: ENG
+  project: my-project
+  states:
+    triage: Triage
+    ready: Todo
+    in_progress: In Progress
+    in_review: In Review
+    done: Done
+    blocked: Backlog
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("throws if a state name contains a newline", () => {
+    const dir = writeConfig(`
+project:
+  name: My Project
+linear:
+  team: ENG
+  project: my-project
+  states:
+    ready: |
+      Todo
+      EVIL
+`);
+    expect(() => loadConfig(dir)).toThrow(/linear\.states\.ready/);
+  });
+
+  test("brainstorm config defaults are set", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.auditor.brainstorm_features).toBe(true);
+    expect(config.auditor.brainstorm_dimensions).toEqual([
+      "user-facing-features",
+      "developer-experience",
+      "integrations",
+      "scalability",
+    ]);
+    expect(config.auditor.max_ideas_per_run).toBe(5);
+  });
+
+  test("brainstorm config can be overridden", () => {
+    const dir = writeConfig(`
+auditor:
+  brainstorm_features: false
+  max_ideas_per_run: 3
+  brainstorm_dimensions:
+    - user-facing-features
+`);
+    const config = loadConfig(dir);
+    expect(config.auditor.brainstorm_features).toBe(false);
+    expect(config.auditor.max_ideas_per_run).toBe(3);
+    expect(config.auditor.brainstorm_dimensions).toEqual([
+      "user-facing-features",
+    ]);
   });
 });

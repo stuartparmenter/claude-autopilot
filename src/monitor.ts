@@ -1,4 +1,4 @@
-import { runClaude } from "./lib/claude";
+import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getPRStatus } from "./lib/github";
 import { getLinearClient } from "./lib/linear";
@@ -171,27 +171,13 @@ async function fixPR(opts: {
     const result = await runClaude({
       prompt,
       cwd: projectPath,
+      label: `fix-${issueIdentifier}`,
       worktree,
       worktreeBranch: branch,
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
-      mcpServers: {
-        linear: {
-          type: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
-          },
-        },
-        github: {
-          type: "http",
-          url: "https://api.githubcopilot.com/mcp/",
-          headers: {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          },
-        },
-      },
+      mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onActivity: (entry) => state.addActivity(agentId, entry),
     });

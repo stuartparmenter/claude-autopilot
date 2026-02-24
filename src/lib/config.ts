@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { error } from "./logger";
+import { fatal } from "./logger";
 
 export interface LinearConfig {
   team: string;
@@ -50,10 +50,14 @@ export interface AuditorConfig {
   use_agent_teams: boolean;
   skip_triage: boolean;
   scan_dimensions: string[];
+  brainstorm_features: boolean;
+  brainstorm_dimensions: string[];
+  max_ideas_per_run: number;
 }
 
 export interface GithubConfig {
   repo: string; // "owner/repo" override — empty = auto-detect from git remote
+  automerge: boolean; // Enable auto-merge on PRs created by the executor
 }
 
 export interface ProjectConfig {
@@ -106,9 +110,18 @@ export const DEFAULTS: AutopilotConfig = {
       "dependency-health",
       "documentation",
     ],
+    brainstorm_features: true,
+    brainstorm_dimensions: [
+      "user-facing-features",
+      "developer-experience",
+      "integrations",
+      "scalability",
+    ],
+    max_ideas_per_run: 5,
   },
   github: {
     repo: "",
+    automerge: false,
   },
   project: {
     name: "",
@@ -142,6 +155,33 @@ export function deepMerge<T extends Record<string, unknown>>(
   return result;
 }
 
+function validateConfigStrings(config: AutopilotConfig): void {
+  const fields: Array<[string, string]> = [
+    ["project.name", config.project.name],
+    ["linear.team", config.linear.team],
+    ["linear.project", config.linear.project],
+    ["linear.states.triage", config.linear.states.triage],
+    ["linear.states.ready", config.linear.states.ready],
+    ["linear.states.in_progress", config.linear.states.in_progress],
+    ["linear.states.in_review", config.linear.states.in_review],
+    ["linear.states.done", config.linear.states.done],
+    ["linear.states.blocked", config.linear.states.blocked],
+  ];
+
+  for (const [key, value] of fields) {
+    if (/[\r\n]/.test(value)) {
+      throw new Error(
+        `Config validation error: "${key}" must not contain newline characters`,
+      );
+    }
+    if (value.length > 200) {
+      throw new Error(
+        `Config validation error: "${key}" exceeds the maximum length of 200 characters`,
+      );
+    }
+  }
+}
+
 export function loadConfig(projectPath: string): AutopilotConfig {
   const configPath = resolve(projectPath, ".claude-autopilot.yml");
   if (!existsSync(configPath)) {
@@ -153,19 +193,23 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   const raw = readFileSync(configPath, "utf-8");
   const parsed = (YAML.parse(raw) ?? {}) as Record<string, unknown>;
 
-  return deepMerge(
+  const config = deepMerge(
     DEFAULTS as unknown as Record<string, unknown>,
     parsed,
   ) as unknown as AutopilotConfig;
+
+  validateConfigStrings(config);
+
+  return config;
 }
 
 export function resolveProjectPath(arg?: string): string {
   if (!arg) {
-    error("Usage: bun run <script> <project-path>");
+    fatal("Usage: bun run <script> <project-path>");
   }
   const resolved = resolve(arg);
   if (!existsSync(resolved)) {
-    error(`Project path does not exist: ${resolved}`);
+    fatal(`Project path does not exist: ${resolved}`);
   }
   return resolved;
 }

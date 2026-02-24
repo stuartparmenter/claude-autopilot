@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { error, header, info, ok, warn } from "./lib/logger";
+import { fatal, header, info, ok, warn } from "./lib/logger";
 
 const AUTOPILOT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -33,7 +33,7 @@ if (!projectPath) {
 const PROJECT_PATH = resolve(projectPath);
 
 if (!existsSync(PROJECT_PATH)) {
-  error(`Project path does not exist: ${PROJECT_PATH}`);
+  fatal(`Project path does not exist: ${PROJECT_PATH}`);
 }
 
 // --- Check prerequisites ---
@@ -49,7 +49,7 @@ const gitCheck = Bun.spawnSync(
   },
 );
 if (gitCheck.exitCode !== 0) {
-  error(
+  fatal(
     `${PROJECT_PATH} is not a git repository. Initialize with 'git init' first.`,
   );
 }
