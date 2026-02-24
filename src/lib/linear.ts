@@ -189,7 +189,7 @@ export async function countIssuesInState(
   stateId: string,
 ): Promise<number> {
   const client = getLinearClient();
-  const result = await withRetry(
+  let result = await withRetry(
     () =>
       client.issues({
         filter: {
@@ -201,6 +201,11 @@ export async function countIssuesInState(
       }),
     { label: "countIssuesInState" },
   );
+
+  while (result.pageInfo.hasNextPage) {
+    result = await result.fetchNext();
+  }
+
   return result.nodes.length;
 }
 
@@ -259,21 +264,6 @@ export async function createIssue(opts: {
   const issue = await payload.issue;
   if (!issue) throw new Error("Failed to create issue");
   return issue;
-}
-
-/**
- * Verify the Linear API connection works.
- */
-export async function testConnection(): Promise<boolean> {
-  try {
-    const client = getLinearClient();
-    const viewer = await client.viewer;
-    info(`Connected to Linear as ${viewer.name ?? viewer.email}`);
-    return true;
-  } catch (e) {
-    warn(`Linear connection failed: ${e}`);
-    return false;
-  }
 }
 
 /**

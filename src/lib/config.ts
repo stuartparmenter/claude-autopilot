@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
+import { error } from "./logger";
 
 export interface LinearConfig {
   team: string;
@@ -54,20 +55,14 @@ export interface ProjectConfig {
   name: string;
 }
 
-export interface NotificationsConfig {
-  slack_webhook: string;
-  notify_on: string[];
-}
-
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
   project: ProjectConfig;
-  notifications: NotificationsConfig;
 }
 
-const DEFAULTS: AutopilotConfig = {
+export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
     project: "",
@@ -108,18 +103,9 @@ const DEFAULTS: AutopilotConfig = {
   project: {
     name: "",
   },
-  notifications: {
-    slack_webhook: "",
-    notify_on: [
-      "executor_complete",
-      "executor_blocked",
-      "auditor_complete",
-      "error",
-    ],
-  },
 };
 
-function deepMerge<T extends Record<string, unknown>>(
+export function deepMerge<T extends Record<string, unknown>>(
   target: T,
   source: Record<string, unknown>,
 ): T {
@@ -165,13 +151,11 @@ export function loadConfig(projectPath: string): AutopilotConfig {
 
 export function resolveProjectPath(arg?: string): string {
   if (!arg) {
-    console.error("Usage: bun run <script> <project-path>");
-    process.exit(1);
+    error("Usage: bun run <script> <project-path>");
   }
   const resolved = resolve(arg);
   if (!existsSync(resolved)) {
-    console.error(`Project path does not exist: ${resolved}`);
-    process.exit(1);
+    error(`Project path does not exist: ${resolved}`);
   }
   return resolved;
 }

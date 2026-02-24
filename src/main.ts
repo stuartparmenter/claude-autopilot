@@ -6,11 +6,18 @@
  * Usage: bun run start <project-path> [--port 7890]
  */
 
+import {
+  AuthenticationLinearError,
+  FeatureNotAccessibleLinearError,
+  ForbiddenLinearError,
+  InvalidInputLinearError,
+  RatelimitedLinearError,
+} from "@linear/sdk";
 import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { resolveLinearIds } from "./lib/linear";
-import { error, header, info, ok } from "./lib/logger";
+import { error, header, info, ok, warn } from "./lib/logger";
 import { createApp } from "./server";
 import { AppState } from "./state";
 
@@ -132,10 +139,34 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+// --- Error classification ---
+
+function isFatalError(e: unknown): boolean {
+  if (
+    e instanceof AuthenticationLinearError ||
+    e instanceof ForbiddenLinearError ||
+    e instanceof InvalidInputLinearError ||
+    e instanceof FeatureNotAccessibleLinearError
+  ) {
+    return true;
+  }
+  const msg = e instanceof Error ? e.message : String(e);
+  return (
+    msg.includes("not found in Linear") ||
+    msg.includes("not found for team") ||
+    msg.includes("Config file not found")
+  );
+}
+
 // --- Main loop ---
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const BASE_BACKOFF_MS = 10_000; // 10s
+const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_CONSECUTIVE_FAILURES = 5;
 const running = new Set<Promise<boolean>>();
+
+let consecutiveFailures = 0;
 
 info("Starting main loop (Ctrl+C to stop)...");
 console.log();
@@ -184,6 +215,9 @@ while (true) {
       }
     }
 
+    // Reset failure counter after a successful iteration
+    consecutiveFailures = 0;
+
     // Wait for any agent to finish or poll interval to elapse
     if (running.size > 0) {
       const pollTimer = Bun.sleep(POLL_INTERVAL_MS).then(() => "poll" as const);
@@ -195,9 +229,40 @@ while (true) {
       await Bun.sleep(POLL_INTERVAL_MS);
     }
   } catch (e) {
+    const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);
     const msg = e instanceof Error ? e.message : String(e);
-    info(`Loop error: ${msg}`);
-    info("Retrying in 60 seconds...");
-    await Bun.sleep(60_000);
+
+    if (isFatalError(e)) {
+      error(`Fatal error — check your API key and config: ${msg}\n${stack}`);
+    }
+
+    consecutiveFailures++;
+    info(`Stack trace: ${stack}`);
+
+    if (e instanceof RatelimitedLinearError) {
+      const retryAfterMs =
+        e.retryAfter != null
+          ? Math.min(e.retryAfter * 1000, MAX_BACKOFF_MS)
+          : BASE_BACKOFF_MS;
+      warn(
+        `Rate limited by Linear. Retrying in ${Math.round(retryAfterMs / 1000)}s...`,
+      );
+      await Bun.sleep(retryAfterMs);
+    } else {
+      const backoffMs = Math.min(
+        BASE_BACKOFF_MS * 2 ** (consecutiveFailures - 1),
+        MAX_BACKOFF_MS,
+      );
+      warn(
+        `Loop error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${msg}`,
+      );
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        error(
+          `${MAX_CONSECUTIVE_FAILURES} consecutive failures — exiting. Last error: ${msg}`,
+        );
+      }
+      info(`Retrying in ${Math.round(backoffMs / 1000)}s...`);
+      await Bun.sleep(backoffMs);
+    }
   }
 }

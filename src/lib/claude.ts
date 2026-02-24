@@ -1,4 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type SDKAssistantMessage,
+  type SDKResultError,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { ActivityEntry } from "../state";
 import { info, warn } from "./logger";
 
@@ -13,7 +17,10 @@ export interface ClaudeResult {
 }
 
 function summarizeToolUse(toolName: string, input: unknown): string {
-  const inp = input as Record<string, unknown>;
+  const inp =
+    input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
   switch (toolName) {
     case "Read":
       return `Read ${inp.file_path ?? "file"}`;
@@ -127,23 +134,16 @@ export async function runClaude(opts: {
 
       // Emit activity for tool use
       if (message.type === "assistant" && message.message) {
-        const msg = message.message as {
-          content?: Array<{
-            type: string;
-            name?: string;
-            input?: unknown;
-            text?: string;
-          }>;
-        };
-        if (Array.isArray(msg.content)) {
-          for (const block of msg.content) {
-            if (block.type === "tool_use" && block.name) {
+        const { content } = (message as SDKAssistantMessage).message;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "tool_use" && "name" in block) {
               emit?.({
                 timestamp: Date.now(),
                 type: "tool_use",
                 summary: summarizeToolUse(block.name, block.input),
               });
-            } else if (block.type === "text" && block.text) {
+            } else if (block.type === "text" && "text" in block) {
               emit?.({
                 timestamp: Date.now(),
                 type: "text",
@@ -168,10 +168,10 @@ export async function runClaude(opts: {
             summary: "Agent completed successfully",
           });
         } else {
-          const errors = (message as Record<string, unknown>).errors as
-            | string[]
-            | undefined;
-          const errSummary = errors?.join("; ") ?? message.subtype;
+          const errResult = message as SDKResultError;
+          const errSummary = errResult.errors?.length
+            ? errResult.errors.join("; ")
+            : errResult.subtype;
           result.error = errSummary;
           emit?.({
             timestamp: Date.now(),
