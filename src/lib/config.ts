@@ -62,7 +62,7 @@ export interface AutopilotConfig {
   project: ProjectConfig;
 }
 
-const DEFAULTS: AutopilotConfig = {
+export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
     project: "",
@@ -105,7 +105,7 @@ const DEFAULTS: AutopilotConfig = {
   },
 };
 
-function deepMerge<T extends Record<string, unknown>>(
+export function deepMerge<T extends Record<string, unknown>>(
   target: T,
   source: Record<string, unknown>,
 ): T {
