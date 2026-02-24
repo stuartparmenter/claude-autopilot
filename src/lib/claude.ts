@@ -8,9 +8,8 @@ import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
 // Stagger agent spawns to avoid race conditions on ~/.claude.json.
-// Each query() waits for the previous agent to signal it has started (init
-// message) before spawning. If the agent crashes before init, the finally
-// block in runClaude releases the slot.
+// Each query() waits for the previous agent's init message before spawning.
+// If the agent crashes before init, the finally block releases the slot.
 let spawnGate: Promise<void> = Promise.resolve();
 
 /**
@@ -159,21 +158,6 @@ export async function runClaude(opts: {
       stderr: (data: string) => warn(`[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
-      // Release the spawn slot as early as possible — the Setup hook fires
-      // during initialization, before SessionStart and the init message.
-      // By this point the agent is past its ~/.claude.json access.
-      hooks: {
-        Setup: [
-          {
-            hooks: [
-              async () => {
-                releaseSpawnSlot?.();
-                return {};
-              },
-            ],
-          },
-        ],
-      },
     };
 
     // Self-managed worktrees: create before spawning, clean up in finally
@@ -224,6 +208,7 @@ export async function runClaude(opts: {
 
         if (message.type === "system" && message.subtype === "init") {
           result.sessionId = message.session_id;
+          releaseSpawnSlot?.();
           emit?.({
             timestamp: Date.now(),
             type: "status",
