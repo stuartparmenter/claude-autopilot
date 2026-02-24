@@ -164,7 +164,9 @@ describe("POST /api/cancel/:agentId", () => {
   });
 
   test("returns 404 for unknown agent", async () => {
-    const res = await app.request("/api/cancel/no-such-agent", { method: "POST" });
+    const res = await app.request("/api/cancel/no-such-agent", {
+      method: "POST",
+    });
     expect(res.status).toBe(404);
     const json = (await res.json()) as { error: string };
     expect(json.error).toBe("Agent not found");
@@ -210,7 +212,9 @@ describe("POST /api/retry/:historyId", () => {
     state.addAgent("exec-ENG-6-456", "ENG-6", "Another", "linear-uuid-6");
     state.completeAgent("exec-ENG-6-456", "completed");
     const app = createApp(state);
-    const res = await app.request("/api/retry/exec-ENG-6-456", { method: "POST" });
+    const res = await app.request("/api/retry/exec-ENG-6-456", {
+      method: "POST",
+    });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: string };
     expect(json.error).toBe("Cannot retry a completed issue");
@@ -219,7 +223,9 @@ describe("POST /api/retry/:historyId", () => {
   test("returns 409 when issue is already running", async () => {
     state.addAgent("exec-ENG-5-999", "ENG-5", "Some issue");
     const app = createApp(state);
-    const res = await app.request("/api/retry/exec-ENG-5-123", { method: "POST" });
+    const res = await app.request("/api/retry/exec-ENG-5-123", {
+      method: "POST",
+    });
     expect(res.status).toBe(409);
   });
 
@@ -228,7 +234,9 @@ describe("POST /api/retry/:historyId", () => {
     state.addAgent("exec-ENG-7-789", "ENG-7", "No uuid");
     state.completeAgent("exec-ENG-7-789", "failed");
     const app = createApp(state);
-    const res = await app.request("/api/retry/exec-ENG-7-789", { method: "POST" });
+    const res = await app.request("/api/retry/exec-ENG-7-789", {
+      method: "POST",
+    });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: string };
     expect(json.error).toBe("No Linear issue ID available for retry");
@@ -237,7 +245,9 @@ describe("POST /api/retry/:historyId", () => {
   test("calls retryIssue and returns retried: true for failed issue", async () => {
     const retryIssue = mock(async (_id: string) => {});
     const app = createApp(state, { retryIssue });
-    const res = await app.request("/api/retry/exec-ENG-5-123", { method: "POST" });
+    const res = await app.request("/api/retry/exec-ENG-5-123", {
+      method: "POST",
+    });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { retried: boolean };
     expect(json.retried).toBe(true);

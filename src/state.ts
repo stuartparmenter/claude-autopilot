@@ -73,7 +73,12 @@ export class AppState {
   private issueFailureCount = new Map<string, number>();
   readonly startedAt = Date.now();
 
-  addAgent(id: string, issueId: string, issueTitle: string, linearIssueId?: string): void {
+  addAgent(
+    id: string,
+    issueId: string,
+    issueTitle: string,
+    linearIssueId?: string,
+  ): void {
     this.agents.set(id, {
       id,
       issueId,

@@ -142,7 +142,9 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
     if (hist.status === "completed") {
       return c.json({ error: "Cannot retry a completed issue" }, 400);
     }
-    const alreadyRunning = state.getRunningAgents().some((a) => a.issueId === hist.issueId);
+    const alreadyRunning = state
+      .getRunningAgents()
+      .some((a) => a.issueId === hist.issueId);
     if (alreadyRunning) {
       return c.json({ error: "Issue is already running" }, 409);
     }
