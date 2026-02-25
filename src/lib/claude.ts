@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   query,
   type SDKAssistantMessage,
@@ -180,6 +182,7 @@ export async function runClaude(opts: {
   };
 
   let worktreeName: string | undefined;
+  let agentTmpDir: string | undefined;
   let inactivityTimedOut = false;
   let loopCompleted = false;
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -208,14 +211,20 @@ export async function runClaude(opts: {
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
+      // Create a dedicated temp directory for this agent so we can
+      // grant sandbox write access to it (instead of all of /tmp) and
+      // clean it up when the agent exits.
+      agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
+      queryOpts.env = { ...process.env, TMPDIR: agentTmpDir };
+
       const sandbox: Record<string, unknown> = {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
         allowUnsandboxedCommands: false,
         // Git worktrees need write access to the parent repo's .git directory
-        // (shared object store, refs, worktree metadata)
+        // (shared object store, refs, worktree metadata).
         filesystem: {
-          allowWrite: [resolve(opts.cwd, ".git")],
+          allowWrite: [resolve(opts.cwd, ".git"), agentTmpDir],
         },
       };
       if (opts.sandbox.network_restricted) {
@@ -423,6 +432,14 @@ export async function runClaude(opts: {
     if (hardKillTimer) clearTimeout(hardKillTimer);
     if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
+
+    if (agentTmpDir) {
+      try {
+        rmSync(agentTmpDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
 
     if (worktreeName) {
       try {
