@@ -1,7 +1,7 @@
 ---
 name: scout
 description: "Lightweight recon — investigates what tooling and infrastructure exists"
-model: sonnet
+model: haiku
 color: green
 ---
 

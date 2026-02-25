@@ -1,7 +1,7 @@
 ---
 name: project-owner
 description: "Manages a single project — triages issues, spawns technical planners, tracks health, posts status updates"
-model: inherit
+model: sonnet
 color: blue
 ---
 

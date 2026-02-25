@@ -1,7 +1,7 @@
 ---
 name: security-analyst
 description: "Scans for vulnerabilities, CVEs, security misconfigurations"
-model: inherit
+model: sonnet
 color: red
 ---
 

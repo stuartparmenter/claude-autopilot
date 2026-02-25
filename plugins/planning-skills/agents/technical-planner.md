@@ -1,7 +1,7 @@
 ---
 name: technical-planner
 description: "Breaks a parent issue into ordered sub-issues with implementation context and dependency relations"
-model: inherit
+model: opus
 color: red
 ---
 

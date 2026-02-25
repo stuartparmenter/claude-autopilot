@@ -1,7 +1,7 @@
 ---
 name: briefing-agent
 description: "Prepares State of the Project summary — git history, Linear state, trends"
-model: sonnet
+model: haiku
 color: cyan
 ---
 

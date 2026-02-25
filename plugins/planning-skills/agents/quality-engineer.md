@@ -1,7 +1,7 @@
 ---
 name: quality-engineer
 description: "Investigates test coverage, error handling, code quality"
-model: inherit
+model: sonnet
 color: yellow
 ---
 

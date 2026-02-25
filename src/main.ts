@@ -132,7 +132,7 @@ if (config.projects.enabled && config.linear.initiative) {
   );
 }
 info(
-  `Model: ${config.executor.model} (planning: ${config.executor.planning_model})`,
+  `Models: executor=${config.executor.model}, planning=${config.planning.model}, projects=${config.projects.model}`,
 );
 
 // --- Detect GitHub repo ---

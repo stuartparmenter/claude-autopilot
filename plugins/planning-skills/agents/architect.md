@@ -1,7 +1,7 @@
 ---
 name: architect
 description: "Reviews module structure, coupling, complexity, refactoring opportunities"
-model: inherit
+model: sonnet
 color: blue
 ---
 

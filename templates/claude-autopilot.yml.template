@@ -27,7 +27,6 @@ executor:
   timeout_minutes: 30           # Kill agent after this long
   poll_interval_minutes: 5      # How often to poll Linear/GitHub (0.5-60, default: 5)
   model: "sonnet"               # Model for executor agents
-  planning_model: "opus"        # Model for planning agent
 
 # ─── Planning ─────────────────────────────────────────────────────────────────
 # The planning system scans the codebase and files improvement issues to Triage.
@@ -36,6 +35,7 @@ planning:
   schedule: "when_idle"         # "when_idle" | "daily" | "manual"
   min_ready_threshold: 5        # Only plan when fewer than N issues are in Ready+Triage
   max_issues_per_run: 5         # Cap on issues filed per planning run
+  model: "opus"                 # Model for the CTO planning agent
 
 # ─── Projects Loop ───────────────────────────────────────────────────────────
 # The projects loop manages project-level ownership: triaging issues, spawning
@@ -47,6 +47,7 @@ planning:
 #   poll_interval_minutes: 10     # How often to check projects for triage issues
 #   max_active_projects: 5        # Cap on concurrent project owner agents
 #   timeout_minutes: 60           # Kill project owner agent after this long
+#   model: "opus"                 # Model for project owner agents
 
 # ─── GitHub ───────────────────────────────────────────────────────────────────
 # GitHub integration for PR monitoring, CI checks, and the fixer agent.

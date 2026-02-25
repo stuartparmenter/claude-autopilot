@@ -1,7 +1,7 @@
 ---
 name: issue-planner
 description: "Takes a finding brief, defines the goal and success criteria, checks for duplicates, and files to Linear"
-model: inherit
+model: opus
 color: magenta
 ---
 

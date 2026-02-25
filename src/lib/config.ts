@@ -45,7 +45,6 @@ export interface ExecutorConfig {
   branch_pattern: string;
   commit_pattern: string;
   model: string;
-  planning_model: string;
 }
 
 export interface PlanningConfig {
@@ -53,6 +52,7 @@ export interface PlanningConfig {
   min_ready_threshold: number;
   max_issues_per_run: number;
   timeout_minutes: number;
+  model: string;
 }
 
 export interface GithubConfig {
@@ -81,6 +81,7 @@ export interface ProjectsConfig {
   poll_interval_minutes: number;
   max_active_projects: number;
   timeout_minutes: number;
+  model: string;
 }
 
 export interface AutopilotConfig {
@@ -118,13 +119,13 @@ export const DEFAULTS: AutopilotConfig = {
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
     model: "sonnet",
-    planning_model: "opus",
   },
   planning: {
     schedule: "when_idle",
     min_ready_threshold: 5,
     max_issues_per_run: 5,
     timeout_minutes: 90,
+    model: "opus",
   },
   github: {
     repo: "",
@@ -142,6 +143,7 @@ export const DEFAULTS: AutopilotConfig = {
     poll_interval_minutes: 10,
     max_active_projects: 5,
     timeout_minutes: 60,
+    model: "opus",
   },
   sandbox: {
     enabled: true,

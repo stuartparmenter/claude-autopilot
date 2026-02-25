@@ -134,7 +134,7 @@ Review each triage issue, accept or defer, spawn technical planners for accepted
       label: `project-owner:${projectName}`,
       timeoutMs: config.projects.timeout_minutes * 60 * 1000,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
-      model: config.executor.planning_model,
+      model: config.projects.model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       plugins,

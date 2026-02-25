@@ -154,7 +154,6 @@ executor:
   parallel: 3                           # Max concurrent executor agents
   timeout_minutes: 30                   # Kill executor after this long
   model: "sonnet"                       # Model for executor agents
-  planning_model: "opus"                # Model for planning agents
   auto_approve_labels: []               # Labels that skip human PR review (Phase 3)
   branch_pattern: "autopilot/{{id}}"    # Git branch naming pattern
   commit_pattern: "{{id}}: {{title}}"   # Commit message pattern
@@ -166,7 +165,8 @@ executor:
 planning:
   schedule: "when_idle"         # when_idle | daily | manual
   min_ready_threshold: 5        # Only plan if Ready count < this
-  max_issues_per_run: 5        # Cap on issues filed per planning run
+  max_issues_per_run: 5         # Cap on issues filed per planning run
+  model: "opus"                 # Model for the CTO planning agent
 ```
 
 ### Protected paths
@@ -198,13 +198,13 @@ executor:
   parallel: 3
   timeout_minutes: 30
   model: "sonnet"
-  planning_model: "opus"
   auto_approve_labels: []
   branch_pattern: "autopilot/{{id}}"
   commit_pattern: "{{id}}: {{title}}"
 
 planning:
   schedule: "when_idle"
+  model: "opus"
   min_ready_threshold: 5
   max_issues_per_run: 5
 

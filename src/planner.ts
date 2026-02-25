@@ -93,7 +93,7 @@ export async function runPlanning(opts: {
         60 *
         1000,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
-      model: config.executor.planning_model,
+      model: config.planning.model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       plugins,

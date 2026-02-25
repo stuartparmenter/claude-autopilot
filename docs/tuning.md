@@ -35,18 +35,21 @@ Each parallel executor creates a git worktree. On large repositories, this means
 
 ## Model Selection
 
-The `executor.model` and `executor.planning_model` settings control which Claude models are used.
+Each subsystem has its own `model` field, and sub-agents can override via their frontmatter.
 
 | Setting | Default | Used by |
 |---------|---------|---------|
-| `executor.model` | `"sonnet"` | Executor agents (issue implementation) |
-| `executor.planning_model` | `"opus"` | Planning loop (codebase analysis, issue planning) |
+| `executor.model` | `"sonnet"` | Executor agents (issue implementation) and fixer agents |
+| `planning.model` | `"opus"` | CTO planning agent |
+| `projects.model` | `"opus"` | Project owner agents |
+
+Sub-agents spawned by the CTO or project owners can set their own `model:` in their agent frontmatter (e.g., Scout uses `haiku` for fast, cheap recon).
 
 ### Recommendations
 
 - **Sonnet** for executors: Fast, cost-effective, good at following structured prompts. Best for the implement-test-commit loop.
-- **Opus** for planning: Higher reasoning quality for codebase-wide analysis and planning. Worth the extra cost since the planning loop runs less frequently.
-- Use **Haiku** for executors on very simple issues (documentation, config changes) to save cost.
+- **Opus** for planning and project owners: Higher reasoning quality for codebase-wide analysis, project triage, and strategic decisions. Worth the extra cost since these run less frequently.
+- **Haiku** for recon sub-agents (Scout, briefing): Fast and cheap for read-only exploration and data gathering.
 
 ---
 

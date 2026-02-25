@@ -1,7 +1,7 @@
 ---
 name: product-manager
 description: "Researches product opportunities, maintains the Product Brief document on the initiative"
-model: inherit
+model: sonnet
 color: yellow
 ---
 

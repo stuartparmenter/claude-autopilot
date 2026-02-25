@@ -185,7 +185,8 @@ The `.claude-autopilot.yml` file in your project controls everything. Key settin
 | `executor.parallel` | Max concurrent agents | `3` |
 | `executor.timeout_minutes` | Max time per issue | `30` |
 | `executor.model` | Model for executor agents | `"sonnet"` |
-| `executor.planning_model` | Model for planning agents | `"opus"` |
+| `planning.model` | Model for planning agents | `"opus"` |
+| `projects.model` | Model for project owner agents | `"opus"` |
 | `planning.max_issues_per_run` | Max issues the planning loop files | `5` |
 | `planning.min_ready_threshold` | Plan when fewer Ready issues than this | `5` |
 | `planning.timeout_minutes` | Max time for planning run | `90` |
