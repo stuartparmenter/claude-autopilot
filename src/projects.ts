@@ -80,8 +80,13 @@ export async function checkProjects(opts: {
       .map((i) => `- ${i.identifier}: ${i.title}`)
       .join("\n");
 
+    // Register agent eagerly so getRunningCount() is accurate for slot checks
+    const agentId = `project-owner-${project.name}-${Date.now()}`;
+    state.addAgent(agentId, `project:${project.name}`, `Owning ${project.name}`);
+
     promises.push(
       runProjectOwner({
+        agentId,
         projectName: project.name,
         projectId: project.id,
         triageList,
@@ -94,6 +99,7 @@ export async function checkProjects(opts: {
 }
 
 async function runProjectOwner(opts: {
+  agentId: string;
   projectName: string;
   projectId: string;
   triageList: string;
@@ -103,10 +109,7 @@ async function runProjectOwner(opts: {
   state: AppState;
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
-  const { projectName, projectId, triageList, config, linearIds, state } = opts;
-  const agentId = `project-owner-${projectName}-${Date.now()}`;
-
-  state.addAgent(agentId, `project:${projectName}`, `Owning ${projectName}`);
+  const { agentId, projectName, projectId, triageList, config, linearIds, state } = opts;
 
   const prompt = `You are the project owner for "${projectName}".
 

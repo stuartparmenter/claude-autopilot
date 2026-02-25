@@ -100,30 +100,34 @@ export async function checkOpenPRs(opts: {
 
     // Merged PRs are handled by the Linear/GitHub webhook, not here
 
-    if (status.ciStatus === "failure") {
-      const promise = fixPR({
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        prNumber,
-        branch: status.branch,
-        failureType: "ci_failure",
-        ...opts,
-      });
-      fixerPromises.push(promise);
-      continue;
-    }
+    const failureType =
+      status.ciStatus === "failure"
+        ? "ci_failure"
+        : status.mergeable === false
+          ? "merge_conflict"
+          : null;
+    if (!failureType) continue;
 
-    if (status.mergeable === false) {
-      const promise = fixPR({
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        prNumber,
-        branch: status.branch,
-        failureType: "merge_conflict",
-        ...opts,
-      });
-      fixerPromises.push(promise);
-    }
+    // Register agent in state eagerly so fillSlots sees the correct count
+    const agentId = `fix-${issue.identifier}-${Date.now()}`;
+    info(`Fixing PR #${prNumber} (${issue.identifier}): ${failureType}`);
+    state.addAgent(
+      agentId,
+      issue.identifier,
+      `Fix ${failureType} on ${issue.identifier}`,
+    );
+    activeFixerIssues.add(issue.id);
+
+    const promise = fixPR({
+      agentId,
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      prNumber,
+      branch: status.branch,
+      failureType,
+      ...opts,
+    });
+    fixerPromises.push(promise);
 
     // CI pending or passing+mergeable — skip
   }
@@ -135,6 +139,7 @@ export async function checkOpenPRs(opts: {
  * Spawn a fixer agent to fix a failing PR.
  */
 async function fixPR(opts: {
+  agentId: string;
   issueId: string;
   issueIdentifier: string;
   prNumber: number;
@@ -147,6 +152,7 @@ async function fixPR(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const {
+    agentId,
     issueId,
     issueIdentifier,
     prNumber,
@@ -156,15 +162,6 @@ async function fixPR(opts: {
     projectPath,
     state,
   } = opts;
-  const agentId = `fix-${issueIdentifier}-${Date.now()}`;
-
-  info(`Fixing PR #${prNumber} (${issueIdentifier}): ${failureType}`);
-  state.addAgent(
-    agentId,
-    issueIdentifier,
-    `Fix ${failureType} on ${issueIdentifier}`,
-  );
-  activeFixerIssues.add(issueId);
 
   const prompt = buildPrompt("fixer", {
     ISSUE_ID: issueIdentifier,
