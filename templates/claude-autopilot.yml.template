@@ -43,7 +43,8 @@ github:
   repo: ""                        # "owner/repo" override — leave empty to auto-detect from git remote
   automerge: false                # Enable auto-merge on PRs created by the executor.
                                   # GitHub will merge the PR automatically once all required
-                                  # status checks pass. Requires:
+                                  # status checks pass. The merge method (squash, merge, rebase)
+                                  # is auto-detected from your repo settings. Requires:
                                   #   1. "Allow auto-merge" enabled in repo Settings > General
                                   #   2. Branch protection rules with required status checks
                                   # See: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request
