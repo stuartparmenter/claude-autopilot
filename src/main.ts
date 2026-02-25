@@ -7,18 +7,13 @@
  */
 
 import { resolve } from "node:path";
-import {
-  AuthenticationLinearError,
-  FeatureNotAccessibleLinearError,
-  ForbiddenLinearError,
-  InvalidInputLinearError,
-  RatelimitedLinearError,
-} from "@linear/sdk";
+import { RatelimitedLinearError } from "@linear/sdk";
 import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb } from "./lib/db";
+import { interruptibleSleep, isFatalError } from "./lib/errors";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
@@ -206,25 +201,6 @@ function sanitizeMessage(msg: string): string {
     .replace(/sk-ant-\S+/g, "sk-ant-[REDACTED]");
 }
 
-/** Sleep that resolves immediately when the abort signal fires. */
-function interruptibleSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
 // --- Graceful shutdown ---
 
 const shutdownController = new AbortController();
@@ -261,25 +237,6 @@ process.on("uncaughtException", (err) => {
   shutdownController.abort();
   process.exit(1);
 });
-
-// --- Error classification ---
-
-function isFatalError(e: unknown): boolean {
-  if (
-    e instanceof AuthenticationLinearError ||
-    e instanceof ForbiddenLinearError ||
-    e instanceof InvalidInputLinearError ||
-    e instanceof FeatureNotAccessibleLinearError
-  ) {
-    return true;
-  }
-  const msg = e instanceof Error ? e.message : String(e);
-  return (
-    msg.includes("not found in Linear") ||
-    msg.includes("not found for team") ||
-    msg.includes("Config file not found")
-  );
-}
 
 // --- Main loop ---
 
