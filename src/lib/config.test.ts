@@ -308,4 +308,32 @@ executor:
       "executor.poll_interval_minutes must be a number between 0.5 and 60",
     );
   });
+
+  test("sandbox defaults are applied when YAML omits them", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.sandbox).toEqual({
+      enabled: true,
+      auto_allow_bash: true,
+      network_restricted: false,
+      extra_allowed_domains: [],
+    });
+  });
+
+  test("sandbox config can be overridden", () => {
+    const dir = writeConfig(`
+sandbox:
+  enabled: false
+  network_restricted: true
+  extra_allowed_domains:
+    - custom.example.com
+`);
+    const config = loadConfig(dir);
+    expect(config.sandbox.enabled).toBe(false);
+    expect(config.sandbox.auto_allow_bash).toBe(true);
+    expect(config.sandbox.network_restricted).toBe(true);
+    expect(config.sandbox.extra_allowed_domains).toEqual([
+      "custom.example.com",
+    ]);
+  });
 });

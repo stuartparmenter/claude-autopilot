@@ -88,6 +88,7 @@ export async function runAudit(opts: {
       timeoutMs: AUDITOR_TIMEOUT_MS,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.planning_model,
+      sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),

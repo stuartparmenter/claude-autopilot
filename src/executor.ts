@@ -54,6 +54,7 @@ export async function executeIssue(opts: {
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
+      sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
       onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),

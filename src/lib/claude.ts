@@ -1,11 +1,21 @@
+import { resolve } from "node:path";
 import {
   query,
   type SDKAssistantMessage,
   type SDKResultError,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ActivityEntry } from "../state";
+import type { SandboxConfig } from "./config";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
+
+/** Domains agents always need access to when network is restricted. */
+const SANDBOX_BASE_DOMAINS = [
+  "github.com",
+  "api.github.com",
+  "api.githubcopilot.com",
+  "mcp.linear.app",
+];
 
 // Active Query handles — used by closeAllAgents() to forcefully kill
 // child processes on shutdown (sync SIGTERM + 5s SIGKILL escalation).
@@ -127,6 +137,7 @@ export async function runClaude(opts: {
   timeoutMs?: number;
   inactivityMs?: number;
   model?: string;
+  sandbox?: SandboxConfig;
   mcpServers?: Record<string, unknown>;
   parentSignal?: AbortSignal;
   onControllerReady?: (controller: AbortController) => void;
@@ -208,6 +219,29 @@ export async function runClaude(opts: {
         ],
       },
     };
+
+    // Sandbox isolation: restrict agent filesystem and optionally network access
+    if (opts.sandbox?.enabled) {
+      const sandbox: Record<string, unknown> = {
+        enabled: true,
+        autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
+        allowUnsandboxedCommands: false,
+        // Git worktrees need write access to the parent repo's .git directory
+        // (shared object store, refs, worktree metadata)
+        filesystem: {
+          allowWrite: [resolve(opts.cwd, ".git")],
+        },
+      };
+      if (opts.sandbox.network_restricted) {
+        sandbox.network = {
+          allowedDomains: [
+            ...SANDBOX_BASE_DOMAINS,
+            ...(opts.sandbox.extra_allowed_domains ?? []),
+          ],
+        };
+      }
+      queryOpts.sandbox = sandbox;
+    }
 
     // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {

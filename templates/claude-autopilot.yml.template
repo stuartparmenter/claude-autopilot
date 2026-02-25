@@ -48,6 +48,17 @@ github:
                                   #   2. Branch protection rules with required status checks
                                   # See: https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request
 
+# ─── Sandbox ──────────────────────────────────────────────────────────────────
+# OS-level sandbox isolation for agent subprocesses (bubblewrap + socat on Linux).
+# Restricts filesystem access to the worktree and optionally limits network.
+# Requires: sudo apt-get install bubblewrap socat
+
+# sandbox:
+#   enabled: true                 # Enable OS-level sandbox (default: true)
+#   auto_allow_bash: true         # Auto-approve bash commands inside the sandbox
+#   network_restricted: false     # Restrict network to allowed domains only
+#   extra_allowed_domains: []     # Additional domains when network_restricted is true
+
 # ─── Project ──────────────────────────────────────────────────────────────────
 # Minimal metadata used by the orchestrator. Everything else goes in CLAUDE.md.
 
