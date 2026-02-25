@@ -9,6 +9,7 @@ process.env.GITHUB_TOKEN = "test-token-github";
 let prData: Record<string, unknown> = {
   merged: false,
   mergeable: true,
+  node_id: "PR_12345",
   head: { ref: "feature/test", sha: "abc123" },
 };
 let combinedStatusData: Record<string, unknown> = {
@@ -18,6 +19,12 @@ let combinedStatusData: Record<string, unknown> = {
 let checkRunsData: Record<string, unknown> = { check_runs: [] };
 let reviewsData: Record<string, unknown>[] = [];
 let reviewCommentsData: Record<string, unknown>[] = [];
+let reposData: Record<string, unknown> = {
+  allow_merge_commit: true,
+  allow_squash_merge: true,
+  allow_rebase_merge: true,
+};
+let graphqlShouldReject = false;
 
 const mockPullsGet = mock(() => Promise.resolve({ data: prData }));
 const mockGetCombinedStatus = mock(() =>
@@ -30,6 +37,12 @@ const mockListReviews = mock(() => Promise.resolve({ data: reviewsData }));
 const mockListReviewComments = mock(() =>
   Promise.resolve({ data: reviewCommentsData }),
 );
+const mockReposGet = mock(() => Promise.resolve({ data: reposData }));
+const mockGraphql = mock(() =>
+  graphqlShouldReject
+    ? Promise.reject(new Error("GraphQL mutation failed"))
+    : Promise.resolve({}),
+);
 
 // Mock octokit so github.ts uses our mock Octokit client.
 mock.module("octokit", () => ({
@@ -40,14 +53,19 @@ mock.module("octokit", () => ({
         listReviews: mockListReviews,
         listReviewComments: mockListReviewComments,
       },
-      repos: { getCombinedStatusForRef: mockGetCombinedStatus },
+      repos: {
+        getCombinedStatusForRef: mockGetCombinedStatus,
+        get: mockReposGet,
+      },
       checks: { listForRef: mockChecksListForRef },
     };
+    graphql = mockGraphql;
   },
 }));
 
 import {
   detectRepo,
+  enableAutoMerge,
   getPRReviewInfo,
   getPRStatus,
   resetClient,
@@ -507,5 +525,42 @@ describe("getPRReviewInfo", () => {
 
     expect(info.hasChangesRequested).toBe(true);
     expect(info.reviewSummaries).toContain("unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enableAutoMerge — success and failure paths
+// ---------------------------------------------------------------------------
+
+describe("enableAutoMerge", () => {
+  beforeEach(() => {
+    resetClient();
+    prData = {
+      merged: false,
+      mergeable: true,
+      node_id: "PR_12345",
+      head: { ref: "feature/test", sha: "abc123" },
+    };
+    reposData = {
+      allow_merge_commit: true,
+      allow_squash_merge: true,
+      allow_rebase_merge: true,
+    };
+    graphqlShouldReject = false;
+  });
+
+  test("returns success message when GraphQL call succeeds", async () => {
+    const result = await enableAutoMerge("owner", "repo", 42);
+
+    expect(result).toBe("Auto-merge (merge) enabled for PR #42");
+  });
+
+  test("returns failure message when GraphQL call fails (never throws)", async () => {
+    graphqlShouldReject = true;
+
+    const result = await enableAutoMerge("owner", "repo", 99);
+
+    expect(result).toContain("Failed to enable auto-merge");
+    expect(result).toContain("GraphQL mutation failed");
   });
 });
