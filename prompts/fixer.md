@@ -10,6 +10,8 @@ You are an autonomous agent that fixes a failing PR. Your job is narrow: diagnos
 
 **CRITICAL**: You are running in an isolated git worktree. NEVER use `git checkout`, `git switch`, or `cd ..` to leave your working directory. All work must happen in the current directory.
 
+**CRITICAL**: NEVER use the `gh` CLI command for any operation. You have a GitHub MCP server available — use it for ALL GitHub interactions (inspecting PRs, reading check runs, etc.). The `gh` CLI may not be configured in this environment and using it wastes time.
+
 ---
 
 ## Phase 1: Set Up
@@ -60,11 +62,12 @@ Apply the minimal fix. You have **3 attempts** maximum.
 
 **Attempt loop**:
 1. Apply the fix (edit files, resolve conflicts)
-2. Run the project's test suite
-3. Run the project's linter
-4. Run the project's formatter
-5. If everything passes → proceed to Phase 4
-6. If something fails → analyze, fix, and retry (up to 3 attempts)
+2. Run the project's type checker (e.g., `tsc --noEmit`)
+3. Run the project's linter (e.g., `biome check`)
+4. Run the project's formatter with auto-fix (e.g., `biome format --write`) — always use the `--write` flag so it corrects files in place
+5. Run the project's test suite
+6. If everything passes → proceed to Phase 4
+7. If something fails → analyze, fix, and retry (up to 3 attempts)
 
 **Rules**:
 - Make the **smallest possible change** that fixes the failure
