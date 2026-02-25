@@ -1,4 +1,5 @@
 import { Octokit } from "octokit";
+import { warn } from "./logger";
 import { withRetry } from "./retry";
 
 let _client: Octokit | null = null;
@@ -158,4 +159,38 @@ export async function getPRStatus(
     ciStatus,
     ciDetails: failureDetails.join("\n"),
   };
+}
+
+/**
+ * Enable auto-merge on a PR via the GitHub GraphQL API.
+ * Returns a success/failure message suitable for tool output.
+ */
+export async function enableAutoMerge(
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string> {
+  const octokit = getGitHubClient();
+
+  // GraphQL needs the PR node ID, so fetch via REST first
+  const { data: pr } = await withRetry(
+    () => octokit.rest.pulls.get({ owner, repo, pull_number: prNumber }),
+    `getPR #${prNumber}`,
+  );
+
+  try {
+    await octokit.graphql(
+      `mutation($prId: ID!) {
+        enablePullRequestAutoMerge(input: { pullRequestId: $prId }) {
+          pullRequest { autoMergeRequest { enabledAt } }
+        }
+      }`,
+      { prId: pr.node_id },
+    );
+    return `Auto-merge enabled for PR #${prNumber}`;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    warn(`Failed to enable auto-merge for PR #${prNumber}: ${msg}`);
+    return `Failed to enable auto-merge: ${msg}`;
+  }
 }

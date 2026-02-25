@@ -2,12 +2,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  createSdkMcpServer,
   query,
   type SDKAssistantMessage,
   type SDKResultError,
+  tool,
 } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type { ActivityEntry } from "../state";
 import type { SandboxConfig } from "./config";
+import { enableAutoMerge } from "./github";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
@@ -111,6 +115,24 @@ function summarizeToolUse(
 }
 
 export function buildMcpServers(): Record<string, unknown> {
+  const autoMergeTool = tool(
+    "enable_auto_merge",
+    "Enable auto-merge on a GitHub pull request. The repository's default merge strategy will be used. Requires the repo to have auto-merge enabled and branch protection rules configured.",
+    {
+      owner: z.string().describe("Repository owner (e.g. 'octocat')"),
+      repo: z.string().describe("Repository name (e.g. 'hello-world')"),
+      pull_number: z.number().describe("Pull request number"),
+    },
+    async (args) => {
+      const msg = await enableAutoMerge(
+        args.owner,
+        args.repo,
+        args.pull_number,
+      );
+      return { content: [{ type: "text" as const, text: msg }] };
+    },
+  );
+
   return {
     linear: {
       type: "http",
@@ -122,6 +144,10 @@ export function buildMcpServers(): Record<string, unknown> {
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
     },
+    autopilot: createSdkMcpServer({
+      name: "autopilot",
+      tools: [autoMergeTool],
+    }),
   };
 }
 
