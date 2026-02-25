@@ -1,3 +1,7 @@
+import type { Database } from "bun:sqlite";
+import type { AnalyticsResult } from "./lib/db";
+import { getAnalytics, getRecentRuns, insertAgentRun } from "./lib/db";
+
 export interface ActivityEntry {
   timestamp: number;
   type: "tool_use" | "text" | "result" | "error" | "status";
@@ -72,7 +76,13 @@ export class AppState {
   private auditor: AuditorStatus = { running: false };
   private paused = false;
   private issueFailureCount = new Map<string, number>();
+  private db: Database | null = null;
   readonly startedAt = Date.now();
+
+  setDb(db: Database): void {
+    this.db = db;
+    this.history = getRecentRuns(db, MAX_HISTORY);
+  }
 
   addAgent(
     id: string,
@@ -116,7 +126,7 @@ export class AppState {
     agent.status = status;
     if (meta) Object.assign(agent, meta);
 
-    this.history.unshift({
+    const result: AgentResult = {
       id: agent.id,
       issueId: agent.issueId,
       issueTitle: agent.issueTitle,
@@ -128,7 +138,13 @@ export class AppState {
       durationMs: agent.durationMs,
       numTurns: agent.numTurns,
       error: agent.error,
-    });
+    };
+
+    if (this.db) {
+      insertAgentRun(this.db, result);
+    }
+
+    this.history.unshift(result);
 
     if (this.history.length > MAX_HISTORY) {
       this.history = this.history.slice(0, MAX_HISTORY);
@@ -172,6 +188,11 @@ export class AppState {
 
   getHistory(): AgentResult[] {
     return this.history;
+  }
+
+  getAnalytics(): AnalyticsResult | null {
+    if (!this.db) return null;
+    return getAnalytics(this.db);
   }
 
   getAuditorStatus(): AuditorStatus {

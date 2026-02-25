@@ -27,8 +27,9 @@ export function closeAllAgents(): void {
 }
 
 // Stagger agent spawns to avoid race conditions on ~/.claude.json.
-// Each query() waits for the previous agent's init message before spawning.
-// If the agent crashes before init, the finally block releases the slot.
+// Each query() waits for the previous agent to signal it has started (init
+// message) before spawning. If the agent crashes before init, the finally
+// block in runClaude releases the slot.
 let spawnGate: Promise<void> = Promise.resolve();
 
 /**
@@ -191,11 +192,26 @@ export async function runClaude(opts: {
       stderr: (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
+      // Release the spawn slot as early as possible — the Setup hook fires
+      // during initialization, before SessionStart and the init message.
+      // By this point the agent is past its ~/.claude.json access.
+      hooks: {
+        Setup: [
+          {
+            hooks: [
+              async () => {
+                releaseSpawnSlot?.();
+                return {};
+              },
+            ],
+          },
+        ],
+      },
     };
 
     // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {
-      queryOpts.cwd = createWorktree(
+      queryOpts.cwd = await createWorktree(
         opts.cwd,
         opts.worktree,
         opts.worktreeBranch,
@@ -206,7 +222,7 @@ export async function runClaude(opts: {
     // Check for shutdown before proceeding
     if (opts.parentSignal?.aborted) {
       if (worktreeName) {
-        removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
       }
       result.error = "Aborted before start";
       return result;
@@ -261,7 +277,6 @@ export async function runClaude(opts: {
 
         if (message.type === "system" && message.subtype === "init") {
           result.sessionId = message.session_id;
-          releaseSpawnSlot?.();
           emit?.({
             timestamp: Date.now(),
             type: "status",
@@ -390,7 +405,7 @@ export async function runClaude(opts: {
 
     if (worktreeName) {
       try {
-        removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
       } catch (e) {
         warn(`${tag}Worktree cleanup failed for '${worktreeName}': ${e}`);
       }

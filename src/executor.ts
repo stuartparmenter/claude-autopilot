@@ -1,7 +1,8 @@
+import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
-import { info, ok, warn } from "./lib/logger";
+import { info } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
 
@@ -59,44 +60,27 @@ export async function executeIssue(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
-    const metrics = {
-      costUsd: result.costUsd,
-      durationMs: result.durationMs,
-      numTurns: result.numTurns,
-    };
+    const { status } = handleAgentResult(
+      result,
+      state,
+      agentId,
+      issue.identifier,
+    );
 
-    if (result.inactivityTimedOut) {
-      warn(
-        `${issue.identifier} was inactive for ${config.executor.inactivity_timeout_minutes} minutes, returning to Ready`,
-      );
-      await updateIssue(issue.id, { stateId: linearIds.states.ready });
-      state.completeAgent(agentId, "timed_out", {
-        ...metrics,
-        error: "Inactivity timeout",
-      });
+    if (status === "timed_out") {
+      if (result.inactivityTimedOut) {
+        await updateIssue(issue.id, { stateId: linearIds.states.ready });
+      } else {
+        await updateIssue(issue.id, {
+          stateId: linearIds.states.blocked,
+          comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`worktree-${worktree}\` branch for any progress.`,
+        });
+      }
       return false;
     }
 
-    if (result.timedOut) {
-      warn(
-        `${issue.identifier} timed out after ${config.executor.timeout_minutes} minutes`,
-      );
-      await updateIssue(issue.id, {
-        stateId: linearIds.states.blocked,
-        comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`worktree-${worktree}\` branch for any progress.`,
-      });
-      state.completeAgent(agentId, "timed_out", {
-        ...metrics,
-        error: "Timed out",
-      });
-      return false;
-    }
-
-    if (result.error) {
+    if (status === "failed") {
       const failureCount = state.incrementIssueFailures(issue.id);
-      warn(
-        `${issue.identifier} failed (attempt ${failureCount}/${config.executor.max_retries}): ${result.error}`,
-      );
       if (failureCount >= config.executor.max_retries) {
         await updateIssue(issue.id, {
           stateId: linearIds.states.blocked,
@@ -107,16 +91,9 @@ export async function executeIssue(opts: {
         // Move back to Ready so it can be retried on next loop
         await updateIssue(issue.id, { stateId: linearIds.states.ready });
       }
-      state.completeAgent(agentId, "failed", {
-        ...metrics,
-        error: result.error,
-      });
       return false;
     }
 
-    ok(`${issue.identifier} completed successfully`);
-    if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-    state.completeAgent(agentId, "completed", metrics);
     state.clearIssueFailures(issue.id);
     return true;
   } finally {
