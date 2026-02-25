@@ -280,6 +280,64 @@ describe("AppState — issue failure counter", () => {
   });
 });
 
+describe("AppState — clearIssueFailures", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("clearIssueFailures removes entry and returns 0 afterward", () => {
+    state.incrementIssueFailures("issue-1");
+    state.incrementIssueFailures("issue-1");
+    state.clearIssueFailures("issue-1");
+    expect(state.getIssueFailureCount("issue-1")).toBe(0);
+  });
+
+  test("clearIssueFailures is a no-op for unknown issue ID", () => {
+    expect(() => state.clearIssueFailures("unknown-id")).not.toThrow();
+    expect(state.getIssueFailureCount("unknown-id")).toBe(0);
+  });
+
+  test("clearIssueFailures does not affect other issue counters", () => {
+    state.incrementIssueFailures("issue-1");
+    state.incrementIssueFailures("issue-2");
+    state.clearIssueFailures("issue-1");
+    expect(state.getIssueFailureCount("issue-1")).toBe(0);
+    expect(state.getIssueFailureCount("issue-2")).toBe(1);
+  });
+});
+
+describe("AppState — issueFailureCount eviction cap", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("Map size does not exceed 1000 after 1010 insertions", () => {
+    for (let i = 0; i < 1010; i++) {
+      state.incrementIssueFailures(`issue-${i}`);
+    }
+    // Access the size via the public interface — insert one more and verify count is still 0 for evicted
+    // We verify indirectly: the most recently inserted entries should be retained
+    expect(state.getIssueFailureCount("issue-1009")).toBe(1);
+    expect(state.getIssueFailureCount("issue-1008")).toBe(1);
+  });
+
+  test("oldest entries are evicted when cap is exceeded", () => {
+    for (let i = 0; i < 1010; i++) {
+      state.incrementIssueFailures(`issue-${i}`);
+    }
+    // The first 10 entries (issue-0 through issue-9) should have been evicted
+    for (let i = 0; i < 10; i++) {
+      expect(state.getIssueFailureCount(`issue-${i}`)).toBe(0);
+    }
+    // Entries beyond that should still be present
+    expect(state.getIssueFailureCount("issue-10")).toBe(1);
+  });
+});
+
 describe("AppState — toJSON", () => {
   let state: AppState;
 

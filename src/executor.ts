@@ -102,6 +102,7 @@ export async function executeIssue(opts: {
           stateId: linearIds.states.blocked,
           comment: `Executor failed after ${failureCount} total attempt(s) — moving to Blocked.\n\nLast error:\n\`\`\`\n${result.error}\n\`\`\``,
         });
+        state.clearIssueFailures(issue.id);
       } else {
         // Move back to Ready so it can be retried on next loop
         await updateIssue(issue.id, { stateId: linearIds.states.ready });
@@ -116,6 +117,7 @@ export async function executeIssue(opts: {
     ok(`${issue.identifier} completed successfully`);
     if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
     state.completeAgent(agentId, "completed", metrics);
+    state.clearIssueFailures(issue.id);
     return true;
   } finally {
     activeIssueIds.delete(issue.id);

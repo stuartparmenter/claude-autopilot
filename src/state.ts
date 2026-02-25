@@ -58,6 +58,7 @@ export interface AppStateSnapshot {
 
 const MAX_HISTORY = 50;
 const MAX_ACTIVITIES_PER_AGENT = 200;
+const MAX_FAILURE_ENTRIES = 1000;
 
 export class AppState {
   private agents = new Map<string, AgentState>();
@@ -189,11 +190,21 @@ export class AppState {
   incrementIssueFailures(issueId: string): number {
     const count = (this.issueFailureCount.get(issueId) ?? 0) + 1;
     this.issueFailureCount.set(issueId, count);
+    if (this.issueFailureCount.size > MAX_FAILURE_ENTRIES) {
+      const oldestKey = this.issueFailureCount.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.issueFailureCount.delete(oldestKey);
+      }
+    }
     return count;
   }
 
   getIssueFailureCount(issueId: string): number {
     return this.issueFailureCount.get(issueId) ?? 0;
+  }
+
+  clearIssueFailures(issueId: string): void {
+    this.issueFailureCount.delete(issueId);
   }
 
   toJSON(): AppStateSnapshot {
