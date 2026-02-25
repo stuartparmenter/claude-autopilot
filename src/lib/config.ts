@@ -35,6 +35,8 @@ export interface LinearIds {
 export interface ExecutorConfig {
   parallel: number;
   timeout_minutes: number;
+  fixer_timeout_minutes: number;
+  max_fixer_attempts: number;
   max_retries: number;
   inactivity_timeout_minutes: number;
   poll_interval_minutes: number;
@@ -104,6 +106,8 @@ export const DEFAULTS: AutopilotConfig = {
   executor: {
     parallel: 3,
     timeout_minutes: 30,
+    fixer_timeout_minutes: 20,
+    max_fixer_attempts: 3,
     max_retries: 3,
     inactivity_timeout_minutes: 10,
     poll_interval_minutes: 5,
@@ -306,6 +310,28 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   ) {
     throw new Error(
       "Config validation error: auditor.max_issues_per_run must be an integer between 1 and 50",
+    );
+  }
+
+  if (
+    typeof config.executor.fixer_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.fixer_timeout_minutes) ||
+    config.executor.fixer_timeout_minutes < 1 ||
+    config.executor.fixer_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.fixer_timeout_minutes must be a number between 1 and 120",
+    );
+  }
+
+  if (
+    typeof config.executor.max_fixer_attempts !== "number" ||
+    !Number.isInteger(config.executor.max_fixer_attempts) ||
+    config.executor.max_fixer_attempts < 1 ||
+    config.executor.max_fixer_attempts > 10
+  ) {
+    throw new Error(
+      "Config validation error: executor.max_fixer_attempts must be an integer between 1 and 10",
     );
   }
 

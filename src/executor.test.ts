@@ -73,6 +73,8 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     executor: {
       parallel: parallelSlots,
       timeout_minutes: 30,
+      fixer_timeout_minutes: 20,
+      max_fixer_attempts: 3,
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,

@@ -86,6 +86,8 @@ function makeConfig(skipTriage = true): AutopilotConfig {
     executor: {
       parallel: 3,
       timeout_minutes: 30,
+      fixer_timeout_minutes: 20,
+      max_fixer_attempts: 3,
       inactivity_timeout_minutes: 10,
       auto_approve_labels: [],
       branch_pattern: "autopilot/{{id}}",
