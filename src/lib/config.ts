@@ -239,6 +239,76 @@ export function loadConfig(projectPath: string): AutopilotConfig {
     );
   }
 
+  if (
+    typeof config.executor.parallel !== "number" ||
+    Number.isNaN(config.executor.parallel) ||
+    !Number.isInteger(config.executor.parallel) ||
+    config.executor.parallel < 1 ||
+    config.executor.parallel > 50
+  ) {
+    throw new Error(
+      "Config validation error: executor.parallel must be an integer between 1 and 50",
+    );
+  }
+
+  if (
+    typeof config.executor.timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.timeout_minutes) ||
+    config.executor.timeout_minutes < 1 ||
+    config.executor.timeout_minutes > 480
+  ) {
+    throw new Error(
+      "Config validation error: executor.timeout_minutes must be a number between 1 and 480",
+    );
+  }
+
+  if (
+    typeof config.executor.max_retries !== "number" ||
+    Number.isNaN(config.executor.max_retries) ||
+    !Number.isInteger(config.executor.max_retries) ||
+    config.executor.max_retries < 0 ||
+    config.executor.max_retries > 20
+  ) {
+    throw new Error(
+      "Config validation error: executor.max_retries must be an integer between 0 and 20",
+    );
+  }
+
+  if (
+    typeof config.executor.inactivity_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.inactivity_timeout_minutes) ||
+    config.executor.inactivity_timeout_minutes < 1 ||
+    config.executor.inactivity_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  }
+
+  if (
+    typeof config.auditor.min_ready_threshold !== "number" ||
+    Number.isNaN(config.auditor.min_ready_threshold) ||
+    !Number.isInteger(config.auditor.min_ready_threshold) ||
+    config.auditor.min_ready_threshold < 0 ||
+    config.auditor.min_ready_threshold > 1000
+  ) {
+    throw new Error(
+      "Config validation error: auditor.min_ready_threshold must be an integer between 0 and 1000",
+    );
+  }
+
+  if (
+    typeof config.auditor.max_issues_per_run !== "number" ||
+    Number.isNaN(config.auditor.max_issues_per_run) ||
+    !Number.isInteger(config.auditor.max_issues_per_run) ||
+    config.auditor.max_issues_per_run < 1 ||
+    config.auditor.max_issues_per_run > 50
+  ) {
+    throw new Error(
+      "Config validation error: auditor.max_issues_per_run must be an integer between 1 and 50",
+    );
+  }
+
   return config;
 }
 
