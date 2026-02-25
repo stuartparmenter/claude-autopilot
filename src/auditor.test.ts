@@ -87,6 +87,7 @@ function makeConfig(skipTriage = true): AutopilotConfig {
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
+    persistence: { enabled: true, db_path: ".claude/autopilot.db" },
   };
 }
 
