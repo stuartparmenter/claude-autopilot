@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AnalyticsResult } from "./lib/db";
 import { getAnalytics, getRecentRuns, insertAgentRun } from "./lib/db";
+import { sanitizeMessage } from "./lib/sanitize";
 
 export interface ActivityEntry {
   timestamp: number;
@@ -124,7 +125,13 @@ export class AppState {
     if (!agent) return;
 
     agent.status = status;
-    if (meta) Object.assign(agent, meta);
+    if (meta) {
+      const sanitized =
+        meta.error !== undefined
+          ? { ...meta, error: sanitizeMessage(meta.error) }
+          : meta;
+      Object.assign(agent, sanitized);
+    }
 
     const result: AgentResult = {
       id: agent.id,
