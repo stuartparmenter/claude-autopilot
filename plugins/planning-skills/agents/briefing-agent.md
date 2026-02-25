@@ -46,6 +46,14 @@ Synthesize the above into a brief assessment:
 - What areas are getting the most attention? What areas are being neglected?
 - Are there any urgent trends (increasing failure rate, growing backlog, repeated issues)?
 
+### 5. Previous Planning Updates
+
+Fetch recent initiative and project status updates using `get_status_updates`:
+- Initiative updates (use the initiative name/ID from your prompt)
+- Project updates (for projects under the initiative)
+
+Include the most recent 2-3 updates so the CTO has continuity from previous planning sessions.
+
 ---
 
 ## Output Format
@@ -72,6 +80,10 @@ Synthesize the above into a brief assessment:
 
 ### Trajectory
 [2-3 sentence assessment]
+
+### Previous Planning Updates
+- [date]: [health] — [summary]
+- [or "No previous planning updates found"]
 ```
 
 ---

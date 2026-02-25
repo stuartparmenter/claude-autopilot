@@ -15,7 +15,7 @@ You take a finding brief from the CTO and turn it into a fully-formed Linear iss
 
 You receive a **Finding Brief** in the Task prompt containing:
 - **Linear Team**: the Linear team to file into
-- **Linear Project**: the Linear project to file into
+- **Project**: the Linear project to file into (name or ID)
 - **Title**: concise issue title
 - **Category**: bug | security | tooling | architecture | quality | feature
 - **Severity**: P1-Urgent | P2-High | P3-Medium | P4-Low
@@ -147,7 +147,7 @@ If the template is found, use its structure for the issue description. If not fo
 
 ### Step 7: File to Linear
 
-Create the issue via Linear MCP using the **Linear Team** and **Linear Project** from the Finding Brief.
+Create the issue via Linear MCP using the **Linear Team** and **Project** from the Finding Brief. Use the `project` parameter on `save_issue` to file into the correct project.
 
 ---
 

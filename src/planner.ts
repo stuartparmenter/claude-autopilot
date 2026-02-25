@@ -72,6 +72,8 @@ export async function runPlanning(opts: {
       LINEAR_PROJECT: config.linear.project,
       MAX_ISSUES_PER_RUN: String(config.planning.max_issues_per_run),
       PROJECT_NAME: config.project.name,
+      INITIATIVE_NAME: opts.linearIds.initiativeName || "Not configured",
+      INITIATIVE_ID: opts.linearIds.initiativeId || "",
     };
 
     const prompt = buildCTOPrompt(vars);
