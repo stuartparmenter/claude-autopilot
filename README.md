@@ -49,13 +49,19 @@ Three automated loops keep your project moving forward:
 
 ## Security Notice
 
-claude-autopilot runs Claude Code agents with **`bypassPermissions`** mode, which gives agents unrestricted access to read/write files and execute shell commands in the target project directory. This is necessary for autonomous operation but carries risk.
+claude-autopilot runs Claude Code agents with **`bypassPermissions`** mode, which gives agents unrestricted access to read/write files and execute shell commands. To mitigate this, **OS-level sandboxing is enabled by default** — each agent's bash commands are isolated to its worktree directory, and sandbox escape is hardcoded off (`allowUnsandboxedCommands: false`).
 
-**Recommendations:**
-- Run in a **container or VM** to isolate the agent's filesystem and network access
+**Sandbox prerequisites:**
+- **Linux / WSL2**: `sudo apt-get install bubblewrap socat`
+- **macOS**: The Agent SDK uses its own sandbox mechanism (no extra packages needed)
+
+If bubblewrap/socat are not installed on Linux, the SDK may silently fall back to no sandboxing. You can disable the sandbox in `.claude-autopilot.yml` (`sandbox.enabled: false`), but this means agents have unrestricted filesystem access — only do this if you're running in an already-isolated environment.
+
+**Additional recommendations:**
+- Run in a **container or VM** for defense in depth, even with sandboxing enabled
 - Use **git worktrees** (the default) so agents work on branches, not main
 - Review all PRs before merging — the human review step is your safety net
-- Set `project.protected_paths` in config to prevent modification of sensitive files
+- Enable `sandbox.network_restricted: true` to limit agents to only GitHub and Linear APIs
 - Start with `executor.parallel: 1` and watch the dashboard closely before scaling up
 
 ## Prerequisites
@@ -65,6 +71,7 @@ claude-autopilot runs Claude Code agents with **`bypassPermissions`** mode, whic
 - [GitHub](https://github.com/settings/tokens) personal access token (scope: `repo`)
 - Claude Code authenticated (the Agent SDK handles the rest)
 - Git
+- **Linux / WSL2 only**: `bubblewrap` and `socat` for sandbox isolation (`sudo apt-get install bubblewrap socat`)
 
 ## Quick Start
 
@@ -174,6 +181,9 @@ The `.claude-autopilot.yml` file in your project controls everything. Key settin
 | `executor.planning_model` | Model for auditor/planning | `"opus"` |
 | `auditor.max_issues_per_run` | Max issues the auditor files | `10` |
 | `auditor.min_ready_threshold` | Audit when fewer Ready issues than this | `5` |
+| `sandbox.enabled` | OS-level sandbox for agent bash commands | `true` |
+| `sandbox.network_restricted` | Restrict network to GitHub + Linear only | `false` |
+| `sandbox.extra_allowed_domains` | Additional domains when network is restricted | `[]` |
 
 See [templates/claude-autopilot.yml.template](templates/claude-autopilot.yml.template) for the full config reference.
 
