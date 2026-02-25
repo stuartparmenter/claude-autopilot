@@ -74,7 +74,6 @@ const INVESTIGATOR_TOOLS = [
   "Glob",
   "Grep",
   "Bash",
-  "LS",
   "Task",
   "WebFetch",
   "WebSearch",
