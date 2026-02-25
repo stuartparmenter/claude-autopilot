@@ -22,7 +22,7 @@ The architecture is built on four principles:
 
 ## System Overview
 
-The system has two loops that run independently within a single process:
+The system has four loops that run independently within a single process:
 
 ```
                     +-----------+
@@ -41,24 +41,38 @@ The system has two loops that run independently within a single process:
    +------+-------+               +-------+------+
           |                                |
     pulls Ready issues             scans codebase
-    from Linear                    files Triage issues
-          |                        to Linear
+    from Linear (team-wide)        files Triage issues
+          |                        to Linear projects
           v                                |
    +------+-------+               +-------+------+
    | Claude Agent   |               | CTO Agent     |
-   | (in worktree) |               | + Specialists |
+   | (in worktree) |               | + PM + Specs  |
    +------+-------+               +-------+------+
           |                                |
-    implements issue               Scout + Security Analyst
-    runs tests/lint                + Quality Engineer
-    pushes branch                  + Architect
-    opens PR                       + Issue Planners
-    updates Linear                        |
-          |                                v
-          v                        files issues to
-   +------+-------+               Linear Triage state
-   |   GitHub PR   |
-   +--------------+
+    implements issue               PM + Scout + Security
+    runs tests/lint                + Quality + Architect
+    pushes branch                  + Issue Planners
+    opens PR                               |
+    updates Linear                         v
+          |                        groups into projects,
+          v                        files to Triage
+   +------+-------+
+   |   GitHub PR   |         +--------+---------+
+   +--------------+         | Projects Loop     |
+                             +--------+---------+
+                                      |
+                               polls initiative
+                               projects for triage
+                                      |
+                                      v
+                             +--------+---------+
+                             | Project Owner    |
+                             | + Tech Planner   |
+                             +------------------+
+                                      |
+                               triages issues,
+                               decomposes into
+                               sub-issues (Ready)
 
    ┌─────────────────────────┐
    │   Web Dashboard (:7890) │
@@ -182,17 +196,32 @@ The planning loop checks how many issues are currently in the Ready state. If th
 
 The planning loop uses a CTO agent that leads a team of specialists:
 
-**Scout** (`prompts/scout.md`): Explores the codebase to identify areas for improvement.
+**Briefing Agent**: Prepares a "State of the Project" summary — git history, Linear state, trends, and previous planning updates from status updates.
 
-**Security Analyst** (`prompts/security-analyst.md`): Assesses security implications and identifies vulnerabilities.
+**Product Manager**: Researches product opportunities, maintains a Product Brief document on the initiative. Brainstorms feature ideas grounded in codebase evidence.
 
-**Quality Engineer** (`prompts/quality-engineer.md`): Evaluates code quality, test coverage, and engineering practices.
+**Scout**: Explores the codebase to identify areas for improvement.
 
-**Architect** (`prompts/architect.md`): Reviews system design and architectural patterns.
+**Security Analyst**: Assesses security implications and identifies vulnerabilities.
 
-**Issue Planner** (`prompts/issue-planner.md`): Takes synthesized findings and produces concrete, well-planned Linear issues with implementation details and acceptance criteria.
+**Quality Engineer**: Evaluates code quality, test coverage, and engineering practices.
 
-The `plugins/planning-skills/` directory provides domain knowledge skills (OWASP, database patterns, dependency health) that specialists can leverage.
+**Architect**: Reviews system design and architectural patterns.
+
+**Issue Planner**: Takes synthesized findings and produces concrete, well-planned Linear issues with implementation details and acceptance criteria. Files issues into the correct project (as assigned by the CTO).
+
+The `plugins/planning-skills/` directory provides agent definitions and domain knowledge skills that specialists can leverage.
+
+### Project Grouping
+
+After investigation, the CTO groups findings into Linear projects under the initiative:
+- Searches existing active projects — reuses them where scope matches
+- Creates new projects only for genuinely new themes (capped at 2 per session)
+- Each finding brief includes the target project, so Issue Planners file into the right place
+
+### Initiative Updates
+
+At the end of each planning session, the CTO posts an initiative-level status update summarizing what was investigated, issues filed, projects created, and recommended next focus areas.
 
 ### Source files
 
@@ -201,7 +230,52 @@ The `plugins/planning-skills/` directory provides domain knowledge skills (OWASP
 | `src/planner.ts` | Module. `shouldRunPlanning()` checks threshold, `runPlanning()` runs the planning agent |
 | `src/lib/prompt.ts` | `buildCTOPrompt()` renders CTO prompt |
 | `prompts/cto.md` | CTO planning agent prompt |
-| `plugins/planning-skills/agents/*.md` | Specialist agent definitions (briefing-agent, scout, security-analyst, quality-engineer, architect, issue-planner) |
+| `plugins/planning-skills/agents/*.md` | Specialist agent definitions (briefing-agent, product-manager, scout, security-analyst, quality-engineer, architect, issue-planner, project-owner, technical-planner) |
+
+---
+
+## The Projects Loop
+
+The projects loop manages project-level ownership. It polls active projects under the initiative for triage issues and spawns project-owner agents.
+
+### Flow
+
+```
+Initiative
+    |
+    +---> list active projects (skip completed/canceled)
+              |
+              +---> for each project with triage issues:
+                        |
+                        +---> spawn Project Owner agent
+                                    |
+                                    +---> review triage queue (accept/defer)
+                                    +---> spawn Technical Planners for accepted issues
+                                    |         |
+                                    |         +---> decompose into sub-issues (Ready)
+                                    +---> check project health
+                                    +---> complete project if all issues done
+                                    +---> post project status update
+```
+
+### Project Lifecycle
+
+Projects are created by the CTO during planning sessions and follow this lifecycle:
+
+```
+planned --> started --> completed
+                   --> canceled
+```
+
+The project owner completes a project when all its issues are in Done or Canceled state and no triage issues remain.
+
+### Source files
+
+| File | Purpose |
+|------|---------|
+| `src/projects.ts` | Module. `checkProjects()` queries initiative projects and spawns owners |
+| `plugins/planning-skills/agents/project-owner.md` | Project owner agent prompt |
+| `plugins/planning-skills/agents/technical-planner.md` | Technical planner agent prompt |
 
 ---
 
@@ -253,39 +327,50 @@ The dashboard is a Hono web server with htmx-powered live updates. It runs in th
 
 ## Linear State Machine
 
-The full Linear state machine across both loops:
+The full Linear state machine across all loops:
 
 ```
                      +----------+
-                     |  Triage  | <--- Planning loop files new issues here
+                     |  Triage  | <--- Planning files issues here
                      +----+-----+
                           |
-                    human promotes
-                          |
-                          v
-                     +----+-----+
-              +----> |  Ready   | <--- Executor pulls from here
-              |      |  (Todo)  |
-              |      +----+-----+
-              |           |
-              |     executor picks up
-              |           |
-              |           v
-              |   +-------+--------+
-              |   |  In Progress   |
-              |   +-------+--------+
-              |           |
-              |     +-----+------+
-              |     |            |
-              |  success      failure/
-              |     |         timeout
-              |     v            |
-              |  +--+---+   +---+------+
-              |  | Done |   | Blocked  |
-              |  +------+   | (Backlog)|
-              |             +---+------+
-              |                 |
-              +---- human fixes and re-promotes
+              +-----------+-----------+
+              |                       |
+       project owner             human promotes
+       accepts (if projects       (if no projects
+       loop enabled)               loop)
+              |                       |
+              v                       |
+     +--------+--------+             |
+     | Technical Planner|             |
+     | decomposes into  |             |
+     | sub-issues       |             |
+     +--------+--------+             |
+              |                       |
+              v                       v
+         +----+-----+          +-----+----+
+  +----> |  Ready   | <--------+  Ready   | <--- Executor pulls leaf issues
+  |      |  (Todo)  |          |  (Todo)  |
+  |      +----+-----+          +----+-----+
+  |           |                      |
+  |     executor picks up (team-wide, leaf issues only)
+  |           |
+  |           v
+  |   +-------+--------+
+  |   |  In Progress   |
+  |   +-------+--------+
+  |           |
+  |     +-----+------+
+  |     |            |
+  |  success      failure/
+  |     |         timeout
+  |     v            |
+  |  +--+---+   +---+------+
+  |  | Done |   | Blocked  |
+  |  +------+   | (Backlog)|
+  |             +---+------+
+  |                 |
+  +---- human fixes and re-promotes
 ```
 
 ---
@@ -344,11 +429,13 @@ All configuration lives in `.claude-autopilot.yml` at the root of the target pro
 
 | Section | Purpose |
 |---------|---------|
-| `linear` | Team key, project name, state name mappings |
+| `linear` | Team key, project name, initiative name, state name mappings |
 | `executor` | Parallelism, timeout, auto-approve labels, branch/commit patterns, model selection |
 | `planning` | Schedule mode, backlog threshold, max issues per run, timeout |
-| `project` | Project name, tech stack, test/lint/build commands, key directories, protected paths |
-| `notifications` | Slack webhook URL, which events trigger notifications |
+| `projects` | Projects loop: enabled, poll interval, max active projects, timeout |
+| `github` | Repo override, auto-merge |
+| `project` | Project name |
+| `sandbox` | OS-level sandbox config |
 
 ---
 
@@ -391,6 +478,7 @@ claude-autopilot/
 │   ├── main.ts              # Entry point — main loop + dashboard server
 │   ├── executor.ts          # Executor module (executeIssue, fillSlots)
 │   ├── planner.ts           # Planning module (shouldRunPlanning, runPlanning)
+│   ├── projects.ts          # Projects loop (checkProjects, project owners)
 │   ├── server.ts            # Hono dashboard (HTML + htmx partials)
 │   ├── state.ts             # AppState class (agents, history, queue)
 │   ├── setup-project.ts     # Project onboarding script
