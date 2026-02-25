@@ -43,13 +43,13 @@ const PROJECT = "/project";
 let existsSpy: ReturnType<typeof spyOn<typeof fs, "existsSync">>;
 let rmSyncSpy: ReturnType<typeof spyOn<typeof fs, "rmSync">>;
 let spawnSpy: ReturnType<typeof spyOn<typeof Bun, "spawnSync">>;
-let sleepSpy: ReturnType<typeof spyOn<typeof Bun, "sleepSync">>;
+let sleepSpy: ReturnType<typeof spyOn<typeof Bun, "sleep">>;
 
 beforeEach(() => {
   existsSpy = spyOn(fs, "existsSync").mockReturnValue(false);
   rmSyncSpy = spyOn(fs, "rmSync").mockReturnValue(undefined as unknown as void);
   spawnSpy = spyOn(Bun, "spawnSync").mockReturnValue(spawnOk());
-  sleepSpy = spyOn(Bun, "sleepSync").mockReturnValue(
+  sleepSpy = spyOn(Bun, "sleep").mockResolvedValue(
     undefined as unknown as void,
   );
 });
@@ -61,13 +61,13 @@ afterEach(() => mock.restore());
 // ---------------------------------------------------------------------------
 
 describe("createWorktree — executor mode", () => {
-  test("returns absolute path containing .claude/worktrees/<name>", () => {
-    const result = createWorktree(PROJECT, "ENG-1");
+  test("returns absolute path containing .claude/worktrees/<name>", async () => {
+    const result = await createWorktree(PROJECT, "ENG-1");
     expect(result).toContain(".claude/worktrees/ENG-1");
   });
 
-  test("creates fresh branch named worktree-<name>", () => {
-    createWorktree(PROJECT, "ENG-42");
+  test("creates fresh branch named worktree-<name>", async () => {
+    await createWorktree(PROJECT, "ENG-42");
 
     const addCall = spawnSpy.mock.calls.find(
       (c) => c[0][1] === "worktree" && c[0][2] === "add" && c[0].includes("-b"),
@@ -77,22 +77,22 @@ describe("createWorktree — executor mode", () => {
     expect(addCall![0][bIdx + 1]).toBe("worktree-ENG-42");
   });
 
-  test("stale worktree is cleaned up and creation proceeds", () => {
+  test("stale worktree is cleaned up and creation proceeds", async () => {
     // First call (stale check in createWorktree) → true; second call (post-removal) → false.
     let calls = 0;
     existsSpy.mockImplementation(() => ++calls === 1);
 
-    const result = createWorktree(PROJECT, "ENG-2");
+    const result = await createWorktree(PROJECT, "ENG-2");
 
     expect(result).toContain("ENG-2");
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  test("stale worktree cleanup deletes the branch reference (no fromBranch)", () => {
+  test("stale worktree cleanup deletes the branch reference (no fromBranch)", async () => {
     let calls = 0;
     existsSpy.mockImplementation(() => ++calls === 1);
 
-    createWorktree(PROJECT, "ENG-5");
+    await createWorktree(PROJECT, "ENG-5");
 
     const branchDelete = spawnSpy.mock.calls.find(
       (c) =>
@@ -103,23 +103,23 @@ describe("createWorktree — executor mode", () => {
     expect(branchDelete).toBeDefined();
   });
 
-  test("stale worktree that cannot be removed throws 'Cannot create worktree'", () => {
+  test("stale worktree that cannot be removed throws 'Cannot create worktree'", async () => {
     // existsSync always returns true — directory never disappears.
     existsSpy.mockReturnValue(true);
 
-    expect(() => createWorktree(PROJECT, "ENG-3")).toThrow(
+    expect(createWorktree(PROJECT, "ENG-3")).rejects.toThrow(
       "Cannot create worktree",
     );
   });
 
-  test("worktree add failure throws 'Failed to create worktree'", () => {
+  test("worktree add failure throws 'Failed to create worktree'", async () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
       if (cmds[1] === "worktree" && cmds[2] === "add")
         return spawnFail("branch in use");
       return spawnOk();
     }) as any);
 
-    expect(() => createWorktree(PROJECT, "ENG-4")).toThrow(
+    expect(createWorktree(PROJECT, "ENG-4")).rejects.toThrow(
       "Failed to create worktree 'ENG-4'",
     );
   });
@@ -130,16 +130,16 @@ describe("createWorktree — executor mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("createWorktree — fixer mode", () => {
-  test("fetches the PR branch from origin", () => {
-    createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
+  test("fetches the PR branch from origin", async () => {
+    await createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
 
     const fetchCall = spawnSpy.mock.calls.find((c) => c[0][1] === "fetch");
     expect(fetchCall).toBeDefined();
     expect(fetchCall![0]).toContain("feature/pr-branch");
   });
 
-  test("creates worktree from existing branch without -b flag", () => {
-    createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
+  test("creates worktree from existing branch without -b flag", async () => {
+    await createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
 
     const addCall = spawnSpy.mock.calls.find(
       (c) =>
@@ -149,11 +149,11 @@ describe("createWorktree — fixer mode", () => {
     expect(addCall![0]).toContain("feature/pr-branch");
   });
 
-  test("stale cleanup does NOT delete branch when fromBranch is set", () => {
+  test("stale cleanup does NOT delete branch when fromBranch is set", async () => {
     let calls = 0;
     existsSpy.mockImplementation(() => ++calls === 1);
 
-    createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
+    await createWorktree(PROJECT, "ENG-1", "feature/pr-branch");
 
     const branchDelete = spawnSpy.mock.calls.find(
       (c) => c[0][1] === "branch" && c[0][2] === "-D",
@@ -161,14 +161,14 @@ describe("createWorktree — fixer mode", () => {
     expect(branchDelete).toBeUndefined();
   });
 
-  test("worktree add failure throws", () => {
+  test("worktree add failure throws", async () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
       if (cmds[1] === "worktree" && cmds[2] === "add")
         return spawnFail("no such branch");
       return spawnOk();
     }) as any);
 
-    expect(() => createWorktree(PROJECT, "ENG-1", "feature/pr")).toThrow(
+    expect(createWorktree(PROJECT, "ENG-1", "feature/pr")).rejects.toThrow(
       "Failed to create worktree 'ENG-1'",
     );
   });
@@ -179,8 +179,8 @@ describe("createWorktree — fixer mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("removeWorktree", () => {
-  test("removes worktree directory and deletes branch by default", () => {
-    removeWorktree(PROJECT, "ENG-1");
+  test("removes worktree directory and deletes branch by default", async () => {
+    await removeWorktree(PROJECT, "ENG-1");
 
     const removeCall = spawnSpy.mock.calls.find(
       (c) => c[0][1] === "worktree" && c[0][2] === "remove",
@@ -196,8 +196,8 @@ describe("removeWorktree", () => {
     expect(branchDelete).toBeDefined();
   });
 
-  test("keepBranch=true skips branch deletion", () => {
-    removeWorktree(PROJECT, "ENG-1", { keepBranch: true });
+  test("keepBranch=true skips branch deletion", async () => {
+    await removeWorktree(PROJECT, "ENG-1", { keepBranch: true });
 
     const branchDelete = spawnSpy.mock.calls.find(
       (c) => c[0][1] === "branch" && c[0][2] === "-D",
@@ -205,14 +205,14 @@ describe("removeWorktree", () => {
     expect(branchDelete).toBeUndefined();
   });
 
-  test("branch deletion failure is non-fatal (does not throw)", () => {
+  test("branch deletion failure is non-fatal (does not throw)", async () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
       if (cmds[1] === "branch" && cmds[2] === "-D")
         return spawnFail("branch not found");
       return spawnOk();
     }) as any);
 
-    expect(() => removeWorktree(PROJECT, "ENG-1")).not.toThrow();
+    await expect(removeWorktree(PROJECT, "ENG-1")).resolves.toBeUndefined();
   });
 });
 
@@ -221,14 +221,14 @@ describe("removeWorktree", () => {
 // ---------------------------------------------------------------------------
 
 describe("forceRemoveDir retry logic", () => {
-  test("first attempt succeeds: sleepSync never called", () => {
+  test("first attempt succeeds: sleep never called", async () => {
     // Default spawnSpy returns success — git worktree remove succeeds immediately.
-    removeWorktree(PROJECT, "ENG-1");
+    await removeWorktree(PROJECT, "ENG-1");
 
     expect(sleepSpy).not.toHaveBeenCalled();
   });
 
-  test("retry then succeed: sleepSync called once with 1000ms", () => {
+  test("retry then succeed: sleep called once with 1000ms", async () => {
     let removeAttempts = 0;
     // existsSync returns true so the "directory gone" early-exit doesn't fire.
     existsSpy.mockReturnValue(true);
@@ -239,13 +239,13 @@ describe("forceRemoveDir retry logic", () => {
       return spawnOk();
     }) as any);
 
-    removeWorktree(PROJECT, "ENG-1");
+    await removeWorktree(PROJECT, "ENG-1");
 
     expect(sleepSpy).toHaveBeenCalledTimes(1);
     expect(sleepSpy).toHaveBeenCalledWith(1000);
   });
 
-  test("all retries exhausted: falls back to rmSync", () => {
+  test("all retries exhausted: falls back to rmSync", async () => {
     // All git worktree remove attempts fail; directory never disappears.
     existsSpy.mockReturnValue(true);
     spawnSpy.mockImplementation(((cmds: string[]) => {
@@ -254,14 +254,14 @@ describe("forceRemoveDir retry logic", () => {
       return spawnOk();
     }) as any);
 
-    removeWorktree(PROJECT, "ENG-1");
+    await removeWorktree(PROJECT, "ENG-1");
 
     expect(rmSyncSpy).toHaveBeenCalled();
     // Attempts 0, 1, 2 each sleep before the next retry; attempt 3 goes to rmSync directly.
     expect(sleepSpy).toHaveBeenCalledTimes(3);
   });
 
-  test("rmSync failure is non-fatal (does not throw)", () => {
+  test("rmSync failure is non-fatal (does not throw)", async () => {
     existsSpy.mockReturnValue(true);
     rmSyncSpy.mockImplementation(() => {
       throw new Error("permission denied");
@@ -272,10 +272,10 @@ describe("forceRemoveDir retry logic", () => {
       return spawnOk();
     }) as any);
 
-    expect(() => removeWorktree(PROJECT, "ENG-1")).not.toThrow();
+    await expect(removeWorktree(PROJECT, "ENG-1")).resolves.toBeUndefined();
   });
 
-  test("directory disappears between git-remove failure and next attempt: early return", () => {
+  test("directory disappears between git-remove failure and next attempt: early return", async () => {
     let removeAttempts = 0;
     // git worktree remove fails, but existsSync returns false → directory already gone.
     spawnSpy.mockImplementation(((cmds: string[]) => {
@@ -287,7 +287,7 @@ describe("forceRemoveDir retry logic", () => {
     }) as any);
     // existsSpy defaults to returning false — directory appears gone after failed remove.
 
-    removeWorktree(PROJECT, "ENG-1");
+    await removeWorktree(PROJECT, "ENG-1");
 
     expect(removeAttempts).toBe(1);
     expect(sleepSpy).not.toHaveBeenCalled();
