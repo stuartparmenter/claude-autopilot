@@ -1,4 +1,6 @@
+import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
 import type { AppState } from "./state";
@@ -20,16 +22,159 @@ function randomSaying(): string {
   return ACTIVITY_SAYINGS[Math.floor(Math.random() * ACTIVITY_SAYINGS.length)];
 }
 
-export interface DashboardActions {
+export interface DashboardOptions {
+  authToken?: string;
   triggerAudit?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
 }
 
-export function createApp(state: AppState, actions?: DashboardActions): Hono {
+function safeCompare(a: string, b: string): boolean {
+  const aBytes = Buffer.from(a);
+  const bBytes = Buffer.from(b);
+  if (aBytes.length !== bBytes.length) return false;
+  return timingSafeEqual(aBytes, bBytes);
+}
+
+function loginPage(error?: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>claude-autopilot</title>
+    <style>
+      ${DASHBOARD_CSS}
+      .login-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        gap: 24px;
+      }
+      .login-form {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 32px;
+        width: 320px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .login-form label {
+        font-size: 12px;
+        color: var(--text-dim);
+        display: block;
+        margin-bottom: 4px;
+      }
+      .login-form input[type="password"] {
+        width: 100%;
+        padding: 8px 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 13px;
+      }
+      .login-form input[type="password"]:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .login-submit {
+        padding: 8px 16px;
+        background: var(--accent);
+        border: none;
+        border-radius: 4px;
+        color: var(--bg);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+      }
+      .login-error {
+        color: var(--red);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <h1>claude-autopilot</h1>
+      <form method="POST" action="/auth/login" class="login-form">
+        <div>
+          <label for="token">Dashboard Token</label>
+          <input
+            type="password"
+            id="token"
+            name="token"
+            autofocus
+            placeholder="Enter your token"
+          />
+        </div>
+        ${error ? `<div class="login-error">${escapeHtml(error)}</div>` : ""}
+        <button type="submit" class="login-submit">Login</button>
+      </form>
+    </div>
+  </body>
+</html>`;
+}
+
+export function createApp(state: AppState, options?: DashboardOptions): Hono {
   const app = new Hono();
+
+  if (options?.authToken) {
+    const authToken = options.authToken;
+
+    app.use("*", async (c, next) => {
+      if (c.req.path.startsWith("/auth/")) {
+        return next();
+      }
+      const authHeader = c.req.header("Authorization");
+      const bearerToken = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice(7)
+        : null;
+      const cookieToken = getCookie(c, "autopilot_token") ?? null;
+      const tokenToCheck = bearerToken ?? cookieToken;
+
+      if (tokenToCheck !== null && safeCompare(tokenToCheck, authToken)) {
+        return next();
+      }
+
+      if (
+        c.req.path.startsWith("/api/") ||
+        c.req.path.startsWith("/partials/")
+      ) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      return c.html(loginPage(), 401);
+    });
+
+    app.post("/auth/login", async (c) => {
+      const body = await c.req.parseBody();
+      const submitted = String(body.token ?? "");
+      if (safeCompare(submitted, authToken)) {
+        setCookie(c, "autopilot_token", authToken, {
+          httpOnly: true,
+          sameSite: "Strict",
+          path: "/",
+        });
+        return c.redirect("/");
+      }
+      return c.html(loginPage("Invalid token"), 401);
+    });
+
+    app.post("/auth/logout", (c) => {
+      deleteCookie(c, "autopilot_token", { path: "/" });
+      return c.redirect("/");
+    });
+  }
 
   // --- HTML Shell ---
   app.get("/", (c) => {
+    const authEnabled = !!options?.authToken;
     return c.html(
       html`<!doctype html>
         <html lang="en">
@@ -41,7 +186,7 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
             />
             <title>claude-autopilot</title>
             <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-            <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+            <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
             <style>${raw(DASHBOARD_CSS)}</style>
           </head>
           <body>
@@ -61,6 +206,13 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
                 hx-trigger="load, every 5s"
                 hx-swap="innerHTML"
               ></div>
+              ${
+                authEnabled
+                  ? html`<form method="POST" action="/auth/logout">
+                    <button type="submit" class="pause-btn">Logout</button>
+                  </form>`
+                  : ""
+              }
               <div
                 id="audit-btn"
                 hx-get="/partials/audit-button"
@@ -116,11 +268,19 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
     return c.json({ paused });
   });
 
+  app.get("/api/analytics", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.json({ enabled: false });
+    }
+    return c.json({ enabled: true, ...analytics });
+  });
+
   app.post("/api/audit", (c) => {
     if (state.getAuditorStatus().running) {
       return c.json({ error: "Audit already running" }, 409);
     }
-    actions?.triggerAudit?.();
+    options?.triggerAudit?.();
     return c.json({ triggered: true });
   });
 
@@ -151,8 +311,8 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
     if (!hist.linearIssueId) {
       return c.json({ error: "No Linear issue ID available for retry" }, 400);
     }
-    if (actions?.retryIssue) {
-      await actions.retryIssue(hist.linearIssueId);
+    if (options?.retryIssue) {
+      await options.retryIssue(hist.linearIssueId);
     }
     return c.json({ retried: true });
   });
@@ -239,8 +399,8 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
             const elapsed = Math.round((Date.now() - a.startedAt) / 1000);
             const elapsedStr =
               elapsed > 60 ? `${Math.floor(elapsed / 60)}m` : `${elapsed}s`;
-            return `<div class="agent-card" hx-get="/partials/activity/${a.id}" hx-target="#main-panel" hx-swap="innerHTML">
-            <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot running"></span><span class="issue-id">${escapeHtml(a.issueId)}</span></span><button class="action-btn danger" hx-post="/api/cancel/${a.id}" hx-confirm="Cancel this agent?" onclick="event.stopPropagation()">Cancel</button></div>
+            return `<div class="agent-card" hx-get="/partials/activity/${escapeHtml(a.id)}" hx-target="#main-panel" hx-swap="innerHTML">
+            <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot running"></span><span class="issue-id">${escapeHtml(a.issueId)}</span></span><button class="action-btn danger" hx-post="/api/cancel/${escapeHtml(a.id)}" hx-confirm="Cancel this agent?" onclick="event.stopPropagation()">Cancel</button></div>
             <div class="title">${escapeHtml(a.issueTitle)}</div>
             <div class="meta">${elapsedStr} &middot; ${a.activities.length} activities</div>
           </div>`;
@@ -362,9 +522,9 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
             const costStr = h.costUsd ? `$${h.costUsd.toFixed(4)}` : "";
             const canRetry = h.status !== "completed" && h.linearIssueId;
             const retryBtn = canRetry
-              ? `<button class="action-btn" hx-post="/api/retry/${h.id}" onclick="event.stopPropagation()">Retry</button>`
+              ? `<button class="action-btn" hx-post="/api/retry/${escapeHtml(h.id)}" onclick="event.stopPropagation()">Retry</button>`
               : "";
-            return `<div class="history-card" hx-get="/partials/activity/${h.id}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
+            return `<div class="history-card" hx-get="/partials/activity/${escapeHtml(h.id)}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
             <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</span>${retryBtn}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
           </div>`;
@@ -372,6 +532,46 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
           .join(""),
       )}`,
     );
+  });
+
+  app.get("/partials/analytics", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          Analytics not available (persistence disabled)
+        </div>`,
+      );
+    }
+    const successPct = Math.round(analytics.successRate * 100);
+    const avgDuration =
+      analytics.avgDurationMs > 0
+        ? `${Math.round(analytics.avgDurationMs / 1000)}s`
+        : "n/a";
+    const totalCost =
+      analytics.totalCostUsd > 0
+        ? `$${analytics.totalCostUsd.toFixed(2)}`
+        : "$0.00";
+    return c.html(html`
+      <div class="stat">
+        <div class="value">${String(analytics.totalRuns)}</div>
+        <div class="label">Total Runs</div>
+      </div>
+      <div class="stat">
+        <div class="value">${String(successPct)}%</div>
+        <div class="label">Success Rate</div>
+      </div>
+      <div class="stat">
+        <div class="value">${avgDuration}</div>
+        <div class="label">Avg Duration</div>
+      </div>
+      <div class="stat">
+        <div class="value">${totalCost}</div>
+        <div class="label">Total Cost</div>
+      </div>
+    `);
   });
 
   return app;
@@ -392,5 +592,6 @@ export function escapeHtml(str: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

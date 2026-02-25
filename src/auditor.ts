@@ -1,7 +1,8 @@
+import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { countIssuesInState } from "./lib/linear";
-import { info, ok, warn } from "./lib/logger";
+import { info, warn } from "./lib/logger";
 import { buildAuditorPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
 
@@ -93,54 +94,11 @@ export async function runAudit(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
-    if (result.inactivityTimedOut) {
-      warn(
-        `Auditor inactive for ${config.executor.inactivity_timeout_minutes} minutes, timed out`,
-      );
-      state.completeAgent(agentId, "timed_out", {
-        error: "Inactivity timeout",
-      });
-      state.updateAuditor({
-        running: false,
-        lastRunAt: Date.now(),
-        lastResult: "timed_out",
-      });
-      return;
-    }
-
-    if (result.timedOut) {
-      warn("Auditor timed out after 60 minutes");
-      state.completeAgent(agentId, "timed_out", { error: "Timed out" });
-      state.updateAuditor({
-        running: false,
-        lastRunAt: Date.now(),
-        lastResult: "timed_out",
-      });
-      return;
-    }
-
-    if (result.error) {
-      warn(`Auditor failed: ${result.error}`);
-      state.completeAgent(agentId, "failed", { error: result.error });
-      state.updateAuditor({
-        running: false,
-        lastRunAt: Date.now(),
-        lastResult: "failed",
-      });
-      return;
-    }
-
-    ok("Auditor completed successfully");
-    if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-    state.completeAgent(agentId, "completed", {
-      costUsd: result.costUsd,
-      durationMs: result.durationMs,
-      numTurns: result.numTurns,
-    });
+    const { status } = handleAgentResult(result, state, agentId, "Auditor");
     state.updateAuditor({
       running: false,
       lastRunAt: Date.now(),
-      lastResult: "completed",
+      lastResult: status,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -66,12 +66,18 @@ export interface ProjectConfig {
   name: string;
 }
 
+export interface PersistenceConfig {
+  enabled: boolean;
+  db_path: string;
+}
+
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   auditor: AuditorConfig;
   github: GithubConfig;
   project: ProjectConfig;
+  persistence: PersistenceConfig;
 }
 
 export const DEFAULTS: AutopilotConfig = {
@@ -129,6 +135,10 @@ export const DEFAULTS: AutopilotConfig = {
   },
   project: {
     name: "",
+  },
+  persistence: {
+    enabled: true,
+    db_path: ".claude/autopilot.db",
   },
 };
 
