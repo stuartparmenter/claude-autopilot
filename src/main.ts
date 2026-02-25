@@ -6,6 +6,7 @@
  * Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]
  */
 
+import { resolve } from "node:path";
 import {
   AuthenticationLinearError,
   FeatureNotAccessibleLinearError,
@@ -17,6 +18,7 @@ import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
+import { openDb } from "./lib/db";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
@@ -134,6 +136,14 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
+
+if (config.persistence.enabled) {
+  const dbPath = resolve(projectPath, config.persistence.db_path);
+  const db = openDb(dbPath);
+  state.setDb(db);
+  ok(`Persistence: ${dbPath}`);
+}
+
 const app = createApp(state, {
   triggerAudit: () => {
     runAudit({

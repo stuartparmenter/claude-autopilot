@@ -116,6 +116,14 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
     return c.json({ paused });
   });
 
+  app.get("/api/analytics", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.json({ enabled: false });
+    }
+    return c.json({ enabled: true, ...analytics });
+  });
+
   app.post("/api/audit", (c) => {
     if (state.getAuditorStatus().running) {
       return c.json({ error: "Audit already running" }, 409);
@@ -372,6 +380,46 @@ export function createApp(state: AppState, actions?: DashboardActions): Hono {
           .join(""),
       )}`,
     );
+  });
+
+  app.get("/partials/analytics", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          Analytics not available (persistence disabled)
+        </div>`,
+      );
+    }
+    const successPct = Math.round(analytics.successRate * 100);
+    const avgDuration =
+      analytics.avgDurationMs > 0
+        ? `${Math.round(analytics.avgDurationMs / 1000)}s`
+        : "n/a";
+    const totalCost =
+      analytics.totalCostUsd > 0
+        ? `$${analytics.totalCostUsd.toFixed(2)}`
+        : "$0.00";
+    return c.html(html`
+      <div class="stat">
+        <div class="value">${String(analytics.totalRuns)}</div>
+        <div class="label">Total Runs</div>
+      </div>
+      <div class="stat">
+        <div class="value">${String(successPct)}%</div>
+        <div class="label">Success Rate</div>
+      </div>
+      <div class="stat">
+        <div class="value">${avgDuration}</div>
+        <div class="label">Avg Duration</div>
+      </div>
+      <div class="stat">
+        <div class="value">${totalCost}</div>
+        <div class="label">Total Cost</div>
+      </div>
+    `);
   });
 
   return app;
