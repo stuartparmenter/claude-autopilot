@@ -162,7 +162,27 @@ export async function getPRStatus(
 }
 
 /**
+ * Detect which merge method the repo allows.
+ * Priority: MERGE > SQUASH > REBASE (matches `gh` CLI behavior).
+ */
+async function detectMergeMethod(
+  owner: string,
+  repo: string,
+): Promise<"MERGE" | "SQUASH" | "REBASE"> {
+  const octokit = getGitHubClient();
+  const { data } = await withRetry(
+    () => octokit.rest.repos.get({ owner, repo }),
+    `getRepo ${owner}/${repo}`,
+  );
+  if (data.allow_merge_commit) return "MERGE";
+  if (data.allow_squash_merge) return "SQUASH";
+  if (data.allow_rebase_merge) return "REBASE";
+  return "MERGE"; // fallback
+}
+
+/**
  * Enable auto-merge on a PR via the GitHub GraphQL API.
+ * Auto-detects the repo's allowed merge method.
  * Returns a success/failure message suitable for tool output.
  */
 export async function enableAutoMerge(
@@ -172,22 +192,24 @@ export async function enableAutoMerge(
 ): Promise<string> {
   const octokit = getGitHubClient();
 
-  // GraphQL needs the PR node ID, so fetch via REST first
-  const { data: pr } = await withRetry(
-    () => octokit.rest.pulls.get({ owner, repo, pull_number: prNumber }),
-    `getPR #${prNumber}`,
-  );
+  const [{ data: pr }, mergeMethod] = await Promise.all([
+    withRetry(
+      () => octokit.rest.pulls.get({ owner, repo, pull_number: prNumber }),
+      `getPR #${prNumber}`,
+    ),
+    detectMergeMethod(owner, repo),
+  ]);
 
   try {
     await octokit.graphql(
-      `mutation($prId: ID!) {
-        enablePullRequestAutoMerge(input: { pullRequestId: $prId }) {
+      `mutation($prId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+        enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $mergeMethod }) {
           pullRequest { autoMergeRequest { enabledAt } }
         }
       }`,
-      { prId: pr.node_id },
+      { prId: pr.node_id, mergeMethod },
     );
-    return `Auto-merge enabled for PR #${prNumber}`;
+    return `Auto-merge (${mergeMethod.toLowerCase()}) enabled for PR #${prNumber}`;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Failed to enable auto-merge for PR #${prNumber}: ${msg}`);

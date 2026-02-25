@@ -1,6 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   createSdkMcpServer,
   query,
@@ -117,7 +115,7 @@ function summarizeToolUse(
 export function buildMcpServers(): Record<string, unknown> {
   const autoMergeTool = tool(
     "enable_auto_merge",
-    "Enable auto-merge on a GitHub pull request. The repository's default merge strategy will be used. Requires the repo to have auto-merge enabled and branch protection rules configured.",
+    "Enable auto-merge on a GitHub pull request. Automatically detects the repo's allowed merge method. Requires the repo to have auto-merge enabled and branch protection rules configured.",
     {
       owner: z.string().describe("Repository owner (e.g. 'octocat')"),
       repo: z.string().describe("Repository name (e.g. 'hello-world')"),
@@ -208,7 +206,6 @@ export async function runClaude(opts: {
   };
 
   let worktreeName: string | undefined;
-  let agentTmpDir: string | undefined;
   let inactivityTimedOut = false;
   let loopCompleted = false;
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -237,16 +234,6 @@ export async function runClaude(opts: {
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
-      // Create a dedicated temp directory for this agent.
-      // CLAUDE_CODE_TMPDIR tells Claude Code where to put internal temp files
-      // (it appends /claude/ to this path). TMPDIR covers git, bun, etc.
-      agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
-      queryOpts.env = {
-        ...process.env,
-        TMPDIR: agentTmpDir,
-        CLAUDE_CODE_TMPDIR: agentTmpDir,
-      };
-
       const sandbox: Record<string, unknown> = {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
@@ -255,8 +242,10 @@ export async function runClaude(opts: {
           allowWrite: [
             // Git worktrees share the parent repo's .git directory
             resolve(opts.cwd, ".git"),
-            // Agent temp directory for Claude Code internals + CLI tools
-            agentTmpDir,
+            // Allow /tmp for Claude Code internals, git, bun, ssh-keygen, etc.
+            // Per-agent TMPDIR scoping is blocked by SDK overriding env vars:
+            // https://github.com/anthropics/claude-code/issues/15700
+            "/tmp",
           ],
         },
       };
@@ -470,14 +459,6 @@ export async function runClaude(opts: {
     if (hardKillTimer) clearTimeout(hardKillTimer);
     if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
-
-    if (agentTmpDir) {
-      try {
-        rmSync(agentTmpDir, { recursive: true, force: true });
-      } catch {
-        // best-effort cleanup
-      }
-    }
 
     if (worktreeName) {
       try {
