@@ -131,6 +131,51 @@ export async function findOrCreateLabel(
 }
 
 /**
+ * Find an initiative by name, or create one if it doesn't exist.
+ */
+export async function findOrCreateInitiative(
+  name: string,
+): Promise<{ id: string; name: string }> {
+  const client = getLinearClient();
+  const initiatives = await withRetry(
+    () => client.initiatives({ filter: { name: { eq: name } } }),
+    "findOrCreateInitiative",
+  );
+  const existing = initiatives.nodes[0];
+  if (existing) return { id: existing.id, name: existing.name };
+
+  info(`Creating initiative '${name}'...`);
+  const payload = await withRetry(
+    () => client.createInitiative({ name }),
+    "findOrCreateInitiative",
+  );
+  const initiative = await payload.initiative;
+  if (!initiative) throw new Error(`Failed to create initiative '${name}'`);
+  return { id: initiative.id, name: initiative.name };
+}
+
+/**
+ * Link a project to an initiative. Idempotent — swallows "already exists" errors.
+ */
+export async function linkProjectToInitiative(
+  initiativeId: string,
+  projectId: string,
+): Promise<void> {
+  const client = getLinearClient();
+  try {
+    await withRetry(
+      () => client.createInitiativeToProject({ initiativeId, projectId }),
+      "linkProjectToInitiative",
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Swallow "already exists" — this is expected for idempotent linking
+    if (msg.toLowerCase().includes("already exists")) return;
+    throw e;
+  }
+}
+
+/**
  * Get ready, unblocked issues for a team+project, sorted by priority.
  */
 export async function getReadyIssues(
@@ -363,11 +408,22 @@ export async function resolveLinearIds(
     findState(team.id, config.states.blocked),
   ]);
 
+  let initiativeId: string | undefined;
+  let initiativeName: string | undefined;
+  if (config.initiative) {
+    const initiative = await findOrCreateInitiative(config.initiative);
+    initiativeId = initiative.id;
+    initiativeName = initiative.name;
+    await linkProjectToInitiative(initiative.id, project.id);
+  }
+
   return {
     teamId: team.id,
     teamKey: config.team,
     projectId: project.id,
     projectName: config.project,
+    initiativeId,
+    initiativeName,
     states: {
       triage: triageState.id,
       ready: readyState.id,

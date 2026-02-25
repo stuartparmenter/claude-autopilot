@@ -6,6 +6,7 @@ import { fatal } from "./logger";
 export interface LinearConfig {
   team: string;
   project: string;
+  initiative: string;
   states: {
     triage: string;
     ready: string;
@@ -22,6 +23,8 @@ export interface LinearIds {
   teamKey: string;
   projectId: string;
   projectName: string;
+  initiativeId?: string;
+  initiativeName?: string;
   states: {
     triage: string;
     ready: string;
@@ -87,6 +90,7 @@ export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
     project: "",
+    initiative: "",
     states: {
       triage: "Triage",
       ready: "Todo",
@@ -165,6 +169,7 @@ function validateConfigStrings(config: AutopilotConfig): void {
     ["project.name", config.project.name],
     ["linear.team", config.linear.team],
     ["linear.project", config.linear.project],
+    ["linear.initiative", config.linear.initiative],
     ["linear.states.triage", config.linear.states.triage],
     ["linear.states.ready", config.linear.states.ready],
     ["linear.states.in_progress", config.linear.states.in_progress],
