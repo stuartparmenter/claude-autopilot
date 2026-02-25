@@ -113,9 +113,12 @@ async function runProjectOwner(opts: {
 
   const prompt = `You are the project owner for "${projectName}".
 
+Project Name: ${projectName}
 Project ID: ${projectId}
 Linear Team: ${config.linear.team}
 Initiative: ${linearIds.initiativeName || "N/A"}
+
+IMPORTANT: When calling save_status_update or save_project, always use the Project ID ("${projectId}"), NOT the project name. The project name may collide with the initiative name.
 
 ## Triage Queue
 

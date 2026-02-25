@@ -68,7 +68,7 @@ save_project(id: [project ID], state: "completed")
 
 Post a status update via `save_status_update`:
 
-- `project`: [project name]
+- `project`: [project ID, NOT the project name — use the Project ID from the prompt header]
 - `health`: `onTrack` | `atRisk` | `offTrack`
 - `body`: Summary including:
   - Issues triaged this session (accepted/deferred counts)

@@ -189,6 +189,7 @@ async function fixPR(opts: {
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
