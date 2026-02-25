@@ -1,11 +1,17 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
+  createSdkMcpServer,
   query,
   type SDKAssistantMessage,
   type SDKResultError,
+  tool,
 } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type { ActivityEntry } from "../state";
 import type { SandboxConfig } from "./config";
+import { enableAutoMerge } from "./github";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
@@ -37,9 +43,8 @@ export function closeAllAgents(): void {
 }
 
 // Stagger agent spawns to avoid race conditions on ~/.claude.json.
-// Each query() waits for the previous agent to signal it has started (init
-// message) before spawning. If the agent crashes before init, the finally
-// block in runClaude releases the slot.
+// Each query() waits for the previous agent's init message before spawning.
+// If the agent crashes before init, the finally block releases the slot.
 let spawnGate: Promise<void> = Promise.resolve();
 
 /**
@@ -110,6 +115,24 @@ function summarizeToolUse(
 }
 
 export function buildMcpServers(): Record<string, unknown> {
+  const autoMergeTool = tool(
+    "enable_auto_merge",
+    "Enable auto-merge on a GitHub pull request. The repository's default merge strategy will be used. Requires the repo to have auto-merge enabled and branch protection rules configured.",
+    {
+      owner: z.string().describe("Repository owner (e.g. 'octocat')"),
+      repo: z.string().describe("Repository name (e.g. 'hello-world')"),
+      pull_number: z.number().describe("Pull request number"),
+    },
+    async (args) => {
+      const msg = await enableAutoMerge(
+        args.owner,
+        args.repo,
+        args.pull_number,
+      );
+      return { content: [{ type: "text" as const, text: msg }] };
+    },
+  );
+
   return {
     linear: {
       type: "http",
@@ -121,6 +144,10 @@ export function buildMcpServers(): Record<string, unknown> {
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
     },
+    autopilot: createSdkMcpServer({
+      name: "autopilot",
+      tools: [autoMergeTool],
+    }),
   };
 }
 
@@ -181,6 +208,7 @@ export async function runClaude(opts: {
   };
 
   let worktreeName: string | undefined;
+  let agentTmpDir: string | undefined;
   let inactivityTimedOut = false;
   let loopCompleted = false;
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -203,33 +231,26 @@ export async function runClaude(opts: {
       stderr: (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
-      // Release the spawn slot as early as possible — the Setup hook fires
-      // during initialization, before SessionStart and the init message.
-      // By this point the agent is past its ~/.claude.json access.
-      hooks: {
-        Setup: [
-          {
-            hooks: [
-              async () => {
-                releaseSpawnSlot?.();
-                return {};
-              },
-            ],
-          },
-        ],
-      },
+      // NOTE: SDK Setup hooks don't fire reliably for programmatic callbacks,
+      // so we release the spawn slot on the init stream message instead (below).
     };
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
+      // Create a dedicated temp directory for this agent so we can
+      // grant sandbox write access to it (instead of all of /tmp) and
+      // clean it up when the agent exits.
+      agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
+      queryOpts.env = { ...process.env, TMPDIR: agentTmpDir };
+
       const sandbox: Record<string, unknown> = {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
         allowUnsandboxedCommands: false,
         // Git worktrees need write access to the parent repo's .git directory
-        // (shared object store, refs, worktree metadata)
+        // (shared object store, refs, worktree metadata).
         filesystem: {
-          allowWrite: [resolve(opts.cwd, ".git")],
+          allowWrite: [resolve(opts.cwd, ".git"), agentTmpDir],
         },
       };
       if (opts.sandbox.network_restricted) {
@@ -311,6 +332,7 @@ export async function runClaude(opts: {
 
         if (message.type === "system" && message.subtype === "init") {
           result.sessionId = message.session_id;
+          releaseSpawnSlot?.();
           emit?.({
             timestamp: Date.now(),
             type: "status",
@@ -436,6 +458,14 @@ export async function runClaude(opts: {
     if (hardKillTimer) clearTimeout(hardKillTimer);
     if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
+
+    if (agentTmpDir) {
+      try {
+        rmSync(agentTmpDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
 
     if (worktreeName) {
       try {
