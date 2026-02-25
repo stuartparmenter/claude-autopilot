@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   cost_usd REAL,
   duration_ms INTEGER,
   num_turns INTEGER,
-  error TEXT
+  error TEXT,
+  linear_issue_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
 `;
@@ -37,6 +38,7 @@ interface AgentRunRow {
   duration_ms: number | null;
   num_turns: number | null;
   error: string | null;
+  linear_issue_id: string | null;
 }
 
 interface AnalyticsRow {
@@ -52,14 +54,19 @@ export function openDb(dbFilePath: string): Database {
   }
   const db = new Database(dbFilePath, { create: true });
   db.exec(SCHEMA);
+  try {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN linear_issue_id TEXT");
+  } catch {
+    // Column already exists — safe to ignore
+  }
   return db;
 }
 
 export function insertAgentRun(db: Database, result: AgentResult): void {
   db.run(
     `INSERT OR REPLACE INTO agent_runs
-     (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       result.id,
       result.issueId,
@@ -71,6 +78,7 @@ export function insertAgentRun(db: Database, result: AgentResult): void {
       result.durationMs ?? null,
       result.numTurns ?? null,
       result.error ?? null,
+      result.linearIssueId ?? null,
     ],
   );
 }
@@ -87,6 +95,7 @@ function rowToResult(row: AgentRunRow): AgentResult {
     durationMs: row.duration_ms ?? undefined,
     numTurns: row.num_turns ?? undefined,
     error: row.error ?? undefined,
+    linearIssueId: row.linear_issue_id ?? undefined,
   };
 }
 
@@ -94,7 +103,7 @@ export function getRecentRuns(db: Database, limit = 50): AgentResult[] {
   const rows = db
     .query<AgentRunRow, [number]>(
       `SELECT id, issue_id, issue_title, status, started_at, finished_at,
-              cost_usd, duration_ms, num_turns, error
+              cost_usd, duration_ms, num_turns, error, linear_issue_id
        FROM agent_runs
        ORDER BY finished_at DESC
        LIMIT ?`,

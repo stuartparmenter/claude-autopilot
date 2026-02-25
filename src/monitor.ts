@@ -23,6 +23,10 @@ export function resetHandledReviewIds(): void {
   handledReviewIds.clear();
 }
 
+// Track fixer attempt counts per PR number to enforce max_fixer_attempts
+const fixerAttempts = new Map<number, number>();
+const MAX_FIXER_ATTEMPT_ENTRIES = 1000;
+
 /**
  * Check issues in "In Review" and take action based on their PR status.
  * Starts from Linear (source of truth), then checks GitHub.
@@ -57,27 +61,21 @@ export async function checkOpenPRs(opts: {
 
   const issues = result.nodes;
   if (issues.length === 0) {
+    // No issues in review — prune all stale fixer attempt entries
+    fixerAttempts.clear();
     return [];
   }
 
   info(`Monitoring ${issues.length} issue(s) in review...`);
 
-  const fixerPromises: Array<Promise<boolean>> = [];
+  // First pass: collect PR numbers from all issues (for pruning stale entries)
+  interface IssueData {
+    issue: (typeof issues)[number];
+    prNumber: number;
+  }
 
+  const allIssueData: IssueData[] = [];
   for (const issue of issues) {
-    // Skip issues that already have an active fixer
-    if (activeFixerIssues.has(issue.id)) {
-      continue;
-    }
-
-    // Check slot availability (fixers count against executor.parallel)
-    const running = state.getRunningCount();
-    if (running + fixerPromises.length >= maxSlots) {
-      info("No slots available for fixers — skipping remaining issues");
-      break;
-    }
-
-    // Find the PR number from the issue's GitHub attachment
     let attachments: Awaited<ReturnType<(typeof issue)["attachments"]>>;
     try {
       attachments = await issue.attachments();
@@ -101,6 +99,41 @@ export async function checkOpenPRs(opts: {
       continue;
     }
     const prNumber = Number.parseInt(prMatch[1], 10);
+    allIssueData.push({ issue, prNumber });
+  }
+
+  // Prune fixer attempt entries for PRs no longer in "In Review"
+  const activePrNumbers = new Set(allIssueData.map((d) => d.prNumber));
+  for (const prNumber of fixerAttempts.keys()) {
+    if (!activePrNumbers.has(prNumber)) {
+      fixerAttempts.delete(prNumber);
+    }
+  }
+
+  // Second pass: slot-limited fixer spawning
+  const fixerPromises: Array<Promise<boolean>> = [];
+
+  for (const { issue, prNumber } of allIssueData) {
+    // Skip issues that already have an active fixer
+    if (activeFixerIssues.has(issue.id)) {
+      continue;
+    }
+
+    // Check slot availability (fixers count against executor.parallel)
+    const running = state.getRunningCount();
+    if (running + fixerPromises.length >= maxSlots) {
+      info("No slots available for fixers — skipping remaining issues");
+      break;
+    }
+
+    // Check fixer attempt budget
+    const attempts = fixerAttempts.get(prNumber) ?? 0;
+    if (attempts >= config.executor.max_fixer_attempts) {
+      warn(
+        `PR #${prNumber} (${issue.identifier}) has reached max fixer attempts (${config.executor.max_fixer_attempts}) — skipping`,
+      );
+      continue;
+    }
 
     let status: Awaited<ReturnType<typeof getPRStatus>>;
     try {
@@ -114,6 +147,13 @@ export async function checkOpenPRs(opts: {
     // Merged PRs are handled by the Linear/GitHub webhook, not here
 
     if (status.ciStatus === "failure") {
+      fixerAttempts.set(prNumber, attempts + 1);
+      if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
+        const oldestKey = fixerAttempts.keys().next().value;
+        if (oldestKey !== undefined) {
+          fixerAttempts.delete(oldestKey);
+        }
+      }
       const promise = fixPR({
         issueId: issue.id,
         issueIdentifier: issue.identifier,
@@ -127,6 +167,13 @@ export async function checkOpenPRs(opts: {
     }
 
     if (status.mergeable === false) {
+      fixerAttempts.set(prNumber, attempts + 1);
+      if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
+        const oldestKey = fixerAttempts.keys().next().value;
+        if (oldestKey !== undefined) {
+          fixerAttempts.delete(oldestKey);
+        }
+      }
       const promise = fixPR({
         issueId: issue.id,
         issueIdentifier: issue.identifier,
@@ -298,7 +345,7 @@ async function fixPR(opts: {
   });
 
   const worktree = `fix-${issueIdentifier}`;
-  const timeoutMs = 20 * 60 * 1000; // 20 minutes for fixers
+  const timeoutMs = config.executor.fixer_timeout_minutes * 60 * 1000;
 
   try {
     const result = await runClaude({

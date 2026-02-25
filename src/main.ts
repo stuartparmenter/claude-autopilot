@@ -17,6 +17,7 @@ import { interruptibleSleep, isFatalError } from "./lib/errors";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
+import { sanitizeMessage } from "./lib/sanitize";
 import { checkOpenPRs } from "./monitor";
 import { createApp } from "./server";
 import { AppState } from "./state";
@@ -190,16 +191,6 @@ if (dashboardToken) {
 }
 ok(`Dashboard: http://${isLocalhost ? "localhost" : host}:${server.port}`);
 console.log();
-
-// --- Helpers ---
-
-/** Redact sensitive tokens from error messages before logging. */
-function sanitizeMessage(msg: string): string {
-  return msg
-    .replace(/Bearer\s+\S+/g, "Bearer [REDACTED]")
-    .replace(/lin_api_\S+/g, "lin_api_[REDACTED]")
-    .replace(/sk-ant-\S+/g, "sk-ant-[REDACTED]");
-}
 
 // --- Graceful shutdown ---
 
