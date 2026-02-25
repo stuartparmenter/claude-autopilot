@@ -92,10 +92,24 @@ export async function runPlanning(opts: {
       },
     ];
 
+    // CTO only coordinates — restrict to delegation tools so it can't
+    // read source code, run tests, or investigate the codebase directly.
+    const ctoTools = [
+      "Task",
+      "TeamCreate",
+      "TeamDelete",
+      "SendMessage",
+      "TaskCreate",
+      "TaskUpdate",
+      "TaskList",
+      "TaskGet",
+    ];
+
     const result = await runClaude({
       prompt,
       cwd: projectPath,
       label: "planning",
+      tools: ctoTools,
       timeoutMs:
         (config.planning.timeout_minutes ?? DEFAULT_PLANNING_TIMEOUT_MINUTES) *
         60 *
