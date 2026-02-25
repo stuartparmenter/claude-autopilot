@@ -327,7 +327,7 @@ export function validateIdentifier(identifier: string): string {
 export async function testConnection(): Promise<boolean> {
   try {
     const client = getLinearClient();
-    const viewer = await client.viewer;
+    const viewer = await withRetry(() => client.viewer, "testConnection");
     info(`Connected to Linear as ${viewer.name ?? viewer.email}`);
     return true;
   } catch (e) {

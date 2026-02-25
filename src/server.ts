@@ -143,6 +143,11 @@ export function createApp(
 ): Hono {
   const app = new Hono();
 
+  app.onError((e, c) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: msg }, 500);
+  });
+
   if (options?.authToken) {
     const authToken = options.authToken;
 
@@ -298,7 +303,12 @@ export function createApp(
     if (state.getAuditorStatus().running) {
       return c.json({ error: "Audit already running" }, 409);
     }
-    options?.triggerAudit?.();
+    try {
+      options?.triggerAudit?.();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Audit trigger failed: ${msg}` }, 500);
+    }
     return c.json({ triggered: true });
   });
 
@@ -330,7 +340,12 @@ export function createApp(
       return c.json({ error: "No Linear issue ID available for retry" }, 400);
     }
     if (options?.retryIssue) {
-      await options.retryIssue(hist.linearIssueId);
+      try {
+        await options.retryIssue(hist.linearIssueId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return c.json({ error: `Retry failed: ${msg}` }, 500);
+      }
     }
     return c.json({ retried: true });
   });

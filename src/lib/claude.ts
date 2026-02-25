@@ -1,11 +1,15 @@
 import { resolve } from "node:path";
 import {
+  createSdkMcpServer,
   query,
   type SDKAssistantMessage,
   type SDKResultError,
+  tool,
 } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type { ActivityEntry } from "../state";
 import type { SandboxConfig } from "./config";
+import { enableAutoMerge } from "./github";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
@@ -37,9 +41,8 @@ export function closeAllAgents(): void {
 }
 
 // Stagger agent spawns to avoid race conditions on ~/.claude.json.
-// Each query() waits for the previous agent to signal it has started (init
-// message) before spawning. If the agent crashes before init, the finally
-// block in runClaude releases the slot.
+// Each query() waits for the previous agent's init message before spawning.
+// If the agent crashes before init, the finally block releases the slot.
 let spawnGate: Promise<void> = Promise.resolve();
 
 /**
@@ -110,6 +113,24 @@ function summarizeToolUse(
 }
 
 export function buildMcpServers(): Record<string, unknown> {
+  const autoMergeTool = tool(
+    "enable_auto_merge",
+    "Enable auto-merge on a GitHub pull request. Automatically detects the repo's allowed merge method. Requires the repo to have auto-merge enabled and branch protection rules configured.",
+    {
+      owner: z.string().describe("Repository owner (e.g. 'octocat')"),
+      repo: z.string().describe("Repository name (e.g. 'hello-world')"),
+      pull_number: z.number().describe("Pull request number"),
+    },
+    async (args) => {
+      const msg = await enableAutoMerge(
+        args.owner,
+        args.repo,
+        args.pull_number,
+      );
+      return { content: [{ type: "text" as const, text: msg }] };
+    },
+  );
+
   return {
     linear: {
       type: "http",
@@ -121,7 +142,77 @@ export function buildMcpServers(): Record<string, unknown> {
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
     },
+    autopilot: createSdkMcpServer({
+      name: "autopilot",
+      tools: [autoMergeTool],
+    }),
   };
+}
+
+const AGENT_ENV_ALLOWLIST: readonly string[] = [
+  // System basics
+  "HOME",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "USER",
+  "LANG",
+  "LOGNAME",
+  "HOSTNAME",
+  // Agent SDK auth
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_API_KEY",
+  // Bedrock auth
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_REGION",
+  "AWS_DEFAULT_REGION",
+  "AWS_PROFILE",
+  // Vertex auth
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "CLOUDSDK_CONFIG",
+  "GCLOUD_PROJECT",
+  "GOOGLE_CLOUD_PROJECT",
+  // Auth mode flags
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  // Git/SSH
+  "SSH_AUTH_SOCK",
+  "GIT_SSH_COMMAND",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  // Temp directories
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  // XDG
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  // Proxy/TLS (corporate environments)
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+] as const;
+
+export function buildAgentEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of AGENT_ENV_ALLOWLIST) {
+    const val = process.env[key];
+    if (val !== undefined) {
+      env[key] = val;
+    }
+  }
+  env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+  return env;
 }
 
 /**
@@ -200,24 +291,12 @@ export async function runClaude(opts: {
       settingSources: ["project"],
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      env: buildAgentEnv(),
       stderr: (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
       ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
       ...(opts.model && { model: opts.model }),
-      // Release the spawn slot as early as possible — the Setup hook fires
-      // during initialization, before SessionStart and the init message.
-      // By this point the agent is past its ~/.claude.json access.
-      hooks: {
-        Setup: [
-          {
-            hooks: [
-              async () => {
-                releaseSpawnSlot?.();
-                return {};
-              },
-            ],
-          },
-        ],
-      },
+      // NOTE: SDK Setup hooks don't fire reliably for programmatic callbacks,
+      // so we release the spawn slot on the init stream message instead (below).
     };
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
@@ -226,19 +305,29 @@ export async function runClaude(opts: {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
         allowUnsandboxedCommands: false,
-        // Git worktrees need write access to the parent repo's .git directory
-        // (shared object store, refs, worktree metadata)
         filesystem: {
-          allowWrite: [resolve(opts.cwd, ".git")],
+          allowWrite: [
+            // Git worktrees share the parent repo's .git directory
+            resolve(opts.cwd, ".git"),
+            // Allow /tmp for Claude Code internals, git, bun, ssh-keygen, etc.
+            // Per-agent TMPDIR scoping is blocked by SDK overriding env vars:
+            // https://github.com/anthropics/claude-code/issues/15700
+            "/tmp",
+          ],
         },
       };
       if (opts.sandbox.network_restricted) {
-        sandbox.network = {
+        const network: Record<string, unknown> = {
           allowedDomains: [
             ...SANDBOX_BASE_DOMAINS,
             ...(opts.sandbox.extra_allowed_domains ?? []),
           ],
         };
+        // Allow SSH agent socket for git commit signing
+        if (process.env.SSH_AUTH_SOCK) {
+          network.allowUnixSockets = [process.env.SSH_AUTH_SOCK];
+        }
+        sandbox.network = network;
       }
       queryOpts.sandbox = sandbox;
     }
@@ -311,6 +400,7 @@ export async function runClaude(opts: {
 
         if (message.type === "system" && message.subtype === "init") {
           result.sessionId = message.session_id;
+          releaseSpawnSlot?.();
           emit?.({
             timestamp: Date.now(),
             type: "status",

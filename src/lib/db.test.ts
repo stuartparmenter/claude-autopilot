@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentResult } from "../state";
 import { getAnalytics, getRecentRuns, insertAgentRun, openDb } from "./db";
@@ -29,6 +29,102 @@ describe("openDb", () => {
   test("creates schema and returns an open database", () => {
     // If openDb succeeded without throwing, schema was created
     expect(db).toBeDefined();
+  });
+
+  test("migration adds linear_issue_id column to existing DB without it", () => {
+    // Simulate an old DB that lacks the linear_issue_id column
+    const oldDb = new Database(":memory:", { create: true });
+    oldDb.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
+    `);
+    // Insert a row before migration (no linear_issue_id column yet)
+    oldDb.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+    oldDb.close();
+
+    // Re-open via openDb — it should run the migration without error
+    // We can't re-open :memory: by path, so instead test the migration directly
+    // by running it on a fresh in-memory DB that already has the schema without the column
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration (same as openDb does)
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN linear_issue_id TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ linear_issue_id: string | null }, [string]>(
+        "SELECT linear_issue_id FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.linear_issue_id).toBeNull();
+
+    // New rows inserted after migration can use the column
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at, linear_issue_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "post-migration",
+        "ISSUE-2",
+        "New Title",
+        "completed",
+        3000,
+        4000,
+        "uuid-xyz",
+      ],
+    );
+    const newRow = db2
+      .query<{ linear_issue_id: string | null }, [string]>(
+        "SELECT linear_issue_id FROM agent_runs WHERE id = ?",
+      )
+      .get("post-migration");
+    expect(newRow?.linear_issue_id).toBe("uuid-xyz");
+
+    db2.close();
+  });
+
+  test("migration is idempotent on a new DB that already has the column", () => {
+    // openDb on :memory: creates the schema with linear_issue_id, then tries ALTER TABLE
+    // The ALTER TABLE should be silently ignored — no error thrown
+    expect(() => openDb(":memory:")).not.toThrow();
   });
 });
 
@@ -93,6 +189,18 @@ describe("insertAgentRun and getRecentRuns", () => {
     const run = getRecentRuns(db)[0];
     expect(run.status).toBe("failed");
     expect(run.error).toBe("timeout");
+  });
+
+  test("stores and retrieves linearIssueId when set", () => {
+    insertAgentRun(db, makeResult("a1", { linearIssueId: "uuid-1234-abcd" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.linearIssueId).toBe("uuid-1234-abcd");
+  });
+
+  test("linearIssueId is undefined when not set", () => {
+    insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.linearIssueId).toBeUndefined();
   });
 
   test("OR REPLACE upserts a run with the same id", () => {

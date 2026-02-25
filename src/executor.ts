@@ -4,6 +4,7 @@ import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
 import { info } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
+import { sanitizeMessage } from "./lib/sanitize";
 import type { AppState } from "./state";
 
 // Track issue IDs currently being worked on to prevent duplicates
@@ -38,7 +39,7 @@ export async function executeIssue(opts: {
     BLOCKED_STATE: config.linear.states.blocked,
     PROJECT_NAME: config.project.name,
     AUTOMERGE_INSTRUCTION: config.github.automerge
-      ? "Enable auto-merge on the PR using the GitHub MCP. Do not specify a merge method — the repository's default merge strategy will be used. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+      ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
       : "Skip — auto-merge is not enabled for this project.",
   });
 
@@ -85,7 +86,7 @@ export async function executeIssue(opts: {
       if (failureCount >= config.executor.max_retries) {
         await updateIssue(issue.id, {
           stateId: linearIds.states.blocked,
-          comment: `Executor failed after ${failureCount} total attempt(s) — moving to Blocked.\n\nLast error:\n\`\`\`\n${result.error}\n\`\`\``,
+          comment: `Executor failed after ${failureCount} total attempt(s) — moving to Blocked.\n\nLast error:\n\`\`\`\n${sanitizeMessage(result.error ?? "")}\n\`\`\``,
         });
         state.clearIssueFailures(issue.id);
       } else {

@@ -311,6 +311,17 @@ describe("POST /api/audit", () => {
     const json = (await res.json()) as { triggered: boolean };
     expect(json.triggered).toBe(true);
   });
+
+  test("returns 500 with error key when triggerAudit throws", async () => {
+    const triggerAudit = mock(() => {
+      throw new Error("audit error");
+    });
+    const appWithActions = createApp(state, { triggerAudit });
+    const res = await appWithActions.request("/api/audit", { method: "POST" });
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Audit trigger failed: audit error");
+  });
 });
 
 describe("POST /api/cancel/:agentId", () => {
@@ -411,6 +422,33 @@ describe("POST /api/retry/:historyId", () => {
     const json = (await res.json()) as { retried: boolean };
     expect(json.retried).toBe(true);
     expect(retryIssue).toHaveBeenCalledWith("linear-uuid-5");
+  });
+
+  test("returns 500 with error key when retryIssue throws", async () => {
+    const retryIssue = mock(async (_id: string) => {
+      throw new Error("Linear API error");
+    });
+    const app = createApp(state, { retryIssue });
+    const res = await app.request("/api/retry/exec-ENG-5-123", {
+      method: "POST",
+    });
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Retry failed: Linear API error");
+  });
+});
+
+describe("global onError handler", () => {
+  test("returns 500 JSON when an unhandled error occurs", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    app.get("/test-throw", () => {
+      throw new Error("unexpected failure");
+    });
+    const res = await app.request("/test-throw");
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("unexpected failure");
   });
 });
 

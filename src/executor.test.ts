@@ -73,6 +73,8 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     executor: {
       parallel: parallelSlots,
       timeout_minutes: 30,
+      fixer_timeout_minutes: 20,
+      max_fixer_attempts: 3,
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,
@@ -296,6 +298,49 @@ describe("executeIssue — timeout path", () => {
     });
 
     expect(state.getHistory()[0].status).toBe("timed_out");
+  });
+});
+
+describe("executeIssue — token sanitization in Linear comment", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("redacts tokens in error before posting to Linear", async () => {
+    mockRunClaude.mockResolvedValue({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: "Failed: Bearer sk-ant-secret123 and ghp_mygithubtoken",
+      costUsd: undefined,
+      durationMs: 500,
+      numTurns: 1,
+      result: "",
+    });
+
+    const issue = makeIssue();
+    const config = makeConfig();
+    // Force max_retries = 1 so the blocked comment is posted on first failure
+    config.executor.max_retries = 1;
+
+    mockUpdateIssue.mockClear();
+    await executeIssue({
+      issue,
+      config,
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const blockedCall = mockUpdateIssue.mock.calls.find(
+      (call) => call[1]?.stateId === "blocked-id",
+    );
+    const comment: string = blockedCall?.[1]?.comment ?? "";
+    expect(comment).not.toContain("sk-ant-secret123");
+    expect(comment).not.toContain("mygithubtoken");
+    expect(comment).toContain("[REDACTED]");
   });
 });
 

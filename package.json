@@ -12,11 +12,12 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.52",
-    "@linear/sdk": "^75.0.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.56",
+    "@linear/sdk": "^76.0.0",
     "hono": "^4.12.2",
     "octokit": "^5.0.5",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.2",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

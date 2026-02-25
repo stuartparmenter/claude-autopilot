@@ -122,7 +122,10 @@ export async function createWorktree(
       throw new Error(`Failed to create worktree '${name}': ${err}`);
     }
   } else {
-    // Executor mode: create a fresh branch from HEAD.
+    // Executor mode: create a fresh branch from origin/main.
+    // Always branch from origin/main (not HEAD) so agents get a clean
+    // starting point regardless of what branch the orchestrator is on.
+    gitSync(projectPath, ["fetch", "origin", "main"]);
     const branch = `worktree-${name}`;
 
     // Branch might exist without the worktree directory (partial cleanup,
@@ -130,7 +133,14 @@ export async function createWorktree(
     gitSync(projectPath, ["branch", "-D", branch]);
 
     info(`Creating worktree: ${name}`);
-    const err = gitSync(projectPath, ["worktree", "add", wtPath, "-b", branch]);
+    const err = gitSync(projectPath, [
+      "worktree",
+      "add",
+      wtPath,
+      "-b",
+      branch,
+      "origin/main",
+    ]);
     if (err) {
       throw new Error(`Failed to create worktree '${name}': ${err}`);
     }

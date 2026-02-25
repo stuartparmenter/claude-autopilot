@@ -118,7 +118,10 @@ function makeIssue(
   };
 }
 
-function makeConfig(parallelSlots = 3): AutopilotConfig {
+function makeConfig(
+  parallelSlots = 3,
+  executorOverrides: Partial<AutopilotConfig["executor"]> = {},
+): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
@@ -135,6 +138,8 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     executor: {
       parallel: parallelSlots,
       timeout_minutes: 30,
+      fixer_timeout_minutes: 20,
+      max_fixer_attempts: 3,
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,
@@ -143,6 +148,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
       planning_model: "opus",
+      ...executorOverrides,
     },
     auditor: {
       schedule: "when_idle",
@@ -512,5 +518,95 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
 
     expect(result).toHaveLength(1);
     await Promise.all(result);
+  });
+});
+
+describe("checkOpenPRs — fixer timeout and attempt budget", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: undefined,
+      costUsd: 0.05,
+      durationMs: 500,
+      numTurns: 2,
+      result: "",
+    });
+    // Default: CI failure so fixers get spawned
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/budget", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+  });
+
+  test("uses fixer_timeout_minutes from config", async () => {
+    const config = makeConfig(3, { fixer_timeout_minutes: 45 });
+    const issue = makeIssue("timeout-pr", "https://github.com/o/r/pull/400");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    mockRunClaude.mockClear();
+    const result = await checkOpenPRs(makeOpts(state, config));
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+
+    expect(mockRunClaude.mock.calls.length).toBeGreaterThan(0);
+    const callArgs = (
+      mockRunClaude.mock.calls as unknown as Array<[{ timeoutMs: number }]>
+    )[0][0];
+    expect(callArgs.timeoutMs).toBe(45 * 60 * 1000);
+  });
+
+  test("does not spawn fixer after max_fixer_attempts is reached", async () => {
+    const config = makeConfig(3, { max_fixer_attempts: 2 });
+    const issue = makeIssue("retry-pr", "https://github.com/o/r/pull/500");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    // First attempt
+    const result1 = await checkOpenPRs(makeOpts(state, config));
+    expect(result1).toHaveLength(1);
+    await Promise.all(result1);
+
+    // Second attempt
+    const result2 = await checkOpenPRs(makeOpts(state, config));
+    expect(result2).toHaveLength(1);
+    await Promise.all(result2);
+
+    // Third attempt: max reached, no fixer spawned
+    const result3 = await checkOpenPRs(makeOpts(state, config));
+    expect(result3).toHaveLength(0);
+  });
+
+  test("resets attempt counter when PR leaves In Review", async () => {
+    const config = makeConfig(3, { max_fixer_attempts: 1 });
+    const issue = makeIssue("reset-pr", "https://github.com/o/r/pull/600");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    // First attempt — fixer spawned, counter reaches max
+    const result1 = await checkOpenPRs(makeOpts(state, config));
+    expect(result1).toHaveLength(1);
+    await Promise.all(result1);
+
+    // Max reached — no fixer spawned
+    const result2 = await checkOpenPRs(makeOpts(state, config));
+    expect(result2).toHaveLength(0);
+
+    // PR leaves "In Review" (no issues returned) — counter is pruned
+    mockIssuesQuery.mockResolvedValue({ nodes: [] });
+    await checkOpenPRs(makeOpts(state, config));
+
+    // PR comes back to "In Review" — counter was reset, fixer spawned again
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    const result4 = await checkOpenPRs(makeOpts(state, config));
+    expect(result4).toHaveLength(1);
+    await Promise.all(result4);
   });
 });
