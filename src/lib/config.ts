@@ -48,6 +48,7 @@ export interface ExecutorConfig {
 export interface AuditorConfig {
   schedule: "when_idle" | "daily" | "manual";
   min_ready_threshold: number;
+  min_interval_minutes: number;
   max_issues_per_run: number;
   use_agent_teams: boolean;
   skip_triage: boolean;
@@ -116,6 +117,7 @@ export const DEFAULTS: AutopilotConfig = {
   auditor: {
     schedule: "when_idle",
     min_ready_threshold: 5,
+    min_interval_minutes: 60,
     max_issues_per_run: 10,
     use_agent_teams: true,
     skip_triage: true,
@@ -236,6 +238,17 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   ) {
     throw new Error(
       "Config validation error: executor.poll_interval_minutes must be a number between 0.5 and 60",
+    );
+  }
+
+  if (
+    typeof config.auditor.min_interval_minutes !== "number" ||
+    Number.isNaN(config.auditor.min_interval_minutes) ||
+    config.auditor.min_interval_minutes < 0 ||
+    config.auditor.min_interval_minutes > 1440
+  ) {
+    throw new Error(
+      "Config validation error: auditor.min_interval_minutes must be a number between 0 and 1440",
     );
   }
 

@@ -147,6 +147,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     auditor: {
       schedule: "when_idle",
       min_ready_threshold: 5,
+      min_interval_minutes: 60,
       max_issues_per_run: 10,
       use_agent_teams: false,
       skip_triage: true,

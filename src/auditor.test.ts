@@ -98,6 +98,7 @@ function makeConfig(skipTriage = true): AutopilotConfig {
     auditor: {
       schedule: "when_idle",
       min_ready_threshold: 5,
+      min_interval_minutes: 60,
       max_issues_per_run: 10,
       use_agent_teams: false,
       skip_triage: skipTriage,
@@ -219,6 +220,79 @@ describe("shouldRunAudit — backlog threshold", () => {
     );
     expect(calledStateIds).toContain("ready-id");
     expect(calledStateIds).toContain("triage-id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shouldRunAudit — min interval check
+// ---------------------------------------------------------------------------
+
+describe("shouldRunAudit — min interval check", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("returns false when lastRunAt is within the interval", async () => {
+    // Set lastRunAt to 30 minutes ago, interval is 60 minutes
+    state.updateAuditor({ lastRunAt: Date.now() - 30 * 60 * 1000 });
+    // Backlog is low so threshold check would pass
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunAudit({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(false);
+    // Should short-circuit before making any API calls
+    expect(mockIssues.mock.calls).toHaveLength(0);
+  });
+
+  test("returns true when lastRunAt is older than the interval and backlog is low", async () => {
+    // Set lastRunAt to 90 minutes ago, interval is 60 minutes
+    state.updateAuditor({ lastRunAt: Date.now() - 90 * 60 * 1000 });
+    // Backlog is low so threshold check passes
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunAudit({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("returns true when lastRunAt is undefined (first run) and backlog is low", async () => {
+    // No lastRunAt set — first run
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunAudit({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("returns false when lastRunAt is within interval even if backlog is below threshold", async () => {
+    const config = makeConfig();
+    config.auditor.min_interval_minutes = 120;
+    // Set lastRunAt to 60 minutes ago — within 120 minute interval
+    state.updateAuditor({ lastRunAt: Date.now() - 60 * 60 * 1000 });
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunAudit({
+      config,
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(false);
   });
 });
 

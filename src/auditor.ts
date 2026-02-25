@@ -22,6 +22,15 @@ export async function shouldRunAudit(opts: {
     return false;
   }
 
+  const lastRunAt = state.getAuditorStatus().lastRunAt;
+  if (lastRunAt !== undefined) {
+    const elapsedMs = Date.now() - lastRunAt;
+    const intervalMs = config.auditor.min_interval_minutes * 60 * 1000;
+    if (elapsedMs < intervalMs) {
+      return false;
+    }
+  }
+
   const [readyCount, triageCount] = await Promise.all([
     countIssuesInState(linearIds, linearIds.states.ready),
     countIssuesInState(linearIds, linearIds.states.triage),
