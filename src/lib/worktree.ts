@@ -22,20 +22,20 @@ function gitPrune(projectPath: string): void {
   gitSync(projectPath, ["worktree", "prune"]);
 }
 
-/** Sleep synchronously (Bun.sleepSync) for use in retry loops. */
-function sleepMs(ms: number): void {
-  Bun.sleepSync(ms);
+/** Sleep asynchronously for use in retry loops. */
+async function sleepMs(ms: number): Promise<void> {
+  await Bun.sleep(ms);
 }
 
 /**
  * Try to remove a directory, retrying on failure (e.g. Windows file locks).
  * Uses git worktree remove first, falls back to rmSync.
  */
-function forceRemoveDir(
+async function forceRemoveDir(
   projectPath: string,
   wtPath: string,
   name: string,
-): void {
+): Promise<void> {
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [1000, 3000, 5000];
 
@@ -67,7 +67,7 @@ function forceRemoveDir(
     warn(
       `Failed to remove worktree '${name}' (attempt ${attempt + 1}/${MAX_RETRIES}): ${err}. Retrying in ${delay}ms...`,
     );
-    sleepMs(delay);
+    await sleepMs(delay);
   }
 }
 
@@ -79,11 +79,11 @@ function forceRemoveDir(
  *   (for fixers working on PR branches). Otherwise create a fresh branch from HEAD.
  * @returns the absolute path to the worktree directory.
  */
-export function createWorktree(
+export async function createWorktree(
   projectPath: string,
   name: string,
   fromBranch?: string,
-): string {
+): Promise<string> {
   const wtPath = worktreePath(projectPath, name);
 
   // Prune stale worktree references first — if a worktree directory was
@@ -94,7 +94,7 @@ export function createWorktree(
   // Clean up stale worktree directory from a previous crash
   if (existsSync(wtPath)) {
     warn(`Stale worktree found at ${wtPath}, removing...`);
-    forceRemoveDir(projectPath, wtPath, name);
+    await forceRemoveDir(projectPath, wtPath, name);
 
     // If it STILL exists after retries, we can't proceed
     if (existsSync(wtPath)) {
@@ -146,15 +146,15 @@ export function createWorktree(
  * @param keepBranch - If true, only remove the worktree directory, don't
  *   delete the branch. Used for fixer worktrees where the branch is the PR branch.
  */
-export function removeWorktree(
+export async function removeWorktree(
   projectPath: string,
   name: string,
   opts?: { keepBranch?: boolean },
-): void {
+): Promise<void> {
   const wtPath = worktreePath(projectPath, name);
 
   info(`Removing worktree: ${name}`);
-  forceRemoveDir(projectPath, wtPath, name);
+  await forceRemoveDir(projectPath, wtPath, name);
 
   gitPrune(projectPath);
 

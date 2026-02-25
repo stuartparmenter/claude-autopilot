@@ -157,6 +157,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
+    persistence: { enabled: false, db_path: ".claude/autopilot.db" },
   };
 }
 

@@ -45,14 +45,143 @@ describe("escapeHtml", () => {
     expect(escapeHtml('say "hello"')).toBe("say &quot;hello&quot;");
   });
 
-  test("single quote is intentionally NOT escaped", () => {
-    expect(escapeHtml("it's fine")).toBe("it's fine");
+  test("escapes single quote", () => {
+    expect(escapeHtml("it's fine")).toBe("it&#39;s fine");
   });
 
-  test("escapes all four entities in one string", () => {
+  test("escapes all five entities in one string", () => {
     expect(escapeHtml('<a href="x">a & b</a>')).toBe(
       "&lt;a href=&quot;x&quot;&gt;a &amp; b&lt;/a&gt;",
     );
+  });
+});
+
+describe("auth", () => {
+  const TOKEN = "test-secret-token";
+
+  test("without authToken: GET / returns 200 (backwards compatible)", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    expect(res.status).toBe(200);
+  });
+
+  test("without authToken: GET /api/status returns 200", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/status");
+    expect(res.status).toBe(200);
+  });
+
+  test("with authToken: GET / without cookie returns 401 with login form", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/");
+    expect(res.status).toBe(401);
+    const body = await res.text();
+    expect(body).toContain("Dashboard Token");
+    expect(body).toContain("/auth/login");
+  });
+
+  test("with authToken: GET /api/status without auth returns 401 JSON", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/status");
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Unauthorized");
+  });
+
+  test("with authToken: GET /partials/agents without auth returns 401 JSON", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/partials/agents");
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Unauthorized");
+  });
+
+  test("with authToken: GET /api/status with valid Bearer token returns 200", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/status", {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("with authToken: GET / with valid cookie returns 200 dashboard", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/", {
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("claude-autopilot");
+    expect(body).toContain("htmx");
+  });
+
+  test("with authToken: POST /auth/login with correct token sets cookie and redirects", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).toContain("autopilot_token=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+  });
+
+  test("with authToken: POST /auth/login with wrong token returns 401 with error", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "token=wrong-token",
+    });
+    expect(res.status).toBe(401);
+    const body = await res.text();
+    expect(body).toContain("Invalid token");
+  });
+
+  test("with authToken: POST /auth/logout clears cookie and redirects", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/logout", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).toContain("autopilot_token=");
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  test("with authToken: dashboard shows Logout button", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/", {
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    const body = await res.text();
+    expect(body).toContain("/auth/logout");
+    expect(body).toContain("Logout");
+  });
+
+  test("without authToken: dashboard does not show Logout button", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).not.toContain("/auth/logout");
   });
 });
 
@@ -70,6 +199,13 @@ describe("routes", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("claude-autopilot");
+  });
+
+  test("GET / includes htmx script tag with SRI integrity hash and crossorigin", async () => {
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain('integrity="sha384-');
+    expect(body).toContain('crossorigin="anonymous"');
   });
 
   test("GET /api/status returns JSON with expected keys", async () => {
@@ -104,6 +240,29 @@ describe("routes", () => {
     const res = await app.request("/partials/agents");
     const body = await res.text();
     expect(body).toContain("ENG-42");
+  });
+
+  test("GET /partials/agents escapes agent ID in hx-get attribute", async () => {
+    state.addAgent("exec-ENG-42-<script>", "ENG-42", "Fix the thing");
+    const res = await app.request("/partials/agents");
+    const body = await res.text();
+    expect(body).toContain(
+      'hx-get="/partials/activity/exec-ENG-42-&lt;script&gt;"',
+    );
+    expect(body).not.toContain(
+      'hx-get="/partials/activity/exec-ENG-42-<script>"',
+    );
+  });
+
+  test("GET /partials/history escapes agent ID in hx-get attribute", async () => {
+    state.addAgent('exec-ENG-42-"xss"', "ENG-42", "Fix the thing");
+    state.completeAgent('exec-ENG-42-"xss"', "completed");
+    const res = await app.request("/partials/history");
+    const body = await res.text();
+    expect(body).toContain(
+      'hx-get="/partials/activity/exec-ENG-42-&quot;xss&quot;"',
+    );
+    expect(body).not.toContain('hx-get="/partials/activity/exec-ENG-42-"xss""');
   });
 
   test("GET /partials/history with empty state shows 'No completed agents yet'", async () => {

@@ -6,6 +6,7 @@
  * Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]
  */
 
+import { resolve } from "node:path";
 import {
   AuthenticationLinearError,
   FeatureNotAccessibleLinearError,
@@ -15,7 +16,9 @@ import {
 } from "@linear/sdk";
 import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
+import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
+import { openDb } from "./lib/db";
 import { detectRepo } from "./lib/github";
 import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
@@ -106,6 +109,18 @@ if (
   console.log();
 }
 
+const dashboardToken = process.env.AUTOPILOT_DASHBOARD_TOKEN || undefined;
+const isLocalhost =
+  host === "127.0.0.1" || host === "localhost" || host === "::1";
+
+if (!isLocalhost && !dashboardToken) {
+  error(
+    `AUTOPILOT_DASHBOARD_TOKEN must be set when binding dashboard to non-localhost.\n` +
+      `Set: export AUTOPILOT_DASHBOARD_TOKEN=<your-secret-token>\n` +
+      `Or bind to localhost only (omit --host).`,
+  );
+}
+
 header("claude-autopilot v0.2.0");
 
 info(`Project: ${projectPath}`);
@@ -133,7 +148,16 @@ ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
 // --- Init state and server ---
 
 const state = new AppState();
+
+if (config.persistence.enabled) {
+  const dbPath = resolve(projectPath, config.persistence.db_path);
+  const db = openDb(dbPath);
+  state.setDb(db);
+  ok(`Persistence: ${dbPath}`);
+}
+
 const app = createApp(state, {
+  authToken: dashboardToken,
   triggerAudit: () => {
     runAudit({
       config,
@@ -147,9 +171,6 @@ const app = createApp(state, {
     await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
   },
 });
-
-const isLocalhost =
-  host === "127.0.0.1" || host === "localhost" || host === "::1";
 
 if (!isLocalhost) {
   warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);
@@ -167,6 +188,11 @@ const server = Bun.serve({
   fetch: app.fetch,
 });
 
+if (dashboardToken) {
+  ok("Dashboard authentication enabled");
+} else {
+  info("Dashboard authentication disabled (localhost-only)");
+}
 ok(`Dashboard: http://${isLocalhost ? "localhost" : host}:${server.port}`);
 console.log();
 
@@ -211,7 +237,11 @@ function shutdown() {
   }
   shuttingDown = true;
   console.log();
-  info("Shutting down - waiting for running agents to finish...");
+  info("Shutting down — killing agent subprocesses...");
+  // close() is synchronous: sends SIGTERM immediately, escalates to SIGKILL
+  // after 5s. Call this BEFORE abort() so processes are killed even if the
+  // async cleanup chain doesn't complete.
+  closeAllAgents();
   shutdownController.abort();
 }
 
@@ -227,6 +257,7 @@ process.on("uncaughtException", (err) => {
   // Must be synchronous only — the process is in undefined state after uncaught exception
   const msg = err instanceof Error ? err.message : String(err);
   process.stderr.write(`[ERROR] Uncaught exception: ${sanitizeMessage(msg)}\n`);
+  closeAllAgents();
   shutdownController.abort();
   process.exit(1);
 });
@@ -392,10 +423,13 @@ if (auditorPromise) drainablePromises.push(auditorPromise);
 
 if (drainablePromises.length > 0) {
   info(
-    `Waiting for ${drainablePromises.length} agent(s) to finish (up to 60s)...`,
+    `Waiting for ${drainablePromises.length} agent(s) to shut down (up to 60s)...`,
   );
+  // Wait at least 6s so the SDK's SIGKILL escalation timer (5s after close())
+  // has time to fire before we exit. This ensures SIGTERM-resistant children
+  // are forcefully killed rather than becoming orphans.
   await Promise.race([
-    Promise.allSettled(drainablePromises),
+    Promise.all([Promise.allSettled(drainablePromises), Bun.sleep(6_000)]),
     Bun.sleep(60_000),
   ]);
 }
