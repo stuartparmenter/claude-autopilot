@@ -3,8 +3,9 @@ import type { ClaudeResult } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { AppState } from "./state";
 
-// Set a fake token so getGitHubClient() doesn't throw during tests
+// Set fake tokens so clients don't throw during tests
 process.env.GITHUB_TOKEN = "test-token-monitor";
+process.env.LINEAR_API_KEY = "test-key-monitor-linear";
 
 // ---------------------------------------------------------------------------
 // Mock functions — created once, re-wired per test via beforeEach
@@ -44,22 +45,27 @@ const mockChecksListForRef = mock(() =>
 );
 
 import { resetClient } from "./lib/github";
+import { resetClient as resetLinearClient } from "./lib/linear";
 import { checkOpenPRs } from "./monitor";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
-// NOTE: We mock "octokit" (npm package) instead of "./lib/github" so that
-// github.test.ts can test the real getPRStatus without interference.
+// NOTE: We mock npm packages ("octokit", "@linear/sdk") instead of local
+// modules ("./lib/github", "./lib/linear") so that github.test.ts and
+// linear.test.ts can test the real implementations without interference.
 // We intentionally do NOT mock ./lib/prompt — the real buildPrompt reads
 // from prompts/ on disk and doesn't leak across test files.
 beforeEach(() => {
   resetClient();
+  resetLinearClient();
   mock.module("./lib/claude", () => ({
     runClaude: mockRunClaude,
     buildMcpServers: () => ({}),
   }));
-  mock.module("./lib/linear", () => ({
-    getLinearClient: () => ({ issues: mockIssuesQuery }),
+  mock.module("@linear/sdk", () => ({
+    LinearClient: class MockLinearClient {
+      issues = mockIssuesQuery;
+    },
   }));
   mock.module("octokit", () => ({
     Octokit: class MockOctokit {
@@ -80,7 +86,10 @@ beforeEach(() => {
   mockPullsGet.mockImplementation(() => Promise.resolve({ data: prData }));
 });
 
-afterEach(() => mock.restore());
+afterEach(() => {
+  mock.restore();
+  resetLinearClient();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

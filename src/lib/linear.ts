@@ -39,6 +39,13 @@ export function resetClient(): void {
 }
 
 /**
+ * Inject a mock client directly. Used in unit tests to avoid real API calls.
+ */
+export function setClientForTesting(client: LinearClient): void {
+  _client = client;
+}
+
+/**
  * Find a team by its key (e.g., "ENG").
  */
 export async function findTeam(teamKey: string): Promise<Team> {
@@ -198,6 +205,8 @@ export async function getReadyIssues(
   return unblocked;
 }
 
+const MAX_PAGES = 100;
+
 /**
  * Count issues in a given state for the configured project.
  */
@@ -219,11 +228,25 @@ export async function countIssuesInState(
     "countIssuesInState",
   );
 
+  let count = result.nodes.length;
+  let pages = 1;
+
   while (result.pageInfo.hasNextPage) {
-    result = await result.fetchNext();
+    if (pages >= MAX_PAGES) {
+      warn(
+        `countIssuesInState: reached ${MAX_PAGES} page limit, returning partial count`,
+      );
+      break;
+    }
+    result = await withRetry(
+      () => result.fetchNext(),
+      "countIssuesInState (pagination)",
+    );
+    count += result.nodes.length;
+    pages++;
   }
 
-  return result.nodes.length;
+  return count;
 }
 
 /**
