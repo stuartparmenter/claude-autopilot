@@ -201,13 +201,17 @@ export async function enableAutoMerge(
   ]);
 
   try {
-    await octokit.graphql(
-      `mutation($prId: ID!, $mergeMethod: PullRequestMergeMethod!) {
-        enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $mergeMethod }) {
-          pullRequest { autoMergeRequest { enabledAt } }
-        }
-      }`,
-      { prId: pr.node_id, mergeMethod },
+    await withRetry(
+      () =>
+        octokit.graphql(
+          `mutation($prId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+            enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $mergeMethod }) {
+              pullRequest { autoMergeRequest { enabledAt } }
+            }
+          }`,
+          { prId: pr.node_id, mergeMethod },
+        ),
+      `enableAutoMerge #${prNumber}`,
     );
     return `Auto-merge (${mergeMethod.toLowerCase()}) enabled for PR #${prNumber}`;
   } catch (e: unknown) {
