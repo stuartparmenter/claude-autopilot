@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildCTOPrompt,
-  buildPlanningAgents,
   buildPrompt,
   loadPrompt,
   renderPrompt,
@@ -149,53 +148,5 @@ describe("buildCTOPrompt", () => {
     expect(result).toContain("Phase 1");
     expect(result).toContain("Phase 2");
     expect(result).toContain("Phase 3");
-  });
-});
-
-describe("buildPlanningAgents", () => {
-  test("returns all expected agent definitions", () => {
-    const agents = buildPlanningAgents({});
-    expect(Object.keys(agents)).toContain("briefing-agent");
-    expect(Object.keys(agents)).toContain("scout");
-    expect(Object.keys(agents)).toContain("security-analyst");
-    expect(Object.keys(agents)).toContain("quality-engineer");
-    expect(Object.keys(agents)).toContain("architect");
-    expect(Object.keys(agents)).toContain("issue-planner");
-  });
-
-  test("each agent has description and prompt", () => {
-    const agents = buildPlanningAgents({});
-    for (const [_name, agent] of Object.entries(agents)) {
-      expect(agent.description).toBeTruthy();
-      expect(agent.prompt.length).toBeGreaterThan(0);
-    }
-  });
-
-  test("briefing-agent and scout use sonnet model", () => {
-    const agents = buildPlanningAgents({});
-    expect(agents["briefing-agent"].model).toBe("sonnet");
-    expect(agents.scout.model).toBe("sonnet");
-  });
-
-  test("issue-planner prompt has template vars rendered", () => {
-    const agents = buildPlanningAgents({
-      LINEAR_TEAM: "ENG",
-      LINEAR_PROJECT: "my-project",
-      TARGET_STATE: "Ready",
-    });
-    const prompt = agents["issue-planner"].prompt;
-    expect(prompt).toContain("ENG");
-    expect(prompt).toContain("my-project");
-    expect(prompt).toContain("Ready");
-    expect(prompt).not.toContain("{{LINEAR_TEAM}}");
-  });
-
-  test("specialist prompts are raw (no template vars to render)", () => {
-    const agents = buildPlanningAgents({});
-    // Scout prompt should not have unsubstituted vars
-    expect(agents.scout.prompt).not.toContain("{{");
-    expect(agents["security-analyst"].prompt).not.toContain("{{");
-    expect(agents["quality-engineer"].prompt).not.toContain("{{");
-    expect(agents.architect.prompt).not.toContain("{{");
   });
 });

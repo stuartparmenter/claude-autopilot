@@ -33,7 +33,7 @@ executor:
 
 planning:
   schedule: "when_idle"         # "when_idle" | "daily" | "manual"
-  min_ready_threshold: 5        # Only plan when fewer than N issues are in Ready
+  min_ready_threshold: 5        # Only plan when fewer than N issues are in Ready+Triage
   max_issues_per_run: 5         # Cap on issues filed per planning run
 
 # ─── GitHub ───────────────────────────────────────────────────────────────────

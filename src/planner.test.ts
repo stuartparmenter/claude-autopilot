@@ -69,7 +69,7 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeConfig(skipTriage = true): AutopilotConfig {
+function makeConfig(): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
@@ -100,8 +100,6 @@ function makeConfig(skipTriage = true): AutopilotConfig {
       min_ready_threshold: 5,
       max_issues_per_run: 5,
       timeout_minutes: 90,
-      use_agent_teams: false,
-      skip_triage: skipTriage,
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
@@ -359,58 +357,5 @@ describe("runPlanning — error path", () => {
     });
 
     expect(state.getPlanningStatus().running).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// runPlanning — skip_triage config
-// ---------------------------------------------------------------------------
-
-describe("runPlanning — skip_triage config", () => {
-  let state: AppState;
-
-  beforeEach(() => {
-    state = new AppState();
-    mockRunClaude.mockResolvedValue({
-      timedOut: false,
-      inactivityTimedOut: false,
-      error: undefined,
-      costUsd: 0.1,
-      durationMs: 1000,
-      numTurns: 3,
-      result: "",
-    });
-  });
-
-  test("uses ready state name in prompt when skip_triage=true", async () => {
-    mockRunClaude.mockClear();
-
-    await runPlanning({
-      config: makeConfig(true),
-      projectPath: "/project",
-      linearIds: makeLinearIds(),
-      state,
-    });
-
-    const calls = mockRunClaude.mock.calls as unknown as Array<
-      [{ prompt: string }]
-    >;
-    expect(calls[0][0].prompt).toContain("ready-id");
-  });
-
-  test("uses triage state name in prompt when skip_triage=false", async () => {
-    mockRunClaude.mockClear();
-
-    await runPlanning({
-      config: makeConfig(false),
-      projectPath: "/project",
-      linearIds: makeLinearIds(),
-      state,
-    });
-
-    const calls = mockRunClaude.mock.calls as unknown as Array<
-      [{ prompt: string }]
-    >;
-    expect(calls[0][0].prompt).toContain("triage-id");
   });
 });

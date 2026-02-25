@@ -50,8 +50,6 @@ export interface PlanningConfig {
   min_ready_threshold: number;
   max_issues_per_run: number;
   timeout_minutes: number;
-  use_agent_teams: boolean;
-  skip_triage: boolean;
 }
 
 export interface GithubConfig {
@@ -115,8 +113,6 @@ export const DEFAULTS: AutopilotConfig = {
     min_ready_threshold: 5,
     max_issues_per_run: 5,
     timeout_minutes: 90,
-    use_agent_teams: true,
-    skip_triage: true,
   },
   github: {
     repo: "",

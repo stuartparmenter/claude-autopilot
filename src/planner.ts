@@ -5,11 +5,7 @@ import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { countIssuesInState } from "./lib/linear";
 import { info, warn } from "./lib/logger";
-import {
-  AUTOPILOT_ROOT,
-  buildCTOPrompt,
-  buildPlanningAgents,
-} from "./lib/prompt";
+import { AUTOPILOT_ROOT, buildCTOPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
 
 const DEFAULT_PLANNING_TIMEOUT_MINUTES = 90;
@@ -71,20 +67,14 @@ export async function runPlanning(opts: {
   try {
     info("Starting planning agent...");
 
-    const targetState = config.planning.skip_triage
-      ? config.linear.states.ready
-      : config.linear.states.triage;
-
     const vars = {
       LINEAR_TEAM: config.linear.team,
       LINEAR_PROJECT: config.linear.project,
-      TARGET_STATE: targetState,
       MAX_ISSUES_PER_RUN: String(config.planning.max_issues_per_run),
       PROJECT_NAME: config.project.name,
     };
 
     const prompt = buildCTOPrompt(vars);
-    const agents = buildPlanningAgents(vars);
     const plugins: SdkPluginConfig[] = [
       {
         type: "local",
@@ -92,25 +82,10 @@ export async function runPlanning(opts: {
       },
     ];
 
-    // CTO only coordinates — restrict to delegation tools so it can't
-    // read source code, run tests, or investigate the codebase directly.
-    const ctoTools = [
-      "Read",
-      "Task",
-      "TeamCreate",
-      "TeamDelete",
-      "SendMessage",
-      "TaskCreate",
-      "TaskUpdate",
-      "TaskList",
-      "TaskGet",
-    ];
-
     const result = await runClaude({
       prompt,
       cwd: projectPath,
       label: "planning",
-      tools: ctoTools,
       timeoutMs:
         (config.planning.timeout_minutes ?? DEFAULT_PLANNING_TIMEOUT_MINUTES) *
         60 *
@@ -119,7 +94,6 @@ export async function runPlanning(opts: {
       model: config.executor.planning_model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
-      agents,
       plugins,
       parentSignal: opts.shutdownSignal,
       onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),

@@ -199,14 +199,9 @@ The `plugins/planning-skills/` directory provides domain knowledge skills (OWASP
 | File | Purpose |
 |------|---------|
 | `src/planner.ts` | Module. `shouldRunPlanning()` checks threshold, `runPlanning()` runs the planning agent |
-| `src/lib/prompt.ts` | `buildCTOPrompt()` renders CTO prompt, `buildPlanningAgents()` returns specialist definitions |
+| `src/lib/prompt.ts` | `buildCTOPrompt()` renders CTO prompt |
 | `prompts/cto.md` | CTO planning agent prompt |
-| `prompts/briefing-agent.md` | Briefing agent prompt |
-| `prompts/scout.md` | Scout specialist prompt |
-| `prompts/security-analyst.md` | Security Analyst specialist prompt |
-| `prompts/quality-engineer.md` | Quality Engineer specialist prompt |
-| `prompts/architect.md` | Architect specialist prompt |
-| `prompts/issue-planner.md` | Issue Planner subagent prompt |
+| `plugins/planning-skills/agents/*.md` | Specialist agent definitions (briefing-agent, scout, security-analyst, quality-engineer, architect, issue-planner) |
 
 ---
 
@@ -377,19 +372,13 @@ Rendered prompt string --> passed to Agent SDK query()
 
 ```
 prompts/cto.md
-prompts/briefing-agent.md    \
-prompts/scout.md              |
-prompts/security-analyst.md   |--- specialist prompts
-prompts/quality-engineer.md   |
-prompts/architect.md          |
-prompts/issue-planner.md     /
+plugins/planning-skills/agents/*.md  --- specialist agent definitions (auto-discovered by plugin)
         |
         v
-buildCTOPrompt({ LINEAR_TEAM, LINEAR_PROJECT, TARGET_STATE, ... })
-buildPlanningAgents({ ... })  --> specialist AgentDefinitions
+buildCTOPrompt({ LINEAR_TEAM, LINEAR_PROJECT, ... })
         |
         v
-CTO prompt + agents map --> passed to Agent SDK query()
+CTO prompt + plugin path --> passed to Agent SDK query()
 ```
 
 ---

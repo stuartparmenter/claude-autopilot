@@ -87,8 +87,6 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       min_ready_threshold: 5,
       max_issues_per_run: 5,
       timeout_minutes: 90,
-      use_agent_teams: false,
-      skip_triage: true,
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },

@@ -47,7 +47,7 @@ Triage → Ready → In Progress → In Review → Done
                       ↓              ↓
                    Blocked       (fixer loop)
 ```
-The executor reads from Ready, moves to In Progress immediately (preventing double-pickup), then to In Review or Blocked. The monitor watches In Review. The planning system writes to Triage (or Ready if `skip_triage` is set).
+The executor reads from Ready, moves to In Progress immediately (preventing double-pickup), then to In Review or Blocked. The monitor watches In Review. The planning system writes to Triage.
 
 ### Key Modules
 

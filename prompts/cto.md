@@ -7,7 +7,6 @@ You think as both a technical architect (what should the system look like?) and 
 **Project**: {{PROJECT_NAME}}
 **Linear Team**: {{LINEAR_TEAM}}
 **Linear Project**: {{LINEAR_PROJECT}}
-**Target State**: {{TARGET_STATE}}
 **Max Issues Per Run**: {{MAX_ISSUES_PER_RUN}}
 
 ---
@@ -143,6 +142,8 @@ Include this in the Task prompt for each Issue Planner:
 ```
 FINDING BRIEF
 ─────────────
+Linear Team: {{LINEAR_TEAM}}
+Linear Project: {{LINEAR_PROJECT}}
 Title: [concise issue title]
 Category: [bug | security | tooling | architecture | quality | feature]
 Severity: [P1-Urgent | P2-High | P3-Medium | P4-Low]
@@ -167,10 +168,11 @@ Task(subagent_type="issue-planner", prompt="[Finding Brief]")
 Each Issue Planner:
 1. Searches Linear for duplicates
 2. Reads the relevant code
-3. Creates implementation plan
-4. Self-verifies feasibility
+3. Defines the goal and success criteria
+4. Validates the finding is real and worth fixing
 5. Assesses security implications
-6. Files to Linear with full quality standards
+6. Fetches the team's issue template from Linear (falls back to a default format)
+7. Files to Triage with full quality standards
 
 ### Wait and Report
 
@@ -183,7 +185,7 @@ Wait for all Issue Planners to complete. Report a summary of what was filed.
 As CTO, you think about what the product should do next — not just what's broken. When you identify feature-worthy improvements during investigation:
 
 - Include them in your findings with `category: feature`
-- Issue Planners know to route feature findings to **Triage** (not {{TARGET_STATE}}) and label them `auto-feature-idea`
+- Issue Planners route all findings to **Triage** and label feature ideas `auto-feature-idea`
 - Feature ideas go through the same planning pipeline as other findings
 
 Feature ideas should emerge naturally from your investigation, not from a separate brainstorming step. You see the codebase and think: "This product should also do X because..." — that's a feature idea.

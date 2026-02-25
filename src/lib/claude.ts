@@ -166,7 +166,6 @@ export async function runClaude(opts: {
   model?: string;
   sandbox?: SandboxConfig;
   agents?: Record<string, AgentDefinition>;
-  tools?: string[];
   plugins?: SdkPluginConfig[];
   mcpServers?: Record<string, unknown>;
   parentSignal?: AbortSignal;
@@ -225,7 +224,7 @@ export async function runClaude(opts: {
     const queryOpts: Record<string, unknown> = {
       cwd: opts.cwd,
       abortController: controller,
-      tools: opts.tools ?? { type: "preset", preset: "claude_code" },
+      tools: { type: "preset", preset: "claude_code" },
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["project"],
       permissionMode: "bypassPermissions",
