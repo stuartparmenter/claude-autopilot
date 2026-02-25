@@ -1,6 +1,6 @@
+import type { AppState } from "../state";
 import type { ClaudeResult } from "./claude";
 import { info, ok, warn } from "./logger";
-import type { AppState } from "../state";
 
 export type AgentResultStatus = "completed" | "timed_out" | "failed";
 

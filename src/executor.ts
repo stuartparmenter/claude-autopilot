@@ -60,7 +60,12 @@ export async function executeIssue(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
-    const { status } = handleAgentResult(result, state, agentId, issue.identifier);
+    const { status } = handleAgentResult(
+      result,
+      state,
+      agentId,
+      issue.identifier,
+    );
 
     if (status === "timed_out") {
       if (result.inactivityTimedOut) {
