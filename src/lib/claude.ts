@@ -237,29 +237,41 @@ export async function runClaude(opts: {
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
-      // Create a dedicated temp directory for this agent so we can
-      // grant sandbox write access to it (instead of all of /tmp) and
-      // clean it up when the agent exits.
+      // Create a dedicated temp directory for this agent.
+      // CLAUDE_CODE_TMPDIR tells Claude Code where to put internal temp files
+      // (it appends /claude/ to this path). TMPDIR covers git, bun, etc.
       agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
-      queryOpts.env = { ...process.env, TMPDIR: agentTmpDir };
+      queryOpts.env = {
+        ...process.env,
+        TMPDIR: agentTmpDir,
+        CLAUDE_CODE_TMPDIR: agentTmpDir,
+      };
 
       const sandbox: Record<string, unknown> = {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
         allowUnsandboxedCommands: false,
-        // Git worktrees need write access to the parent repo's .git directory
-        // (shared object store, refs, worktree metadata).
         filesystem: {
-          allowWrite: [resolve(opts.cwd, ".git"), agentTmpDir],
+          allowWrite: [
+            // Git worktrees share the parent repo's .git directory
+            resolve(opts.cwd, ".git"),
+            // Agent temp directory for Claude Code internals + CLI tools
+            agentTmpDir,
+          ],
         },
       };
       if (opts.sandbox.network_restricted) {
-        sandbox.network = {
+        const network: Record<string, unknown> = {
           allowedDomains: [
             ...SANDBOX_BASE_DOMAINS,
             ...(opts.sandbox.extra_allowed_domains ?? []),
           ],
         };
+        // Allow SSH agent socket for git commit signing
+        if (process.env.SSH_AUTH_SOCK) {
+          network.allowUnixSockets = [process.env.SSH_AUTH_SOCK];
+        }
+        sandbox.network = network;
       }
       queryOpts.sandbox = sandbox;
     }
