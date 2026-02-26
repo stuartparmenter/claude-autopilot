@@ -217,6 +217,7 @@ Ready State Name: {{READY_STATE}}
 Title: [concise issue title]
 Category: [bug | security | tooling | architecture | quality | feature]
 Severity: [P1-Urgent | P2-High | P3-Medium | P4-Low]
+Labels: autopilot:managed + [category labels]
 What: [description of the finding]
 Where: [specific files, modules, or areas]
 Why: [why this matters for the project at its current stage]
@@ -226,6 +227,8 @@ Related Backlog: [existing Linear issues in this area, from briefing]
 Recent Work: [recent completions or failures in this area, from briefing]
 Dependency Notes: [if this blocks or is blocked by other findings]
 ```
+
+**IMPORTANT**: Every issue filed by the planning system MUST have the `autopilot:managed` label. This label is how the system identifies issues it owns and safely coexists with human-created issues in a shared workspace.
 
 ### Spawn Issue Planners
 

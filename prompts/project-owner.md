@@ -28,7 +28,9 @@ Review each triage issue, accept or defer, spawn technical planners for accepted
 
 ### Triage Rules
 
-For each triage issue, decide:
+**Before changing any issue's state, verify it has the `autopilot:managed` label.** Do NOT modify issues that lack this label — they may be human-managed. If a triage issue is missing the `autopilot:managed` label, skip it and leave it untouched.
+
+For each triage issue that has the `autopilot:managed` label, decide:
 
 1. **Defer**: Move to "{{BLOCKED_STATE}}" with a comment explaining why.
 2. **Accept (simple)**: If the issue is small enough for a single executor session and needs no decomposition, move it directly to "{{READY_STATE}}".
