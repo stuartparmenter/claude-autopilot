@@ -71,7 +71,6 @@ function makeConfig(): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
-      project: "test-project",
       initiative: "Test Initiative",
       states: {
         triage: "triage-id",
@@ -108,7 +107,6 @@ function makeConfig(): AutopilotConfig {
       model: "opus",
     },
     github: { repo: "", automerge: false },
-    project: { name: "test-project" },
     persistence: { enabled: false, db_path: ".claude/autopilot.db" },
     sandbox: {
       enabled: true,
@@ -123,8 +121,6 @@ function makeLinearIds(withInitiative = true): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
-    projectId: "project-id",
-    projectName: "test-project",
     ...(withInitiative
       ? { initiativeId: "init-1", initiativeName: "Test Initiative" }
       : {}),

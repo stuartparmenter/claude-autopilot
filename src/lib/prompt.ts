@@ -51,10 +51,3 @@ export function buildPrompt(
 ): string {
   return renderPrompt(loadPrompt(name), vars);
 }
-
-/**
- * Build the CTO planning prompt with template variables substituted.
- */
-export function buildCTOPrompt(vars: Record<string, string>): string {
-  return buildPrompt("cto", vars);
-}

@@ -18,6 +18,7 @@ You receive:
 - **Issue Title** and **Description**
 - **Project**: the Linear project this belongs to
 - **Linear Team**: the team to file sub-issues into
+- **Ready State Name**: the configured name for the Ready workflow state (use this exact name when setting sub-issue state)
 
 ---
 
@@ -66,7 +67,7 @@ For each sub-issue, use `save_issue` with:
 - `team`: same team as parent
 - `project`: same project as parent
 - `parentId`: the parent issue ID
-- `state`: "Todo" (Ready state — so the executor picks them up)
+- `state`: the Ready State Name from the prompt (so the executor picks them up)
 
 **Set dependency relations between sub-issues:**
 - Use `blocks` / `blockedBy` to encode ordering
@@ -109,4 +110,4 @@ Add a comment to the parent issue listing the sub-issues you created and the rat
 2. **Incremental and testable.** Each sub-issue should leave the codebase in a valid, testable state.
 3. **Implementation context is critical.** The executor agent has no memory of your investigation. Everything it needs must be in the sub-issue description.
 4. **Don't over-decompose.** A straightforward issue might only need 2 sub-issues. Don't create busywork.
-5. **Mark sub-issues Ready, NOT the parent.** The executor skips parents with children.
+5. **Mark sub-issues with the Ready state, NOT the parent.** The executor skips parents with children.

@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { ActivityEntry } from "../state";
 import type { SandboxConfig } from "./config";
 import { enableAutoMerge } from "./github";
+import { createProjectStatusUpdate } from "./linear";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
@@ -133,6 +134,36 @@ export function buildMcpServers(): Record<string, unknown> {
     },
   );
 
+  const projectStatusUpdateTool = tool(
+    "save_project_status_update",
+    "Post a status update on a Linear project. Use this instead of save_status_update when posting project-level (not initiative-level) updates.",
+    {
+      projectId: z
+        .string()
+        .describe("The Linear project ID (UUID) to post the update on"),
+      body: z.string().describe("The status update content in markdown format"),
+      health: z
+        .enum(["onTrack", "atRisk", "offTrack"])
+        .optional()
+        .describe("The health of the project at the time of the update"),
+    },
+    async (args) => {
+      const id = await createProjectStatusUpdate({
+        projectId: args.projectId,
+        body: args.body,
+        health: args.health,
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Project status update created (id: ${id})`,
+          },
+        ],
+      };
+    },
+  );
+
   return {
     linear: {
       type: "http",
@@ -146,7 +177,7 @@ export function buildMcpServers(): Record<string, unknown> {
     },
     autopilot: createSdkMcpServer({
       name: "autopilot",
-      tools: [autoMergeTool],
+      tools: [autoMergeTool, projectStatusUpdateTool],
     }),
   };
 }

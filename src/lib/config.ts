@@ -5,7 +5,6 @@ import { fatal } from "./logger";
 
 export interface LinearConfig {
   team: string;
-  project: string;
   initiative: string;
   states: {
     triage: string;
@@ -21,8 +20,6 @@ export interface LinearConfig {
 export interface LinearIds {
   teamId: string;
   teamKey: string;
-  projectId?: string;
-  projectName?: string;
   initiativeId?: string;
   initiativeName?: string;
   states: {
@@ -60,10 +57,6 @@ export interface GithubConfig {
   automerge: boolean; // Enable auto-merge on PRs created by the executor
 }
 
-export interface ProjectConfig {
-  name: string;
-}
-
 export interface SandboxConfig {
   enabled: boolean;
   auto_allow_bash: boolean;
@@ -90,7 +83,6 @@ export interface AutopilotConfig {
   planning: PlanningConfig;
   projects: ProjectsConfig;
   github: GithubConfig;
-  project: ProjectConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
 }
@@ -98,7 +90,6 @@ export interface AutopilotConfig {
 export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
-    project: "",
     initiative: "",
     states: {
       triage: "Triage",
@@ -130,9 +121,6 @@ export const DEFAULTS: AutopilotConfig = {
   github: {
     repo: "",
     automerge: false,
-  },
-  project: {
-    name: "",
   },
   persistence: {
     enabled: true,
@@ -182,9 +170,7 @@ export function deepMerge<T extends Record<string, unknown>>(
 
 function validateConfigStrings(config: AutopilotConfig): void {
   const fields: Array<[string, string]> = [
-    ["project.name", config.project.name],
     ["linear.team", config.linear.team],
-    ["linear.project", config.linear.project],
     ["linear.initiative", config.linear.initiative],
     ["linear.states.triage", config.linear.states.triage],
     ["linear.states.ready", config.linear.states.ready],

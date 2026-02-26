@@ -116,10 +116,12 @@ if (!isLocalhost && !dashboardToken) {
 header("claude-autopilot v0.2.0");
 
 info(`Project: ${projectPath}`);
-const parts = [`Team: ${config.linear.team}`];
-if (config.linear.project) parts.push(`Project: ${config.linear.project}`);
-if (config.linear.initiative) parts.push(`Initiative: ${config.linear.initiative}`);
-info(parts.join(", "));
+info(
+  `Team: ${config.linear.team}` +
+    (config.linear.initiative
+      ? `, Initiative: ${config.linear.initiative}`
+      : ""),
+);
 info(`Max parallel: ${config.executor.parallel}`);
 info(`Poll interval: ${config.executor.poll_interval_minutes}m`);
 if (config.projects.enabled && config.linear.initiative) {
@@ -145,7 +147,6 @@ info("Connecting to Linear...");
 const linearIds = await resolveLinearIds(config.linear);
 ok(
   `Connected - team ${config.linear.team}` +
-    (config.linear.project ? `, project ${config.linear.project}` : "") +
     (linearIds.initiativeName
       ? `, initiative ${linearIds.initiativeName}`
       : ""),

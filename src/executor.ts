@@ -40,7 +40,7 @@ export async function executeIssue(opts: {
     ISSUE_ID: issue.identifier,
     IN_REVIEW_STATE: config.linear.states.in_review,
     BLOCKED_STATE: config.linear.states.blocked,
-    PROJECT_NAME: config.project.name || config.linear.project || config.linear.initiative || config.linear.team,
+    REPO_NAME: projectPath.split("/").pop() || "unknown",
     AUTOMERGE_INSTRUCTION: config.github.automerge
       ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
       : "Skip — auto-merge is not enabled for this project.",

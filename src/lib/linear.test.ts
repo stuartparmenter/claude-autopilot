@@ -38,8 +38,6 @@ const mockIssues = mock(async () => currentPage);
 const TEST_IDS: LinearIds = {
   teamId: "team-1",
   teamKey: "ENG",
-  projectId: "proj-1",
-  projectName: "test",
   states: {
     triage: "s1",
     ready: "s2",

@@ -3,7 +3,7 @@ import {
   type Issue,
   type IssueLabel,
   LinearClient,
-  type Project,
+  ProjectUpdateHealthType,
   type Team,
   type WorkflowState,
 } from "@linear/sdk";
@@ -58,23 +58,6 @@ export async function findTeam(teamKey: string): Promise<Team> {
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team '${teamKey}' not found in Linear`);
   return team;
-}
-
-/**
- * Find a project by name.
- */
-export async function findProject(projectName: string): Promise<Project> {
-  const client = getLinearClient();
-  const projects = await withRetry(
-    () =>
-      client.projects({
-        filter: { name: { eq: projectName } },
-      }),
-    "findProject",
-  );
-  const project = projects.nodes[0];
-  if (!project) throw new Error(`Project '${projectName}' not found in Linear`);
-  return project;
 }
 
 /**
@@ -153,27 +136,6 @@ export async function findOrCreateInitiative(
   const initiative = await payload.initiative;
   if (!initiative) throw new Error(`Failed to create initiative '${name}'`);
   return initiative;
-}
-
-/**
- * Link a project to an initiative. Idempotent — swallows "already exists" errors.
- */
-export async function linkProjectToInitiative(
-  initiativeId: string,
-  projectId: string,
-): Promise<void> {
-  const client = getLinearClient();
-  try {
-    await withRetry(
-      () => client.createInitiativeToProject({ initiativeId, projectId }),
-      "linkProjectToInitiative",
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // Swallow "already exists" — this is expected for idempotent linking
-    if (msg.toLowerCase().includes("already exists")) return;
-    throw e;
-  }
 }
 
 /**
@@ -371,6 +333,36 @@ export async function createIssue(opts: {
 }
 
 /**
+ * Create a project-level status update in Linear.
+ * The Linear MCP plugin only supports initiative-level updates, so we
+ * expose this through the autopilot MCP server.
+ */
+export async function createProjectStatusUpdate(opts: {
+  projectId: string;
+  body: string;
+  health?: "onTrack" | "atRisk" | "offTrack";
+}): Promise<string> {
+  const client = getLinearClient();
+  const healthMap: Record<string, ProjectUpdateHealthType> = {
+    onTrack: ProjectUpdateHealthType.OnTrack,
+    atRisk: ProjectUpdateHealthType.AtRisk,
+    offTrack: ProjectUpdateHealthType.OffTrack,
+  };
+  const payload = await withRetry(
+    () =>
+      client.createProjectUpdate({
+        projectId: opts.projectId,
+        body: opts.body,
+        health: opts.health ? healthMap[opts.health] : undefined,
+      }),
+    "createProjectStatusUpdate",
+  );
+  const update = await payload.projectUpdate;
+  if (!update) throw new Error("Failed to create project status update");
+  return update.id;
+}
+
+/**
  * Validate a Linear issue identifier (e.g., "ENG-123").
  * Throws if the identifier contains path separators, spaces, or other
  * characters that could be dangerous when used in file paths or branch names.
@@ -407,9 +399,6 @@ export async function resolveLinearIds(
   config: LinearConfig,
 ): Promise<LinearIds> {
   const team = await findTeam(config.team);
-  const project = config.project
-    ? await findProject(config.project)
-    : undefined;
 
   const [
     triageState,
@@ -433,16 +422,11 @@ export async function resolveLinearIds(
     const initiative = await findOrCreateInitiative(config.initiative);
     initiativeId = initiative.id;
     initiativeName = initiative.name;
-    if (project) {
-      await linkProjectToInitiative(initiative.id, project.id);
-    }
   }
 
   return {
     teamId: team.id,
     teamKey: config.team,
-    projectId: project?.id,
-    projectName: config.project || undefined,
     initiativeId,
     initiativeName,
     states: {

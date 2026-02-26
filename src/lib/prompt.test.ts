@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  buildCTOPrompt,
-  buildPrompt,
-  loadPrompt,
-  renderPrompt,
-} from "./prompt";
+import { buildPrompt, loadPrompt, renderPrompt } from "./prompt";
 
 describe("renderPrompt", () => {
   test("substitutes a single variable", () => {
@@ -113,37 +108,37 @@ describe("buildPrompt", () => {
   });
 });
 
-describe("buildCTOPrompt", () => {
+describe("buildPrompt — CTO prompt", () => {
   test("returns a non-empty string", () => {
-    const result = buildCTOPrompt({});
+    const result = buildPrompt("cto", {});
     expect(result.length).toBeGreaterThan(0);
   });
 
-  test("substitutes PROJECT_NAME variable", () => {
-    const result = buildCTOPrompt({ PROJECT_NAME: "my-app" });
+  test("substitutes REPO_NAME variable", () => {
+    const result = buildPrompt("cto", { REPO_NAME: "my-app" });
     expect(result).toContain("my-app");
-    expect(result).not.toContain("{{PROJECT_NAME}}");
+    expect(result).not.toContain("{{REPO_NAME}}");
   });
 
   test("substitutes LINEAR_TEAM variable", () => {
-    const result = buildCTOPrompt({ LINEAR_TEAM: "ENG" });
+    const result = buildPrompt("cto", { LINEAR_TEAM: "ENG" });
     expect(result).toContain("ENG");
   });
 
   test("substitutes MAX_ISSUES_PER_RUN variable", () => {
-    const result = buildCTOPrompt({ MAX_ISSUES_PER_RUN: "5" });
+    const result = buildPrompt("cto", { MAX_ISSUES_PER_RUN: "5" });
     expect(result).not.toContain("{{MAX_ISSUES_PER_RUN}}");
   });
 
   test("contains lifecycle classification rubric", () => {
-    const result = buildCTOPrompt({});
+    const result = buildPrompt("cto", {});
     expect(result).toContain("EARLY");
     expect(result).toContain("GROWTH");
     expect(result).toContain("MATURE");
   });
 
   test("contains phase structure", () => {
-    const result = buildCTOPrompt({});
+    const result = buildPrompt("cto", {});
     expect(result).toContain("Phase 0");
     expect(result).toContain("Phase 1");
     expect(result).toContain("Phase 2");

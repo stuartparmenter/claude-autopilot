@@ -87,11 +87,10 @@ describe("loadConfig", () => {
   test("minimal YAML fills in defaults", () => {
     writeFileSync(
       join(tmpDir, ".claude-autopilot.yml"),
-      "linear:\n  team: myteam\n  project: myproject\n",
+      "linear:\n  team: myteam\n",
     );
     const config = loadConfig(tmpDir);
     expect(config.linear.team).toBe("myteam");
-    expect(config.linear.project).toBe("myproject");
     expect(config.executor.parallel).toBe(3);
     expect(config.executor.timeout_minutes).toBe(30);
   });
@@ -125,74 +124,45 @@ describe("loadConfig", () => {
 
   test("loads a valid config without throwing", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: ENG
-  project: my-project
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("throws if project.name contains a newline", () => {
-    const dir = writeConfig(`
-project:
-  name: |
-    foo
-    bar
-linear:
-  team: ENG
-  project: my-project
-`);
-    expect(() => loadConfig(dir)).toThrow(/project\.name/);
-    expect(() => loadConfig(dir)).toThrow(/newline/);
-  });
-
   test("throws if linear.team contains a newline", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: |
     ENG
     EVIL
-  project: my-project
 `);
     expect(() => loadConfig(dir)).toThrow(/linear\.team/);
   });
 
   test("throws if a config string exceeds 200 characters", () => {
-    const longName = "x".repeat(201);
+    const longTeam = "x".repeat(201);
     const dir = writeConfig(`
-project:
-  name: "${longName}"
 linear:
-  team: ENG
-  project: my-project
+  team: "${longTeam}"
 `);
-    expect(() => loadConfig(dir)).toThrow(/project\.name/);
+    expect(() => loadConfig(dir)).toThrow(/linear\.team/);
     expect(() => loadConfig(dir)).toThrow(/200/);
   });
 
   test("accepts values at exactly 200 characters", () => {
-    const exactName = "x".repeat(200);
+    const exactTeam = "x".repeat(200);
     const dir = writeConfig(`
-project:
-  name: "${exactName}"
 linear:
-  team: ENG
-  project: my-project
+  team: "${exactTeam}"
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
   test("accepts legitimate state names", () => {
     const dir = writeConfig(`
-project:
-  name: My Project (v2)
 linear:
   team: ENG
-  project: my-project
   states:
     triage: Triage
     ready: Todo
@@ -206,11 +176,8 @@ linear:
 
   test("throws if a state name contains a newline", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: ENG
-  project: my-project
   states:
     ready: |
       Todo

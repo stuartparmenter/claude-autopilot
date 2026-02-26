@@ -82,7 +82,11 @@ export async function checkProjects(opts: {
 
     // Register agent eagerly so getRunningCount() is accurate for slot checks
     const agentId = `project-owner-${project.name}-${Date.now()}`;
-    state.addAgent(agentId, `project:${project.name}`, `Owning ${project.name}`);
+    state.addAgent(
+      agentId,
+      `project:${project.name}`,
+      `Owning ${project.name}`,
+    );
 
     promises.push(
       runProjectOwner({
@@ -109,7 +113,15 @@ async function runProjectOwner(opts: {
   state: AppState;
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
-  const { agentId, projectName, projectId, triageList, config, linearIds, state } = opts;
+  const {
+    agentId,
+    projectName,
+    projectId,
+    triageList,
+    config,
+    linearIds,
+    state,
+  } = opts;
 
   const prompt = `You are the project owner for "${projectName}".
 
@@ -117,6 +129,13 @@ Project Name: ${projectName}
 Project ID: ${projectId}
 Linear Team: ${config.linear.team}
 Initiative: ${linearIds.initiativeName || "N/A"}
+
+## Workflow State Names
+
+Use these exact state names when moving issues:
+- **Ready state**: "${config.linear.states.ready}" (accepted issues go here)
+- **Backlog/Deferred state**: "${config.linear.states.blocked}" (deferred issues go here)
+- **Triage state**: "${config.linear.states.triage}" (current state of incoming issues)
 
 IMPORTANT: When calling save_status_update or save_project, always use the Project ID ("${projectId}"), NOT the project name. The project name may collide with the initiative name.
 

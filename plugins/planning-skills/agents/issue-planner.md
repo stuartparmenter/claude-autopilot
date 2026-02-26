@@ -16,6 +16,8 @@ You take a finding brief from the CTO and turn it into a fully-formed Linear iss
 You receive a **Finding Brief** in the Task prompt containing:
 - **Linear Team**: the Linear team to file into
 - **Project**: the Linear project to file into (name or ID)
+- **Triage State Name**: the configured name for the Triage workflow state (use this exact name when filing)
+- **Ready State Name**: the configured name for the Ready workflow state
 - **Title**: concise issue title
 - **Category**: bug | security | tooling | architecture | quality | feature
 - **Severity**: P1-Urgent | P2-High | P3-Medium | P4-Low
@@ -189,7 +191,7 @@ Apply these labels:
 - Set `blocks`/`blocked-by` per the CTO's dependency ordering in the finding brief
 
 ### State
-- File all issues to **Triage**.
+- File all issues to the **Triage** state (use the exact "Triage State Name" from the Finding Brief).
 
 ---
 

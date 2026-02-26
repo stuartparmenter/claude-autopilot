@@ -5,10 +5,8 @@ import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { countIssuesInState } from "./lib/linear";
 import { info, warn } from "./lib/logger";
-import { AUTOPILOT_ROOT, buildCTOPrompt } from "./lib/prompt";
+import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
-
-const DEFAULT_PLANNING_TIMEOUT_MINUTES = 90;
 
 /**
  * Check whether the planning agent should run based on the backlog threshold.
@@ -69,14 +67,16 @@ export async function runPlanning(opts: {
 
     const vars = {
       LINEAR_TEAM: config.linear.team,
-      LINEAR_PROJECT: config.linear.project || config.linear.initiative || config.linear.team,
       MAX_ISSUES_PER_RUN: String(config.planning.max_issues_per_run),
-      PROJECT_NAME: config.project.name || config.linear.project || config.linear.initiative || config.linear.team,
+      REPO_NAME: projectPath.split("/").pop() || "unknown",
       INITIATIVE_NAME: opts.linearIds.initiativeName || "Not configured",
       INITIATIVE_ID: opts.linearIds.initiativeId || "",
+      TRIAGE_STATE: config.linear.states.triage,
+      READY_STATE: config.linear.states.ready,
+      TODAY: new Date().toISOString().slice(0, 10),
     };
 
-    const prompt = buildCTOPrompt(vars);
+    const prompt = buildPrompt("cto", vars);
     const plugins: SdkPluginConfig[] = [
       {
         type: "local",
@@ -88,10 +88,7 @@ export async function runPlanning(opts: {
       prompt,
       cwd: projectPath,
       label: "planning",
-      timeoutMs:
-        (config.planning.timeout_minutes ?? DEFAULT_PLANNING_TIMEOUT_MINUTES) *
-        60 *
-        1000,
+      timeoutMs: config.planning.timeout_minutes * 60 * 1000,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.planning.model,
       sandbox: config.sandbox,

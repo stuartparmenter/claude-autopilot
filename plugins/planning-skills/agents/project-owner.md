@@ -28,16 +28,18 @@ You receive from the orchestration:
 For each issue in the triage queue:
 
 **Accept** if the issue fits this project's scope:
-- Move it to the Ready state (so the technical planner can process it)
+- Move it to the Ready state (the exact state name is provided in the prompt header under "Workflow State Names")
 - Add a brief comment explaining acceptance
 
 **Defer** if the issue doesn't fit this project's scope:
-- Move it to Backlog state
+- Move it to the Backlog/Deferred state (the exact state name is provided in the prompt header under "Workflow State Names")
 - Add a comment explaining why it was deferred and suggesting which project might be a better fit
 
 ### 2. Spawn Technical Planners
 
-For each accepted issue that would benefit from decomposition into sub-issues, spawn a **Technical Planner**:
+**Default: spawn a Technical Planner for every accepted issue.** The executor works best with sub-issues that have specific file paths, implementation context, and clear acceptance criteria. Without decomposition, the executor is flying blind.
+
+For each accepted issue, spawn a **Technical Planner**:
 
 ```
 Task(subagent_type="technical-planner", prompt="Break down this issue into
@@ -46,10 +48,11 @@ Issue ID: [issue ID]
 Issue Title: [title]
 Issue Description: [description]
 Project: [project name]
-Linear Team: [team]")
+Linear Team: [team]
+Ready State Name: [the Ready state name from the Workflow State Names section]")
 ```
 
-Small, self-contained issues that don't need decomposition can skip this step — they're already ready for the executor.
+**Only skip decomposition** for issues that are truly trivial — a single obvious change to one file with no dependencies. When in doubt, decompose.
 
 ### 3. Review Project Health
 
@@ -66,9 +69,9 @@ save_project(id: [project ID], state: "completed")
 
 ### 4. Post Project Status Update
 
-Post a status update via `save_status_update`:
+Post a **project-level** status update via the autopilot MCP tool `save_project_status_update`:
 
-- `project`: [project ID, NOT the project name — use the Project ID from the prompt header]
+- `projectId`: Use the **Project ID** from the prompt header (a UUID like `abc-123-def`).
 - `health`: `onTrack` | `atRisk` | `offTrack`
 - `body`: Summary including:
   - Issues triaged this session (accepted/deferred counts)
