@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
 import type { AutopilotConfig } from "./lib/config";
+import { deleteOAuthToken, saveOAuthToken } from "./lib/db";
 import { resetClient } from "./lib/linear";
 import {
   buildOAuthUrl,
@@ -330,14 +331,27 @@ export function createApp(
         400,
       );
     }
+    const state = randomBytes(16).toString("hex");
+    setCookie(c, "oauth_state", state, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 600, // 10 minutes
+      secure: options?.secureCookie,
+    });
     const redirectUri = new URL("/auth/linear/callback", c.req.url).toString();
-    const url = buildOAuthUrl(clientId, redirectUri);
+    const url = buildOAuthUrl(clientId, redirectUri, state);
     return c.redirect(url);
   });
 
   app.get("/auth/linear/callback", async (c) => {
     const code = c.req.query("code");
+    const stateParam = c.req.query("state");
     const error = c.req.query("error");
+    const storedState = getCookie(c, "oauth_state");
+
+    // Clear the state cookie regardless of outcome
+    deleteCookie(c, "oauth_state", { path: "/" });
 
     if (error) {
       return c.html(
@@ -345,6 +359,15 @@ export function createApp(
         400,
       );
     }
+
+    // Verify state to prevent CSRF attacks
+    if (!storedState || !stateParam || !safeCompare(stateParam, storedState)) {
+      return c.html(
+        "<p>Error: OAuth state mismatch. Please try again.</p>",
+        400,
+      );
+    }
+
     if (!code) {
       return c.html("<p>Error: No authorization code received.</p>", 400);
     }
@@ -370,18 +393,21 @@ export function createApp(
         redirectUri,
       );
       if (options?.db) {
+        // Write to legacy table to update in-memory cache for getCurrentLinearToken()
         saveStoredToken(options.db, token);
+        // Also write to oauth_tokens table for ENG-107 auto-refresh client
+        saveOAuthToken(options.db, "linear", {
+          accessToken: token.accessToken,
+          refreshToken: token.refreshToken ?? "",
+          expiresAt: token.expiresAt,
+          tokenType: "Bearer",
+          scope: "read,write,issues:create,comments:create",
+          actor: "application",
+        });
       }
-      // Reset the Linear SDK client so it picks up the new OAuth token
+      // Force the Linear client to re-initialize with the new token
       resetClient();
-      return c.html(`<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"><title>Linear Connected</title></head>
-  <body>
-    <p>Linear OAuth connected successfully. The autopilot will now act as the app user.</p>
-    <p><a href="/">Back to dashboard</a></p>
-  </body>
-</html>`);
+      return c.redirect("/");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.html(
@@ -389,6 +415,13 @@ export function createApp(
         500,
       );
     }
+  });
+
+  app.post("/auth/linear/disconnect", (c) => {
+    if (options?.db) {
+      deleteOAuthToken(options.db, "linear");
+    }
+    return c.redirect("/");
   });
 
   // --- HTML Shell ---
