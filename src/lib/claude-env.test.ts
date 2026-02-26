@@ -7,14 +7,34 @@ describe("buildAgentEnv", () => {
     expect(env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe("1");
   });
 
-  test("does not include process.env vars", () => {
+  test("forwards allowlisted vars from process.env", () => {
     const env = buildAgentEnv();
-    expect(env.HOME).toBeUndefined();
-    expect(env.PATH).toBeUndefined();
+    // HOME and PATH should always be present in the test environment
+    expect(env.HOME).toBe(String(process.env.HOME));
+    expect(env.PATH).toBe(String(process.env.PATH));
   });
 
-  test("returns only the expected keys", () => {
+  test("does not include non-allowlisted process.env vars", () => {
     const env = buildAgentEnv();
-    expect(Object.keys(env)).toEqual(["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]);
+    // These common env vars should NOT be forwarded
+    expect(env.TERM).toBeUndefined();
+    expect(env.SHELL).toBeUndefined();
+    expect(env.LANG).toBeUndefined();
+  });
+
+  test("only includes allowlisted keys plus teams flag", () => {
+    const env = buildAgentEnv();
+    const keys = Object.keys(env);
+    const allowed = new Set([
+      "HOME",
+      "PATH",
+      "SSH_AUTH_SOCK",
+      "ANTHROPIC_API_KEY",
+      "CLAUDE_API_KEY",
+      "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+    ]);
+    for (const key of keys) {
+      expect(allowed.has(key)).toBe(true);
+    }
   });
 });

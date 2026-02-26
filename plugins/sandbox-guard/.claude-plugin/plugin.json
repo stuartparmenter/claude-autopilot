@@ -1,5 +1,0 @@
-{
-  "name": "sandbox-guard",
-  "version": "1.0.0",
-  "description": "Enforces sandbox filesystem restrictions for Write/Edit tools. Works around Claude Code not applying bwrap sandbox to built-in file tools in bypassPermissions mode."
-}

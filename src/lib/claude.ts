@@ -8,7 +8,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ActivityEntry } from "../state";
 import { makeErrorActivity, processAgentMessage } from "./activity";
-import { buildQueryOptions, buildSandboxConfig } from "./agent-config";
+import {
+  buildQueryOptions,
+  buildSandboxConfig,
+  buildSandboxGuardHook,
+} from "./agent-config";
 import type { SandboxConfig } from "./config";
 import { info, warn } from "./logger";
 import { AUTOPILOT_ROOT } from "./paths";
@@ -227,17 +231,10 @@ export async function runClaude(opts: {
       };
       queryOpts.sandbox = buildSandboxConfig(opts.cwd, opts.sandbox);
 
-      // Inject sandbox-guard plugin: enforces filesystem restrictions for
-      // Write/Edit tools which bypass bwrap (only Bash is sandboxed at OS level).
+      // Sandbox guard: deny Write/Edit to paths outside cwd and /tmp.
+      // Programmatic hook replaces the shell plugin so denials are logged.
       // See: https://github.com/anthropics/claude-code/issues/29048
-      const sandboxGuard: SdkPluginConfig = {
-        type: "local",
-        path: resolve(AUTOPILOT_ROOT, "plugins/sandbox-guard"),
-      };
-      queryOpts.plugins = [
-        ...(queryOpts.plugins as SdkPluginConfig[]),
-        sandboxGuard,
-      ];
+      queryOpts.hooks = buildSandboxGuardHook(opts.cwd);
     }
 
     // Self-managed worktrees: create before spawning, clean up in finally
