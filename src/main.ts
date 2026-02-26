@@ -306,6 +306,7 @@ while (!shuttingDown) {
           .catch((e) => {
             const msg = e instanceof Error ? e.message : String(e);
             warn(`Auditor error: ${msg}`);
+            state.updateAuditor({ running: false, lastResult: "failed" });
           })
           .finally(() => {
             auditorPromise = null;
