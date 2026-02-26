@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/main.ts",
     "setup": "bun run src/setup-project.ts",
+    "explain": "bun run src/explain.ts",
     "validate": "bun run src/validate.ts",
     "sync-templates": "bun run src/sync-templates.ts",
     "test": "bun test",
