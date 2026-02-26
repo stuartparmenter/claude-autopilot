@@ -70,11 +70,11 @@ if (!config.linear.team)
 
 // --- Check environment variables ---
 
-if (!process.env.LINEAR_API_KEY) {
+if (!process.env.LINEAR_API_KEY && !config.linear.oauth) {
   fatal(
-    "LINEAR_API_KEY environment variable is not set.\n" +
-      "Create one at: https://linear.app/settings/api\n" +
-      "Then: export LINEAR_API_KEY=lin_api_...",
+    "No Linear authentication configured.\n" +
+      "Option 1: Set LINEAR_API_KEY (https://linear.app/settings/api)\n" +
+      "Option 2: Configure linear.oauth in .claude-autopilot.yml and complete OAuth at /auth/linear",
   );
 }
 

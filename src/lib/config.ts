@@ -3,11 +3,17 @@ import { resolve } from "node:path";
 import YAML from "yaml";
 import { fatal, warn } from "./logger";
 
+export interface OAuthConfig {
+  client_id: string;
+  client_secret: string;
+}
+
 export interface LinearConfig {
   team: string;
   initiative: string;
   labels: string[];
   projects: string[];
+  oauth?: OAuthConfig;
   states: {
     triage: string;
     ready: string;
@@ -115,6 +121,7 @@ export const DEFAULTS: AutopilotConfig = {
     initiative: "",
     labels: [],
     projects: [],
+    oauth: undefined,
     states: {
       triage: "Triage",
       ready: "Todo",

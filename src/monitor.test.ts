@@ -1,7 +1,21 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
+import * as _realClaude from "./lib/claude";
 import type { ClaudeResult } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { AppState } from "./state";
+
+// Snapshot of real claude module exports, captured before any mock.module()
+// calls. Used in afterAll to restore the module for subsequent test files,
+// because mock.restore() does not undo mock.module() in Bun 1.3.9.
+const _realClaudeSnapshot = { ..._realClaude };
 
 // Set fake tokens so clients don't throw during tests
 process.env.GITHUB_TOKEN = "test-token-monitor";
@@ -994,4 +1008,13 @@ describe("checkOpenPRs — fixer timeout and attempt budget", () => {
     expect(result4).toHaveLength(1);
     await Promise.all(result4);
   });
+});
+
+// Restore the real claude module after all tests in this file so the mock
+// doesn't leak into subsequent test files. mock.restore() does NOT undo
+// mock.module() calls in Bun 1.3.9, so we must do this explicitly.
+afterAll(() => {
+  mock.module("./lib/claude", () => ({
+    ..._realClaudeSnapshot,
+  }));
 });

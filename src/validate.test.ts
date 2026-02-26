@@ -142,6 +142,23 @@ describe("checkEnvVars", () => {
     await expect(checkEnvVars()).rejects.toThrow("GITHUB_TOKEN");
     await expect(checkEnvVars()).rejects.toThrow("ANTHROPIC_API_KEY");
   });
+
+  test("passes when LINEAR_API_KEY is missing but hasOAuth is true", async () => {
+    delete process.env.LINEAR_API_KEY;
+    process.env.GITHUB_TOKEN = "ghp_test";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    const result = await checkEnvVars({ hasOAuth: true });
+    expect(result).toContain("all set");
+  });
+
+  test("still requires GITHUB_TOKEN even when hasOAuth is true", async () => {
+    delete process.env.LINEAR_API_KEY;
+    delete process.env.GITHUB_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    await expect(checkEnvVars({ hasOAuth: true })).rejects.toThrow(
+      "GITHUB_TOKEN",
+    );
+  });
 });
 
 describe("checkWorktreeDir", () => {

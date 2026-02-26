@@ -8,13 +8,15 @@ import {
   test,
 } from "bun:test";
 import type { ClaudeResult } from "./lib/claude";
+import * as _realClaude from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import * as _realLinear from "./lib/linear";
 import { AppState } from "./state";
 
-// Snapshot of real linear module exports, captured before any mock.module()
-// calls. Used in afterAll to restore the module for subsequent test files,
+// Snapshots of real module exports, captured before any mock.module()
+// calls. Used in afterAll to restore modules for subsequent test files,
 // because mock.restore() does not undo mock.module() in Bun 1.3.9.
+const _realClaudeSnapshot = { ..._realClaude };
 const _realLinearSnapshot = { ..._realLinear };
 
 // ---------------------------------------------------------------------------
@@ -940,6 +942,9 @@ describe("recoverAgentsOnShutdown", () => {
 // src/lib/linear.test.ts). Calling mock.module() here with the real
 // implementations (captured before any mocking) fixes the leakage.
 afterAll(() => {
+  mock.module("./lib/claude", () => ({
+    ..._realClaudeSnapshot,
+  }));
   mock.module("./lib/linear", () => ({
     ..._realLinearSnapshot,
   }));

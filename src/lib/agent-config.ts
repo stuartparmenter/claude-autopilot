@@ -72,7 +72,12 @@ export const AGENT_ENV_ALLOWLIST: readonly string[] = [
   "NODE_TLS_REJECT_UNAUTHORIZED",
 ] as const;
 
-export function buildMcpServers(): Record<string, unknown> {
+export function buildMcpServers(linearToken?: string): Record<string, unknown> {
+  const token = linearToken ?? process.env.LINEAR_API_KEY;
+  if (!token) {
+    throw new Error("No Linear token available for MCP server");
+  }
+
   const autoMergeTool = tool(
     "enable_auto_merge",
     "Enable auto-merge on a GitHub pull request. Automatically detects the repo's allowed merge method. Requires the repo to have auto-merge enabled and branch protection rules configured.",
@@ -125,7 +130,7 @@ export function buildMcpServers(): Record<string, unknown> {
     linear: {
       type: "http",
       url: "https://mcp.linear.app/mcp",
-      headers: { Authorization: `Bearer ${process.env.LINEAR_API_KEY}` },
+      headers: { Authorization: `Bearer ${token}` },
     },
     github: {
       type: "http",

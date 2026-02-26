@@ -32,12 +32,15 @@ export async function checkConfig(projectPath: string): Promise<string> {
 
 /**
  * Check 2: Verify required environment variables are present.
- * LINEAR_API_KEY and GITHUB_TOKEN are required.
+ * LINEAR_API_KEY or OAuth must be configured, GITHUB_TOKEN is required.
  * ANTHROPIC_API_KEY (or equivalent) is required for agents to run.
  */
-export async function checkEnvVars(): Promise<string> {
+export async function checkEnvVars(opts?: {
+  hasOAuth?: boolean;
+}): Promise<string> {
   const missing: string[] = [];
-  if (!process.env.LINEAR_API_KEY) missing.push("LINEAR_API_KEY");
+  if (!process.env.LINEAR_API_KEY && !opts?.hasOAuth)
+    missing.push("LINEAR_API_KEY (or configure OAuth)");
   if (!process.env.GITHUB_TOKEN) missing.push("GITHUB_TOKEN");
 
   const hasAnthropicKey =
@@ -50,7 +53,10 @@ export async function checkEnvVars(): Promise<string> {
   if (missing.length > 0) {
     throw new Error(`Missing environment variables: ${missing.join(", ")}`);
   }
-  return "LINEAR_API_KEY, GITHUB_TOKEN, ANTHROPIC_API_KEY — all set";
+  const linearAuth = process.env.LINEAR_API_KEY
+    ? "LINEAR_API_KEY"
+    : "Linear OAuth";
+  return `${linearAuth}, GITHUB_TOKEN, ANTHROPIC_API_KEY — all set`;
 }
 
 /**
@@ -197,9 +203,10 @@ if (import.meta.main) {
     // Config failure is captured in the checkConfig result below
   }
 
+  const hasOAuth = !!config?.linear.oauth;
   const checks: Array<[string, () => Promise<string>]> = [
     ["Config", () => checkConfig(projectPath)],
-    ["Environment variables", () => checkEnvVars()],
+    ["Environment variables", () => checkEnvVars({ hasOAuth })],
     ["Worktree directory", () => checkWorktreeDir(projectPath)],
     [
       "Linear connection",
