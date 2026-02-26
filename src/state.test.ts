@@ -397,6 +397,86 @@ describe("AppState — issueFailureCount eviction cap", () => {
   });
 });
 
+describe("AppState — planningHistory", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("getPlanningHistory returns empty array initially", () => {
+    expect(state.getPlanningHistory()).toEqual([]);
+  });
+
+  test("addPlanningSession adds session to history", () => {
+    const session = {
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed" as const,
+      issuesFiledCount: 3,
+    };
+    state.addPlanningSession(session);
+    expect(state.getPlanningHistory()).toHaveLength(1);
+    expect(state.getPlanningHistory()[0]).toEqual(session);
+  });
+
+  test("addPlanningSession prepends (newest first)", () => {
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 1,
+    });
+    state.addPlanningSession({
+      id: "ps-2",
+      agentRunId: "run-2",
+      startedAt: 3000,
+      finishedAt: 4000,
+      status: "failed",
+      issuesFiledCount: 0,
+    });
+    const history = state.getPlanningHistory();
+    expect(history[0].id).toBe("ps-2");
+    expect(history[1].id).toBe("ps-1");
+  });
+
+  test("planningHistory is capped at 20 entries", () => {
+    for (let i = 0; i < 25; i++) {
+      state.addPlanningSession({
+        id: `ps-${i}`,
+        agentRunId: `run-${i}`,
+        startedAt: i * 1000,
+        finishedAt: i * 1000 + 500,
+        status: "completed",
+        issuesFiledCount: 0,
+      });
+    }
+    expect(state.getPlanningHistory()).toHaveLength(20);
+  });
+
+  test("planningHistory cap keeps the most recent entries", () => {
+    for (let i = 0; i < 25; i++) {
+      state.addPlanningSession({
+        id: `ps-${i}`,
+        agentRunId: `run-${i}`,
+        startedAt: i * 1000,
+        finishedAt: i * 1000 + 500,
+        status: "completed",
+        issuesFiledCount: 0,
+      });
+    }
+    const history = state.getPlanningHistory();
+    // Newest entry (ps-24) should be first
+    expect(history[0].id).toBe("ps-24");
+    // Oldest kept entry should be ps-5 (24 - 20 + 1 = 5)
+    expect(history[19].id).toBe("ps-5");
+  });
+});
+
 describe("AppState — getMaxParallel", () => {
   test("returns DEFAULTS.executor.parallel when constructed with no argument", () => {
     const state = new AppState();
@@ -428,9 +508,11 @@ describe("AppState — toJSON", () => {
     expect(snap).toHaveProperty("history");
     expect(snap).toHaveProperty("queue");
     expect(snap).toHaveProperty("planning");
+    expect(snap).toHaveProperty("planningHistory");
     expect(snap).toHaveProperty("startedAt");
     expect(Array.isArray(snap.agents)).toBe(true);
     expect(Array.isArray(snap.history)).toBe(true);
+    expect(Array.isArray(snap.planningHistory)).toBe(true);
   });
 
   test("snapshot reflects current agent state", () => {

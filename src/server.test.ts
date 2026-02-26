@@ -1363,4 +1363,107 @@ describe("computeHealth", () => {
     const health = computeHealth(state);
     expect(typeof health.subsystems.executor.queueLastChecked).toBe("number");
   });
+
+  test("planner sessionCount is 0 on fresh AppState", () => {
+    const state = new AppState();
+    const health = computeHealth(state);
+    expect(health.subsystems.planner.sessionCount).toBe(0);
+  });
+
+  test("planner sessionCount reflects added planning sessions", () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 2,
+    });
+    state.addPlanningSession({
+      id: "ps-2",
+      agentRunId: "run-2",
+      startedAt: 3000,
+      finishedAt: 4000,
+      status: "failed",
+      issuesFiledCount: 0,
+    });
+    const health = computeHealth(state);
+    expect(health.subsystems.planner.sessionCount).toBe(2);
+  });
+});
+
+describe("GET /api/status — planningHistory", () => {
+  test("includes planningHistory array in response", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/status");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json).toHaveProperty("planningHistory");
+    expect(Array.isArray(json.planningHistory)).toBe(true);
+  });
+
+  test("planningHistory is empty when no sessions added", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/status");
+    const json = (await res.json()) as { planningHistory: unknown[] };
+    expect(json.planningHistory).toHaveLength(0);
+  });
+
+  test("planningHistory includes added sessions", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-abc",
+      agentRunId: "run-abc",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 3,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/status");
+    const json = (await res.json()) as {
+      planningHistory: Array<{ id: string }>;
+    };
+    expect(json.planningHistory).toHaveLength(1);
+    expect(json.planningHistory[0].id).toBe("ps-abc");
+  });
+});
+
+describe("GET /partials/stats — planning count", () => {
+  test("shows Plans stat with count 0 when no sessions", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/stats");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Plans");
+  });
+
+  test("shows Plans stat count reflecting added sessions", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 1,
+    });
+    state.addPlanningSession({
+      id: "ps-2",
+      agentRunId: "run-2",
+      startedAt: 3000,
+      finishedAt: 4000,
+      status: "completed",
+      issuesFiledCount: 0,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/stats");
+    const body = await res.text();
+    expect(body).toContain("Plans");
+    expect(body).toContain(">2<");
+  });
 });
