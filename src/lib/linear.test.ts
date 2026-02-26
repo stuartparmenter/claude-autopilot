@@ -37,6 +37,8 @@ const TEST_IDS: LinearIds = {
 const LINEAR_CONFIG = {
   team: "ENG",
   initiative: "Test Initiative",
+  labels: [],
+  projects: [],
   states: {
     triage: "Triage",
     ready: "Ready",
@@ -517,6 +519,73 @@ describe("getReadyIssues", () => {
 
     expect(result).toHaveLength(1);
     expect((result[0] as { id: string }).id).toBe("good-issue");
+  });
+
+  test("no filters — sends only team and state filter (backwards compat)", async () => {
+    await getReadyIssues(TEST_IDS, 10);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.ready } },
+      },
+      first: 10,
+    });
+  });
+
+  test("labels filter — sends labels.some.name.in filter", async () => {
+    await getReadyIssues(TEST_IDS, 10, { labels: ["bug", "autopilot"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.ready } },
+        labels: { some: { name: { in: ["bug", "autopilot"] } } },
+      },
+      first: 10,
+    });
+  });
+
+  test("projects filter — sends project.name.in filter", async () => {
+    await getReadyIssues(TEST_IDS, 10, { projects: ["frontend", "backend"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.ready } },
+        project: { name: { in: ["frontend", "backend"] } },
+      },
+      first: 10,
+    });
+  });
+
+  test("labels + projects — sends both labels and project filters (AND semantics)", async () => {
+    await getReadyIssues(TEST_IDS, 10, {
+      labels: ["autopilot"],
+      projects: ["frontend"],
+    });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.ready } },
+        labels: { some: { name: { in: ["autopilot"] } } },
+        project: { name: { in: ["frontend"] } },
+      },
+      first: 10,
+    });
+  });
+
+  test("empty labels array — omits labels filter (same as no filter)", async () => {
+    await getReadyIssues(TEST_IDS, 10, { labels: [], projects: [] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.ready } },
+      },
+      first: 10,
+    });
   });
 });
 

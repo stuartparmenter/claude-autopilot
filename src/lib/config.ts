@@ -6,6 +6,8 @@ import { fatal, warn } from "./logger";
 export interface LinearConfig {
   team: string;
   initiative: string;
+  labels: string[];
+  projects: string[];
   states: {
     triage: string;
     ready: string;
@@ -110,6 +112,8 @@ export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
     initiative: "",
+    labels: [],
+    projects: [],
     states: {
       triage: "Triage",
       ready: "Todo",
@@ -259,6 +263,20 @@ function validateConfigStrings(config: AutopilotConfig): void {
       throw new Error(
         `Config validation error: "${key}" exceeds the maximum length of 200 characters`,
       );
+    }
+  }
+
+  for (const [arrayKey, array] of [
+    ["linear.labels", config.linear.labels],
+    ["linear.projects", config.linear.projects],
+  ] as [string, string[]][]) {
+    for (let i = 0; i < array.length; i++) {
+      const item = array[i];
+      if (typeof item !== "string" || item.trim() === "") {
+        throw new Error(
+          `Config validation error: "${arrayKey}[${i}]" must not be an empty string`,
+        );
+      }
     }
   }
 }

@@ -72,6 +72,8 @@ function makeConfig(): AutopilotConfig {
     linear: {
       team: "ENG",
       initiative: "Test Initiative",
+      labels: [],
+      projects: [],
       states: {
         triage: "triage-id",
         ready: "ready-id",

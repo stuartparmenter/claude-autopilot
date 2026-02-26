@@ -805,4 +805,76 @@ planning:
     expect(calls.some((msg) => msg.includes("[WARN]"))).toBe(false);
     spy.mockRestore();
   });
+
+  test("linear.labels defaults to empty array", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.linear.labels).toEqual([]);
+  });
+
+  test("linear.projects defaults to empty array", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.linear.projects).toEqual([]);
+  });
+
+  test("linear.labels can be overridden", () => {
+    const dir = writeConfig(`
+linear:
+  labels:
+    - bug
+    - autopilot
+`);
+    const config = loadConfig(dir);
+    expect(config.linear.labels).toEqual(["bug", "autopilot"]);
+  });
+
+  test("linear.projects can be overridden", () => {
+    const dir = writeConfig(`
+linear:
+  projects:
+    - frontend
+    - backend
+`);
+    const config = loadConfig(dir);
+    expect(config.linear.projects).toEqual(["frontend", "backend"]);
+  });
+
+  test("linear.labels throws on empty string element", () => {
+    const dir = writeConfig(`
+linear:
+  labels:
+    - bug
+    - ""
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      'linear.labels[1]" must not be an empty string',
+    );
+  });
+
+  test("linear.projects throws on empty string element", () => {
+    const dir = writeConfig(`
+linear:
+  projects:
+    - ""
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      'linear.projects[0]" must not be an empty string',
+    );
+  });
+
+  test("linear.labels and linear.projects together are valid", () => {
+    const dir = writeConfig(`
+linear:
+  labels:
+    - autopilot
+  projects:
+    - frontend
+    - backend
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+    const config = loadConfig(dir);
+    expect(config.linear.labels).toEqual(["autopilot"]);
+    expect(config.linear.projects).toEqual(["frontend", "backend"]);
+  });
 });

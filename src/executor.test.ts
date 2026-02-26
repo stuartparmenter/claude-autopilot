@@ -82,6 +82,8 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     linear: {
       team: "ENG",
       initiative: "",
+      labels: [],
+      projects: [],
       states: {
         triage: "triage-id",
         ready: "ready-id",
