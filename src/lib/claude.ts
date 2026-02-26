@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   type AgentDefinition,
   query,
@@ -11,6 +11,7 @@ import { makeErrorActivity, processAgentMessage } from "./activity";
 import { buildQueryOptions, buildSandboxConfig } from "./agent-config";
 import type { SandboxConfig } from "./config";
 import { info, warn } from "./logger";
+import { AUTOPILOT_ROOT } from "./paths";
 import { createWorktree, removeWorktree } from "./worktree";
 
 // Re-export for backward compatibility — callers import these from "./lib/claude"
@@ -166,6 +167,16 @@ export async function runClaude(opts: {
         CLAUDE_CODE_TMPDIR: agentTmpDir,
       };
       queryOpts.sandbox = buildSandboxConfig(opts.cwd, opts.sandbox);
+
+      // Inject sandbox-guard plugin: enforces filesystem restrictions for
+      // Write/Edit tools which bypass bwrap (only Bash is sandboxed at OS level).
+      // See: https://github.com/anthropics/claude-code/issues/29048
+      const sandboxGuard: SdkPluginConfig = {
+        type: "local",
+        path: resolve(AUTOPILOT_ROOT, "plugins/sandbox-guard"),
+      };
+      const existing = (queryOpts.plugins ?? []) as SdkPluginConfig[];
+      queryOpts.plugins = [...existing, sandboxGuard];
     }
 
     // Self-managed worktrees: create before spawning, clean up in finally
