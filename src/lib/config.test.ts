@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULTS, deepMerge, loadConfig } from "./config";
+import { collectUnknownKeys, DEFAULTS, deepMerge, loadConfig } from "./config";
 
 let tmpDir: string;
 
@@ -74,6 +74,39 @@ describe("deepMerge", () => {
       (Object.prototype as Record<string, unknown>).polluted,
     ).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe("collectUnknownKeys", () => {
+  test("returns empty array when all keys are known", () => {
+    expect(collectUnknownKeys({ a: 1 }, { a: 2 })).toEqual([]);
+  });
+
+  test("detects top-level unknown key", () => {
+    expect(collectUnknownKeys({ a: 1, b: 2 }, { a: 1 })).toEqual(["b"]);
+  });
+
+  test("detects nested unknown key", () => {
+    expect(collectUnknownKeys({ a: { x: 1, y: 2 } }, { a: { x: 1 } })).toEqual([
+      "a.y",
+    ]);
+  });
+
+  test("detects unknown keys at multiple levels", () => {
+    const result = collectUnknownKeys(
+      { a: { x: 1, y: 2 }, z: 99 },
+      { a: { x: 1 } },
+    );
+    expect(result).toContain("a.y");
+    expect(result).toContain("z");
+  });
+
+  test("ignores arrays in source (does not recurse into them)", () => {
+    expect(collectUnknownKeys({ a: [1, 2] }, { a: [] })).toEqual([]);
+  });
+
+  test("returns empty for empty source", () => {
+    expect(collectUnknownKeys({}, { a: 1 })).toEqual([]);
   });
 });
 
@@ -647,5 +680,44 @@ budget:
   per_agent_limit_usd: 0
 `);
     expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("warns on unknown top-level config key", () => {
+    const spy = spyOn(console, "log");
+    const dir = writeConfig(`
+unknown_section: true
+`);
+    loadConfig(dir);
+    const calls = spy.mock.calls.map((c) => c.join(" "));
+    expect(calls.some((msg) => msg.includes("unknown_section"))).toBe(true);
+    spy.mockRestore();
+  });
+
+  test("warns on unknown nested config key", () => {
+    const spy = spyOn(console, "log");
+    const dir = writeConfig(`
+executor:
+  fake_option: 42
+`);
+    loadConfig(dir);
+    const calls = spy.mock.calls.map((c) => c.join(" "));
+    expect(calls.some((msg) => msg.includes("executor.fake_option"))).toBe(
+      true,
+    );
+    spy.mockRestore();
+  });
+
+  test("does not warn on valid config", () => {
+    const spy = spyOn(console, "log");
+    const dir = writeConfig(`
+executor:
+  parallel: 5
+planning:
+  schedule: daily
+`);
+    loadConfig(dir);
+    const calls = spy.mock.calls.map((c) => c.join(" "));
+    expect(calls.some((msg) => msg.includes("[WARN]"))).toBe(false);
+    spy.mockRestore();
   });
 });

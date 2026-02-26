@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { fatal } from "./logger";
+import { fatal, warn } from "./logger";
 
 export interface LinearConfig {
   team: string;
@@ -190,6 +190,40 @@ export function deepMerge<T extends Record<string, unknown>>(
   return result;
 }
 
+export function collectUnknownKeys(
+  source: Record<string, unknown>,
+  reference: Record<string, unknown>,
+  prefix = "",
+): string[] {
+  const unknown: string[] = [];
+  for (const key of Object.keys(source)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (!(key in reference)) {
+      unknown.push(path);
+    } else {
+      const sourceVal = source[key];
+      const refVal = reference[key];
+      if (
+        sourceVal &&
+        typeof sourceVal === "object" &&
+        !Array.isArray(sourceVal) &&
+        refVal &&
+        typeof refVal === "object" &&
+        !Array.isArray(refVal)
+      ) {
+        unknown.push(
+          ...collectUnknownKeys(
+            sourceVal as Record<string, unknown>,
+            refVal as Record<string, unknown>,
+            path,
+          ),
+        );
+      }
+    }
+  }
+  return unknown;
+}
+
 function validateConfigStrings(config: AutopilotConfig): void {
   const fields: Array<[string, string]> = [
     ["linear.team", config.linear.team],
@@ -232,6 +266,16 @@ export function loadConfig(projectPath: string): AutopilotConfig {
     DEFAULTS as unknown as Record<string, unknown>,
     parsed,
   ) as unknown as AutopilotConfig;
+
+  const unknownKeys = collectUnknownKeys(
+    parsed,
+    DEFAULTS as unknown as Record<string, unknown>,
+  );
+  for (const key of unknownKeys) {
+    warn(
+      `Unknown config key "${key}" in .claude-autopilot.yml — this key has no effect. Check for typos.`,
+    );
+  }
 
   validateConfigStrings(config);
 
