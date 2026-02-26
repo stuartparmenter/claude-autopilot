@@ -14,7 +14,7 @@ import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb, pruneActivityLogs } from "./lib/db";
 import { interruptibleSleep, isFatalError } from "./lib/errors";
 import { detectRepo } from "./lib/github";
-import { resolveLinearIds, updateIssue } from "./lib/linear";
+import { getTriageIssues, resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sanitizeMessage } from "./lib/sanitize";
 import { checkOpenPRs } from "./monitor";
@@ -181,6 +181,21 @@ const app = createApp(state, {
   },
   retryIssue: async (linearIssueId: string) => {
     await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+  },
+  triageIssues: async () => {
+    const issues = await getTriageIssues(linearIds);
+    return issues.map((i) => ({
+      id: i.id,
+      identifier: i.identifier,
+      title: i.title,
+      priority: i.priority ?? 4,
+    }));
+  },
+  approveTriageIssue: async (issueId: string) => {
+    await updateIssue(issueId, { stateId: linearIds.states.ready });
+  },
+  rejectTriageIssue: async (issueId: string) => {
+    await updateIssue(issueId, { stateId: linearIds.states.blocked });
   },
 });
 

@@ -29,6 +29,11 @@ export interface DashboardOptions {
   triggerPlanning?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
   config?: AutopilotConfig;
+  triageIssues?: () => Promise<
+    Array<{ id: string; identifier: string; title: string; priority: number }>
+  >;
+  approveTriageIssue?: (issueId: string) => Promise<void>;
+  rejectTriageIssue?: (issueId: string) => Promise<void>;
 }
 
 export function safeCompare(a: string, b: string): boolean {
@@ -259,6 +264,13 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                   hx-trigger="load, every 3s"
                   hx-swap="innerHTML"
                 ></div>
+                <div class="section-title">Needs Review</div>
+                <div
+                  id="triage-list"
+                  hx-get="/partials/triage"
+                  hx-trigger="load, every 10s"
+                  hx-swap="innerHTML"
+                ></div>
                 <div class="section-title">History</div>
                 <div
                   id="history-list"
@@ -357,6 +369,34 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       }
     }
     return c.json({ retried: true });
+  });
+
+  app.post("/api/triage/:issueId/approve", async (c) => {
+    const issueId = c.req.param("issueId");
+    if (!options?.approveTriageIssue) {
+      return c.json({ error: "Triage not configured" }, 400);
+    }
+    try {
+      await options.approveTriageIssue(issueId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Approve failed: ${msg}` }, 500);
+    }
+    return c.json({ approved: true });
+  });
+
+  app.post("/api/triage/:issueId/reject", async (c) => {
+    const issueId = c.req.param("issueId");
+    if (!options?.rejectTriageIssue) {
+      return c.json({ error: "Triage not configured" }, 400);
+    }
+    try {
+      await options.rejectTriageIssue(issueId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Reject failed: ${msg}` }, 500);
+    }
+    return c.json({ rejected: true });
   });
 
   // --- Partials for htmx ---
@@ -643,6 +683,45 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     }
     const text = parts.join("  |  ");
     return c.html(html`<span style="${colorStyle}">${text}</span>`);
+  });
+
+  app.get("/partials/triage", async (c) => {
+    if (!options?.triageIssues) {
+      return c.html(html`<div></div>`);
+    }
+    const issues = await options.triageIssues();
+    if (issues.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No issues awaiting review
+        </div>`,
+      );
+    }
+    const priorityNames: Record<number, string> = {
+      1: "Urgent",
+      2: "High",
+      3: "Normal",
+      4: "Low",
+    };
+    return c.html(
+      html`${raw(
+        issues
+          .map((issue) => {
+            const priorityName = priorityNames[issue.priority] ?? "Low";
+            return `<div class="triage-card">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span class="issue-id">${escapeHtml(issue.identifier)}</span><span style="font-size:11px;color:var(--text-dim)">${escapeHtml(priorityName)}</span></div>
+              <div class="title">${escapeHtml(issue.title)}</div>
+              <div class="triage-actions">
+                <button class="action-btn approve" hx-post="/api/triage/${escapeHtml(issue.id)}/approve" onclick="event.stopPropagation()">Approve</button>
+                <button class="action-btn danger" hx-post="/api/triage/${escapeHtml(issue.id)}/reject" onclick="event.stopPropagation()">Reject</button>
+              </div>
+            </div>`;
+          })
+          .join(""),
+      )}`,
+    );
   });
 
   app.get("/partials/analytics", (c) => {
