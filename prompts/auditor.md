@@ -147,6 +147,17 @@ The Security Reviewer will return: risk level (NONE/LOW/MEDIUM/HIGH/CRITICAL), f
 
 **Run all three subagents in parallel for each finding.** Wait for all results before proceeding.
 
+### Handling Subagent Failures
+
+If a subagent fails, times out, or returns a response you cannot parse:
+
+- **Planner fails or times out**: Skip this finding — you cannot file a quality issue without a concrete implementation plan. Record the failure ("Planner failed for finding: [summary]") in your Phase 4 notes and move on.
+- **Verifier fails, times out, or returns unparseable output**: Treat as implicit APPROVE and proceed. In the issue's Verifier Notes section, note: "Verifier unavailable — unreviewed."
+- **Security Reviewer fails, times out, or returns unparseable output**: Treat as risk level NONE and proceed. In the issue's Security Notes section, note: "Security review unavailable — unreviewed."
+- **Unparseable response from any subagent**: Log a warning ("Subagent [name] returned unparseable response for finding: [summary]") and apply the fallback rule above for that subagent type.
+
+Continue processing all remaining findings. Do not abort the entire planning cycle because one specialist failed — the goal is to file as many quality issues as possible from completed subagents.
+
 If the Verifier returns REJECT, drop the finding. If REVISE, incorporate the feedback into the final issue.
 
 ---

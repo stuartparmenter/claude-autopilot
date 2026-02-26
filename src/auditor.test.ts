@@ -452,6 +452,41 @@ describe("runAudit — error path", () => {
 });
 
 // ---------------------------------------------------------------------------
+// runAudit — thrown exception path
+// ---------------------------------------------------------------------------
+
+describe("runAudit — thrown exception path", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockRejectedValue(new Error("runClaude unexpected crash"));
+  });
+
+  test("sets running to false when runClaude throws", async () => {
+    await runAudit({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(state.getAuditorStatus().running).toBe(false);
+  });
+
+  test("sets lastResult to 'failed' when runClaude throws", async () => {
+    await runAudit({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(state.getAuditorStatus().lastResult).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runAudit — skip_triage config
 // ---------------------------------------------------------------------------
 
