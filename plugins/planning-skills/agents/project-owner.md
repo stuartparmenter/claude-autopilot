@@ -35,6 +35,16 @@ For each issue in the triage queue:
 - Move it to the Backlog/Deferred state (the exact state name is provided in the prompt header under "Workflow State Names")
 - Add a comment explaining why it was deferred and suggesting which project might be a better fit
 
+**Assess systemic impact** before accepting:
+- Does this issue change, remove, or weaken something that other parts of the system depend on?
+- Think through second and third-order effects: what pipelines, workflows, or implicit contracts could break?
+- If you identify downstream effects not addressed in the issue description:
+  - **Accept with conditions**: add a comment listing the downstream effects and what compensating changes are needed (the technical planner will incorporate these)
+  - **Request companion issues**: if the change is unsafe to ship alone, note what additional issues need to be filed alongside it
+  - **Accept with documented deferrals**: if a downstream effect exists but is safe to defer, document *why* in your acceptance comment
+
+An issue that looks correct in isolation but would break something downstream needs its scope expanded or companion issues filed — not silent acceptance.
+
 ### 2. Spawn Technical Planners
 
 **Default: spawn a Technical Planner for every accepted issue.** The executor works best with sub-issues that have specific file paths, implementation context, and clear acceptance criteria. Without decomposition, the executor is flying blind.
@@ -54,7 +64,18 @@ Ready State Name: [the Ready state name from the Workflow State Names section]")
 
 **Only skip decomposition** for issues that are truly trivial — a single obvious change to one file with no dependencies. When in doubt, decompose.
 
-### 3. Review Project Health
+### 3. Review Backlog
+
+If the prompt header includes a backlog review instruction (not "skip"), use the Linear MCP to list issues in the Backlog/Deferred state for this project. For each backlog issue:
+
+1. **Read the issue** and its comments (especially deferral reasons)
+2. **Check if conditions changed** — e.g., a blocking issue is now Done, the project's priorities shifted, or the rationale no longer applies
+3. **Promote** worthy issues back to the Triage state with a comment explaining why it's time to reconsider
+4. **Leave** issues that are still appropriately deferred — no comment needed, don't churn
+
+This is a lightweight review. You're deciding "should this be reconsidered?" not doing full triage. Promoted issues will get full triage on the next run.
+
+### 4. Review Project Health
 
 Assess the project's overall health:
 
@@ -67,7 +88,7 @@ Assess the project's overall health:
 save_project(id: [project ID], state: "completed")
 ```
 
-### 4. Post Project Status Update
+### 5. Post Project Status Update
 
 Post a **project-level** status update via the autopilot MCP tool `save_project_status_update`:
 

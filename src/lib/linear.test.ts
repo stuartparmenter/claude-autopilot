@@ -1,12 +1,16 @@
+import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LinearClient } from "@linear/sdk";
 import type { LinearIds } from "./config";
+import { saveOAuthToken } from "./db";
 import {
+  configureLinearAuth,
   countIssuesInState,
   findOrCreateLabel,
   findState,
   findTeam,
   getLinearClient,
+  getLinearClientAsync,
   getReadyIssues,
   getTriageIssues,
   createIssue as linearCreateIssue,
@@ -16,6 +20,7 @@ import {
   setClientForTesting,
   validateIdentifier,
 } from "./linear";
+import { resetLinearAuth } from "./linear-oauth";
 
 // ---------------------------------------------------------------------------
 // Shared test constants
@@ -113,25 +118,6 @@ function makeIssue(opts: {
   };
 }
 
-function makeRelation(type: string, relatedIssue: unknown): unknown {
-  return {
-    type,
-    // relatedIssue is accessed with `async () => relation.relatedIssue`, so
-    // wrapping it in a Promise means it gets double-awaited to the inner value.
-    relatedIssue: Promise.resolve(relatedIssue),
-  };
-}
-
-function makeRelatedIssue(stateType: string | null): unknown {
-  return {
-    id: "related-1",
-    identifier: "ENG-99",
-    state: Promise.resolve(
-      stateType !== null ? { id: `state-${stateType}`, type: stateType } : null,
-    ),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Module-level mock state and functions (shared across describe blocks)
 // ---------------------------------------------------------------------------
@@ -199,6 +185,7 @@ function makeStandardClient(): LinearClient {
 describe("getLinearClient", () => {
   beforeEach(() => {
     resetClient();
+    resetLinearAuth();
     process.env.LINEAR_API_KEY = "test-linear-key";
   });
 
@@ -213,9 +200,11 @@ describe("getLinearClient", () => {
     expect(a).toBe(b);
   });
 
-  test("throws with helpful message when LINEAR_API_KEY is missing", () => {
+  test("throws with helpful message when no auth is configured", () => {
     delete process.env.LINEAR_API_KEY;
-    expect(() => getLinearClient()).toThrow("LINEAR_API_KEY");
+    expect(() => getLinearClient()).toThrow(
+      "No Linear authentication configured",
+    );
   });
 
   test("returns a new instance after resetClient()", () => {
@@ -354,14 +343,79 @@ describe("findOrCreateLabel", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getReadyIssues — raw GraphQL mock types and helpers
+// ---------------------------------------------------------------------------
+
+interface ReadyMockRelation {
+  type: string;
+  relatedIssue: { id: string; state: { type: string } | null } | null;
+}
+
+interface ReadyMockNode {
+  id: string;
+  identifier: string;
+  title: string;
+  priority?: number | null;
+  relations: { nodes: ReadyMockRelation[] };
+  children: { nodes: Array<{ id: string }> };
+}
+
+interface ReadyMockResponse {
+  data: {
+    issues: {
+      nodes: ReadyMockNode[];
+    };
+  };
+}
+
+let readyRawResponse: ReadyMockResponse | Error = {
+  data: { issues: { nodes: [] } },
+};
+
+const mockReadyRawRequest = mock(async () => {
+  if (readyRawResponse instanceof Error) throw readyRawResponse;
+  return readyRawResponse;
+});
+
+function makeReadyNode(opts: {
+  id?: string;
+  identifier?: string;
+  priority?: number;
+  relations?: ReadyMockRelation[];
+  childrenCount?: number;
+}): ReadyMockNode {
+  return {
+    id: opts.id ?? "issue-1",
+    identifier: opts.identifier ?? "ENG-1",
+    title: "Test Issue",
+    priority: opts.priority,
+    relations: { nodes: opts.relations ?? [] },
+    children: {
+      nodes: Array.from({ length: opts.childrenCount ?? 0 }, (_, i) => ({
+        id: `child-${i}`,
+      })),
+    },
+  };
+}
+
+function makeReadyRelation(type: string, stateType: string): ReadyMockRelation {
+  return {
+    type,
+    relatedIssue: { id: "related-1", state: { type: stateType } },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // getReadyIssues
 // ---------------------------------------------------------------------------
 
 describe("getReadyIssues", () => {
   beforeEach(() => {
-    mockIssuesNodes = [];
-    mockIssuesForReady.mockClear();
-    setClientForTesting(makeStandardClient());
+    readyRawResponse = { data: { issues: { nodes: [] } } };
+    mockReadyRawRequest.mockClear();
+    setClientForTesting({
+      client: { rawRequest: mockReadyRawRequest },
+    } as unknown as LinearClient);
   });
 
   test("returns empty array when no issues exist", async () => {
@@ -369,10 +423,15 @@ describe("getReadyIssues", () => {
     expect(result).toEqual([]);
   });
 
+  test("makes exactly one HTTP request to the Linear API per invocation", async () => {
+    await getReadyIssues(TEST_IDS, 5);
+    expect(mockReadyRawRequest).toHaveBeenCalledTimes(1);
+  });
+
   test("passes correct filter and limit to API", async () => {
     await getReadyIssues(TEST_IDS, 5);
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -384,17 +443,24 @@ describe("getReadyIssues", () => {
   test("default limit is 10", async () => {
     await getReadyIssues(TEST_IDS);
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith(
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(
+      expect.any(String),
       expect.objectContaining({ first: 10 }),
     );
   });
 
   test("sorts issues by priority (lower number = higher priority)", async () => {
-    mockIssuesNodes = [
-      makeIssue({ id: "c", priority: 3 }),
-      makeIssue({ id: "a", priority: 1 }),
-      makeIssue({ id: "b", priority: 2 }),
-    ];
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({ id: "c", priority: 3 }),
+            makeReadyNode({ id: "a", priority: 1 }),
+            makeReadyNode({ id: "b", priority: 2 }),
+          ],
+        },
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -406,11 +472,17 @@ describe("getReadyIssues", () => {
   });
 
   test("treats undefined priority as 4 (lowest) when sorting", async () => {
-    mockIssuesNodes = [
-      makeIssue({ id: "no-pri", priority: undefined }),
-      makeIssue({ id: "high", priority: 1 }),
-      makeIssue({ id: "med", priority: 3 }),
-    ];
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({ id: "no-pri", priority: undefined }),
+            makeReadyNode({ id: "high", priority: 1 }),
+            makeReadyNode({ id: "med", priority: 3 }),
+          ],
+        },
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -422,7 +494,9 @@ describe("getReadyIssues", () => {
   });
 
   test("returns unblocked issue that has no relations", async () => {
-    mockIssuesNodes = [makeIssue({ id: "free" })];
+    readyRawResponse = {
+      data: { issues: { nodes: [makeReadyNode({ id: "free" })] } },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -431,14 +505,18 @@ describe("getReadyIssues", () => {
   });
 
   test("filters out issue blocked by incomplete issue (state type 'started')", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "blocked",
-        relationsResult: {
-          nodes: [makeRelation("blocks", makeRelatedIssue("started"))],
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({
+              id: "blocked",
+              relations: [makeReadyRelation("blocks", "started")],
+            }),
+          ],
         },
-      }),
-    ];
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -446,14 +524,18 @@ describe("getReadyIssues", () => {
   });
 
   test("includes issue when blocking relation's relatedIssue is completed", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "done-blocker",
-        relationsResult: {
-          nodes: [makeRelation("blocks", makeRelatedIssue("completed"))],
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({
+              id: "done-blocker",
+              relations: [makeReadyRelation("blocks", "completed")],
+            }),
+          ],
         },
-      }),
-    ];
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -462,14 +544,18 @@ describe("getReadyIssues", () => {
   });
 
   test("includes issue when blocking relation's relatedIssue is canceled", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "canceled-blocker",
-        relationsResult: {
-          nodes: [makeRelation("blocks", makeRelatedIssue("canceled"))],
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({
+              id: "canceled-blocker",
+              relations: [makeReadyRelation("blocks", "canceled")],
+            }),
+          ],
         },
-      }),
-    ];
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -477,14 +563,18 @@ describe("getReadyIssues", () => {
   });
 
   test("ignores non-'blocks' relation types (does not block execution)", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "related-only",
-        relationsResult: {
-          nodes: [makeRelation("related", makeRelatedIssue("started"))],
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({
+              id: "related-only",
+              relations: [makeReadyRelation("related", "started")],
+            }),
+          ],
         },
-      }),
-    ];
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
@@ -492,39 +582,52 @@ describe("getReadyIssues", () => {
   });
 
   test("handles null relatedIssue gracefully (treats as not blocking)", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "null-related",
-        relationsResult: {
-          nodes: [makeRelation("blocks", null)],
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({
+              id: "null-related",
+              relations: [{ type: "blocks", relatedIssue: null }],
+            }),
+          ],
         },
-      }),
-    ];
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
     expect(result).toHaveLength(1);
   });
 
-  test("skips issue on relation fetch error and continues to next issue", async () => {
-    mockIssuesNodes = [
-      makeIssue({
-        id: "error-issue",
-        relationsError: new Error("Network failure"),
-      }),
-      makeIssue({ id: "good-issue" }),
-    ];
+  test("propagates error when rawRequest fails", async () => {
+    readyRawResponse = new Error("Network failure");
+
+    await expect(getReadyIssues(TEST_IDS)).rejects.toThrow("Network failure");
+  });
+
+  test("excludes parent issues that have children (non-leaf issues)", async () => {
+    readyRawResponse = {
+      data: {
+        issues: {
+          nodes: [
+            makeReadyNode({ id: "parent", childrenCount: 2 }),
+            makeReadyNode({ id: "leaf" }),
+          ],
+        },
+      },
+    };
 
     const result = await getReadyIssues(TEST_IDS);
 
     expect(result).toHaveLength(1);
-    expect((result[0] as { id: string }).id).toBe("good-issue");
+    expect((result[0] as { id: string }).id).toBe("leaf");
   });
 
   test("no filters — sends only team and state filter (backwards compat)", async () => {
     await getReadyIssues(TEST_IDS, 10);
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -536,7 +639,7 @@ describe("getReadyIssues", () => {
   test("labels filter — sends labels.some.name.in filter", async () => {
     await getReadyIssues(TEST_IDS, 10, { labels: ["bug", "autopilot"] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -549,7 +652,7 @@ describe("getReadyIssues", () => {
   test("projects filter — sends project.name.in filter", async () => {
     await getReadyIssues(TEST_IDS, 10, { projects: ["frontend", "backend"] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -565,7 +668,7 @@ describe("getReadyIssues", () => {
       projects: ["frontend"],
     });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -579,7 +682,7 @@ describe("getReadyIssues", () => {
   test("empty labels array — omits labels filter (same as no filter)", async () => {
     await getReadyIssues(TEST_IDS, 10, { labels: [], projects: [] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -726,6 +829,55 @@ describe("countIssuesInState", () => {
       (msg) => msg.includes("[WARN]") && msg.includes("page limit"),
     );
     expect(hasWarning).toBe(true);
+  });
+
+  test("includes labels filter in GraphQL request when labels provided", async () => {
+    rawResponses = [makeRawResponse(3, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      labels: ["backend", "frontend"],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).toHaveProperty("labels", {
+      some: { name: { in: ["backend", "frontend"] } },
+    });
+  });
+
+  test("includes project filter in GraphQL request when projects provided", async () => {
+    rawResponses = [makeRawResponse(2, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      projects: ["Alpha", "Beta"],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).toHaveProperty("project", {
+      name: { in: ["Alpha", "Beta"] },
+    });
+  });
+
+  test("omits label/project filters when arrays are empty", async () => {
+    rawResponses = [makeRawResponse(1, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      labels: [],
+      projects: [],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).not.toHaveProperty("labels");
+    expect(calledFilter.filter).not.toHaveProperty("project");
+  });
+
+  test("omits label/project filters when no filters argument provided", async () => {
+    rawResponses = [makeRawResponse(1, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id");
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).not.toHaveProperty("labels");
+    expect(calledFilter.filter).not.toHaveProperty("project");
   });
 });
 
@@ -1005,5 +1157,86 @@ describe("resolveLinearIds", () => {
     await expect(resolveLinearIds(LINEAR_CONFIG)).rejects.toThrow(
       "not found for team",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// configureLinearAuth + getLinearClientAsync
+// ---------------------------------------------------------------------------
+
+describe("getLinearClientAsync", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    resetClient();
+    db = new Database(":memory:", { create: true });
+    // Ensure the oauth_tokens table exists
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        service TEXT PRIMARY KEY,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        token_type TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        actor TEXT NOT NULL
+      )
+    `);
+  });
+
+  test("returns client using LINEAR_API_KEY when no OAuth configured", async () => {
+    process.env.LINEAR_API_KEY = "test-api-key";
+    const client = await getLinearClientAsync();
+    expect(client).toBeDefined();
+  });
+
+  test("returns client using OAuth access token when DB has a fresh token", async () => {
+    delete process.env.LINEAR_API_KEY;
+    // Save a fresh OAuth token to the DB (expires 1 hour from now)
+    saveOAuthToken(db, "linear", {
+      accessToken: "oauth-access-token",
+      refreshToken: "oauth-refresh-token",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      tokenType: "Bearer",
+      scope: "read",
+      actor: "application",
+    });
+    configureLinearAuth(db);
+    const client = await getLinearClientAsync();
+    expect(client).toBeDefined();
+  });
+
+  test("returns same client instance when token has not changed (singleton)", async () => {
+    process.env.LINEAR_API_KEY = "test-api-key";
+    configureLinearAuth(db);
+    const a = await getLinearClientAsync();
+    const b = await getLinearClientAsync();
+    expect(a).toBe(b);
+  });
+
+  test("recreates client when configureLinearAuth is called again (token change)", async () => {
+    process.env.LINEAR_API_KEY = "test-api-key";
+    configureLinearAuth(db);
+    const a = await getLinearClientAsync();
+    // Reconfigure — this resets the cached client
+    configureLinearAuth(db);
+    const b = await getLinearClientAsync();
+    expect(a).not.toBe(b);
+  });
+
+  test("falls back to LINEAR_API_KEY when OAuth configured but no token in DB", async () => {
+    process.env.LINEAR_API_KEY = "test-api-key";
+    configureLinearAuth(db, { clientId: "cid", clientSecret: "csec" });
+    // No OAuth token in DB — ensureFreshToken should fall back to LINEAR_API_KEY
+    const client = await getLinearClientAsync();
+    expect(client).toBeDefined();
+  });
+
+  test("setClientForTesting still works after configureLinearAuth", async () => {
+    configureLinearAuth(db);
+    const mockClient = makeStandardClient();
+    setClientForTesting(mockClient);
+    const result = await getLinearClientAsync();
+    expect(result).toBe(mockClient);
   });
 });

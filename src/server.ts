@@ -1,9 +1,16 @@
+import type { Database } from "bun:sqlite";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
 import type { AutopilotConfig } from "./lib/config";
+import { resetClient } from "./lib/linear";
+import {
+  buildOAuthUrl,
+  exchangeCodeForToken,
+  saveStoredToken,
+} from "./lib/linear-oauth";
 import {
   parseGitHubEventType,
   parseLinearEventType,
@@ -48,6 +55,8 @@ export interface DashboardOptions {
   >;
   approveTriageIssue?: (issueId: string) => Promise<void>;
   rejectTriageIssue?: (issueId: string) => Promise<void>;
+  /** DB instance used to persist OAuth tokens from the callback route. */
+  db?: Database;
 }
 
 export function safeCompare(a: string, b: string): boolean {
@@ -62,7 +71,7 @@ function loginPage(error?: string): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>claude-autopilot</title>
+    <title>autopilot</title>
     <style>
       ${DASHBOARD_CSS}
       .login-wrap {
@@ -123,7 +132,7 @@ function loginPage(error?: string): string {
   </head>
   <body>
     <div class="login-wrap">
-      <h1>claude-autopilot</h1>
+      <h1>autopilot</h1>
       <form method="POST" action="/auth/login" class="login-form">
         <div>
           <label for="token">Dashboard Token</label>
@@ -309,6 +318,77 @@ export function createApp(
     });
   }
 
+  // --- Linear OAuth routes ---
+
+  app.get("/auth/linear", (c) => {
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    if (!clientId) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID environment variable is not set.</p>",
+        400,
+      );
+    }
+    const redirectUri = new URL("/auth/linear/callback", c.req.url).toString();
+    const url = buildOAuthUrl(clientId, redirectUri);
+    return c.redirect(url);
+  });
+
+  app.get("/auth/linear/callback", async (c) => {
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+
+    if (error) {
+      return c.html(
+        `<p>Linear OAuth error: ${escapeHtml(error)}</p><p><a href="/">Back to dashboard</a></p>`,
+        400,
+      );
+    }
+    if (!code) {
+      return c.html("<p>Error: No authorization code received.</p>", 400);
+    }
+
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    const clientSecret = process.env.LINEAR_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET must be set.</p>",
+        400,
+      );
+    }
+
+    try {
+      const redirectUri = new URL(
+        "/auth/linear/callback",
+        c.req.url,
+      ).toString();
+      const token = await exchangeCodeForToken(
+        clientId,
+        clientSecret,
+        code,
+        redirectUri,
+      );
+      if (options?.db) {
+        saveStoredToken(options.db, token);
+      }
+      // Reset the Linear SDK client so it picks up the new OAuth token
+      resetClient();
+      return c.html(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Linear Connected</title></head>
+  <body>
+    <p>Linear OAuth connected successfully. The autopilot will now act as the app user.</p>
+    <p><a href="/">Back to dashboard</a></p>
+  </body>
+</html>`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.html(
+        `<p>Error: ${escapeHtml(msg)}</p><p><a href="/">Back to dashboard</a></p>`,
+        500,
+      );
+    }
+  });
+
   // --- HTML Shell ---
   app.get("/", (c) => {
     const authEnabled = !!options?.authToken;
@@ -321,14 +401,14 @@ export function createApp(
               name="viewport"
               content="width=device-width, initial-scale=1"
             />
-            <title>claude-autopilot</title>
+            <title>autopilot</title>
             <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
             <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
             <style>${raw(DASHBOARD_CSS)}</style>
           </head>
           <body>
             <header>
-              <h1>claude-autopilot</h1>
+              <h1>autopilot</h1>
               <div
                 class="meta"
                 hx-get="/partials/header-meta"

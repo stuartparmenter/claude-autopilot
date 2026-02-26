@@ -55,7 +55,7 @@ export function detectRepo(
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to detect git remote origin in ${projectPath}. ` +
-        "Set github.repo in .claude-autopilot.yml instead.",
+        "Set github.repo in .autopilot.yml instead.",
     );
   }
 
@@ -75,7 +75,7 @@ export function detectRepo(
 
   throw new Error(
     `Could not parse owner/repo from remote URL: "${url}". ` +
-      "Set github.repo in .claude-autopilot.yml instead.",
+      "Set github.repo in .autopilot.yml instead.",
   );
 }
 

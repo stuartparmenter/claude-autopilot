@@ -8,13 +8,15 @@ import {
   test,
 } from "bun:test";
 import type { ClaudeResult } from "./lib/claude";
+import * as _realClaude from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import * as _realLinear from "./lib/linear";
 import { AppState } from "./state";
 
-// Snapshot of real linear module exports, captured before any mock.module()
-// calls. Used in afterAll to restore the module for subsequent test files,
+// Snapshots of real module exports, captured before any mock.module()
+// calls. Used in afterAll to restore modules for subsequent test files,
 // because mock.restore() does not undo mock.module() in Bun 1.3.9.
+const _realClaudeSnapshot = { ..._realClaude };
 const _realLinearSnapshot = { ..._realLinear };
 
 // ---------------------------------------------------------------------------
@@ -52,7 +54,12 @@ const mockGetInProgressIssues = mock(
     Promise.resolve([]),
 );
 
-import { executeIssue, fillSlots, recoverStaleIssues } from "./executor";
+import {
+  executeIssue,
+  fillSlots,
+  recoverAgentsOnShutdown,
+  recoverStaleIssues,
+} from "./executor";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
@@ -113,11 +120,13 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       min_interval_minutes: 60,
       max_issues_per_run: 5,
       timeout_minutes: 90,
+      inactivity_timeout_minutes: 30,
       model: "opus",
     },
     projects: {
       enabled: true,
       poll_interval_minutes: 10,
+      backlog_review_interval_minutes: 240,
       max_active_projects: 5,
       timeout_minutes: 60,
       model: "opus",
@@ -857,12 +866,83 @@ describe("recoverStaleIssues", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// recoverAgentsOnShutdown
+// ---------------------------------------------------------------------------
+
+describe("recoverAgentsOnShutdown", () => {
+  beforeEach(() => {
+    mockUpdateIssue.mockClear();
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("returns 0 and makes no API calls when agents list is empty", async () => {
+    const count = await recoverAgentsOnShutdown([], "ready-id");
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("returns 0 and makes no API calls when no agents have linearIssueId", async () => {
+    const agents = [{ linearIssueId: undefined }, { linearIssueId: undefined }];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("calls updateIssue for each agent with a linearIssueId", async () => {
+    const agents = [{ linearIssueId: "issue-1" }, { linearIssueId: "issue-2" }];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(2);
+    expect(mockUpdateIssue).toHaveBeenCalledTimes(2);
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-1", {
+      stateId: "ready-id",
+      comment: expect.stringContaining("SIGINT/SIGTERM"),
+    });
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-2", {
+      stateId: "ready-id",
+      comment: expect.stringContaining("SIGINT/SIGTERM"),
+    });
+  });
+
+  test("skips agents without linearIssueId and recovers those with one", async () => {
+    const agents = [
+      { linearIssueId: "issue-a" },
+      { linearIssueId: undefined },
+      { linearIssueId: "issue-b" },
+    ];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(2);
+    expect(mockUpdateIssue).toHaveBeenCalledTimes(2);
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-a", expect.anything());
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-b", expect.anything());
+  });
+
+  test("uses the provided readyStateId", async () => {
+    const agents = [{ linearIssueId: "issue-x" }];
+    await recoverAgentsOnShutdown(agents, "custom-ready-state");
+    expect(mockUpdateIssue).toHaveBeenCalledWith(
+      "issue-x",
+      expect.objectContaining({ stateId: "custom-ready-state" }),
+    );
+  });
+
+  test("posts a comment explaining the recovery", async () => {
+    const agents = [{ linearIssueId: "issue-y" }];
+    await recoverAgentsOnShutdown(agents, "ready-id");
+    const call = mockUpdateIssue.mock.calls[0];
+    expect(call[1].comment).toContain("Ready for re-execution");
+  });
+});
+
 // Restore the real linear module after all executor tests complete.
 // mock.restore() in afterEach does not undo mock.module() in Bun 1.3.9,
 // which causes cross-file interference with subsequent test files (e.g.
 // src/lib/linear.test.ts). Calling mock.module() here with the real
 // implementations (captured before any mocking) fixes the leakage.
 afterAll(() => {
+  mock.module("./lib/claude", () => ({
+    ..._realClaudeSnapshot,
+  }));
   mock.module("./lib/linear", () => ({
     ..._realLinearSnapshot,
   }));

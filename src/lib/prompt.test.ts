@@ -120,7 +120,7 @@ describe("loadPrompt project-local overrides", () => {
 
   beforeEach(() => {
     tmpDir = join("/tmp/claude-1002", `prompt-override-test-${Date.now()}`);
-    mkdirSync(join(tmpDir, ".claude-autopilot", "prompts"), {
+    mkdirSync(join(tmpDir, ".autopilot", "prompts"), {
       recursive: true,
     });
   });
@@ -136,12 +136,7 @@ describe("loadPrompt project-local overrides", () => {
   });
 
   test("uses project-local file when it exists (full override)", () => {
-    const overridePath = join(
-      tmpDir,
-      ".claude-autopilot",
-      "prompts",
-      "executor.md",
-    );
+    const overridePath = join(tmpDir, ".autopilot", "prompts", "executor.md");
     writeFileSync(overridePath, "# Custom executor prompt");
 
     const result = loadPrompt("executor", tmpDir);
@@ -150,12 +145,7 @@ describe("loadPrompt project-local overrides", () => {
 
   test("substitutes {{BASE_PROMPT}} with bundled content (partial override)", () => {
     const bundled = loadPrompt("executor");
-    const overridePath = join(
-      tmpDir,
-      ".claude-autopilot",
-      "prompts",
-      "executor.md",
-    );
+    const overridePath = join(tmpDir, ".autopilot", "prompts", "executor.md");
     writeFileSync(
       overridePath,
       "{{BASE_PROMPT}}\n\n## Project Rules\n- Always use pytest",
@@ -169,12 +159,7 @@ describe("loadPrompt project-local overrides", () => {
 
   test("partial override preserves all bundled prompt occurrences of {{BASE_PROMPT}}", () => {
     const bundled = loadPrompt("executor");
-    const overridePath = join(
-      tmpDir,
-      ".claude-autopilot",
-      "prompts",
-      "executor.md",
-    );
+    const overridePath = join(tmpDir, ".autopilot", "prompts", "executor.md");
     writeFileSync(
       overridePath,
       "Before\n{{BASE_PROMPT}}\nMiddle\n{{BASE_PROMPT}}\nAfter",
@@ -185,12 +170,7 @@ describe("loadPrompt project-local overrides", () => {
   });
 
   test("buildPrompt uses project-local override when projectPath provided", () => {
-    const overridePath = join(
-      tmpDir,
-      ".claude-autopilot",
-      "prompts",
-      "executor.md",
-    );
+    const overridePath = join(tmpDir, ".autopilot", "prompts", "executor.md");
     writeFileSync(overridePath, "Custom: {{ISSUE_ID}}");
 
     const result = buildPrompt("executor", { ISSUE_ID: "ENG-42" }, tmpDir);
@@ -198,12 +178,7 @@ describe("loadPrompt project-local overrides", () => {
   });
 
   test("loadPrompt without projectPath returns bundled prompt regardless of override files", () => {
-    const overridePath = join(
-      tmpDir,
-      ".claude-autopilot",
-      "prompts",
-      "executor.md",
-    );
+    const overridePath = join(tmpDir, ".autopilot", "prompts", "executor.md");
     writeFileSync(overridePath, "Should not be used");
 
     const bundled = loadPrompt("executor");

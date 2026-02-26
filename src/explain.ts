@@ -13,8 +13,9 @@ import { resolve } from "node:path";
 import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
+import { openDb } from "./lib/db";
 import { detectRepo } from "./lib/github";
-import { resolveLinearIds } from "./lib/linear";
+import { configureLinearAuth, resolveLinearIds } from "./lib/linear";
 import { fatal, header, info, ok, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 
@@ -30,7 +31,7 @@ if (!projectArg) {
   process.exit(1);
 }
 
-header("claude-autopilot explain");
+header("autopilot explain");
 
 const projectPath = resolveProjectPath(projectArg);
 info(`Project: ${projectPath}`);
@@ -39,11 +40,11 @@ const config = loadConfig(projectPath);
 
 // --- Check environment variables ---
 
-if (!process.env.LINEAR_API_KEY) {
+if (!process.env.LINEAR_API_KEY && !config.linear.oauth) {
   fatal(
-    "LINEAR_API_KEY environment variable is not set.\n" +
-      "Create one at: https://linear.app/settings/api\n" +
-      "Then: export LINEAR_API_KEY=lin_api_...",
+    "No Linear authentication configured.\n" +
+      "Option 1: Set LINEAR_API_KEY (https://linear.app/settings/api)\n" +
+      "Option 2: Configure linear.oauth in .claude-autopilot.yml and complete OAuth at /auth/linear",
   );
 }
 
@@ -61,7 +62,7 @@ if (
 }
 
 if (!config.linear.team) {
-  fatal("linear.team is not set in .claude-autopilot.yml");
+  fatal("linear.team is not set in .autopilot.yml");
 }
 
 if (!process.env.GITHUB_TOKEN) {
@@ -69,6 +70,22 @@ if (!process.env.GITHUB_TOKEN) {
     "GITHUB_TOKEN environment variable is not set.\n" +
       "The GitHub MCP inside the agent may fail without it.\n" +
       "Set: export GITHUB_TOKEN=ghp_...",
+  );
+}
+
+// --- Configure Linear auth (if persistence is available) ---
+
+if (config.persistence.enabled) {
+  const dbPath = resolve(projectPath, config.persistence.db_path);
+  const db = openDb(dbPath);
+  configureLinearAuth(
+    db,
+    config.linear.oauth
+      ? {
+          clientId: config.linear.oauth.client_id,
+          clientSecret: config.linear.oauth.client_secret,
+        }
+      : undefined,
   );
 }
 
@@ -125,7 +142,7 @@ const result = await runClaude({
   cwd: projectPath,
   label: "explain",
   timeoutMs: config.planning.timeout_minutes * 60 * 1000,
-  inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
+  inactivityMs: config.planning.inactivity_timeout_minutes * 60 * 1000,
   model: config.planning.model,
   sandbox: config.sandbox,
   mcpServers: buildMcpServers(),

@@ -1,6 +1,21 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import type { LinearClient } from "@linear/sdk";
 import type { ClaudeResult } from "./lib/claude";
+import * as _realClaude from "./lib/claude";
+
+// Snapshot of real claude module exports, captured before any mock.module()
+// calls. Used in afterAll to restore the module for subsequent test files,
+// because mock.restore() does not undo mock.module() in Bun 1.3.9.
+const _realClaudeSnapshot = { ..._realClaude };
+
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import {
   resetClient as resetLinearClient,
@@ -108,11 +123,13 @@ function makeConfig(): AutopilotConfig {
       min_interval_minutes: 60,
       max_issues_per_run: 5,
       timeout_minutes: 90,
+      inactivity_timeout_minutes: 30,
       model: "opus",
     },
     projects: {
       enabled: true,
       poll_interval_minutes: 10,
+      backlog_review_interval_minutes: 240,
       max_active_projects: 5,
       timeout_minutes: 60,
       model: "opus",
@@ -242,6 +259,66 @@ describe("shouldRunPlanning — backlog threshold", () => {
     );
     expect(calledStateIds).toContain("ready-id");
     expect(calledStateIds).toContain("triage-id");
+  });
+
+  test("forwards config labels filter to countIssuesInState", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    config.linear.labels = ["autopilot", "backend"];
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledFilters = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (
+          call[1] as {
+            filter: { labels?: { some: { name: { in: string[] } } } };
+          }
+        )?.filter?.labels,
+    );
+    // Both ready and triage calls should include the labels filter
+    expect(calledFilters[0]).toEqual({
+      some: { name: { in: ["autopilot", "backend"] } },
+    });
+    expect(calledFilters[1]).toEqual({
+      some: { name: { in: ["autopilot", "backend"] } },
+    });
+  });
+
+  test("forwards config projects filter to countIssuesInState", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    config.linear.projects = ["Alpha"];
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledProjects = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (
+          call[1] as {
+            filter: { project?: { name: { in: string[] } } };
+          }
+        )?.filter?.project,
+    );
+    expect(calledProjects[0]).toEqual({ name: { in: ["Alpha"] } });
+    expect(calledProjects[1]).toEqual({ name: { in: ["Alpha"] } });
+  });
+
+  test("omits label/project filters when config has empty arrays", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    // labels and projects default to [] in makeConfig()
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledFilters = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (call[1] as { filter: Record<string, unknown> })?.filter,
+    );
+    for (const f of calledFilters) {
+      expect(f).not.toHaveProperty("labels");
+      expect(f).not.toHaveProperty("project");
+    }
   });
 });
 
@@ -485,4 +562,13 @@ describe("runPlanning — crash path (runClaude rejects)", () => {
     expect(state.getPlanningStatus().lastResult).toBe("failed");
     expect(state.getHistory()[0].status).toBe("failed");
   });
+});
+
+// Restore the real claude module after all tests in this file so the mock
+// doesn't leak into subsequent test files. mock.restore() does NOT undo
+// mock.module() calls in Bun 1.3.9, so we must do this explicitly.
+afterAll(() => {
+  mock.module("./lib/claude", () => ({
+    ..._realClaudeSnapshot,
+  }));
 });

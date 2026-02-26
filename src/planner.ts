@@ -31,9 +31,13 @@ export async function shouldRunPlanning(opts: {
     }
   }
 
+  const filters = {
+    labels: config.linear.labels,
+    projects: config.linear.projects,
+  };
   const [readyCount, triageCount] = await Promise.all([
-    countIssuesInState(linearIds, linearIds.states.ready),
-    countIssuesInState(linearIds, linearIds.states.triage),
+    countIssuesInState(linearIds, linearIds.states.ready, filters),
+    countIssuesInState(linearIds, linearIds.states.triage, filters),
   ]);
   const backlogCount = readyCount + triageCount;
 
@@ -98,7 +102,7 @@ export async function runPlanning(opts: {
       cwd: projectPath,
       label: "planning",
       timeoutMs: config.planning.timeout_minutes * 60 * 1000,
-      inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
+      inactivityMs: config.planning.inactivity_timeout_minutes * 60 * 1000,
       model: config.planning.model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),

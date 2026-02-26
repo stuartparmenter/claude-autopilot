@@ -1,5 +1,5 @@
-# claude-autopilot configuration
-# Copy this file to your project root as `.claude-autopilot.yml` and fill in the values.
+# autopilot configuration
+# Copy this file to your project root as `.autopilot.yml` and fill in the values.
 # See docs/adding-a-project.md for the full setup guide.
 #
 # Project-specific details (tech stack, test commands, conventions, protected files)

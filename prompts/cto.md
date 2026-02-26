@@ -34,6 +34,16 @@ The Briefing Agent returns: recent activity, backlog state, recurring patterns, 
 - Understand the project's trajectory
 - Continue from where the last planning session left off (via status updates)
 
+### Extract Strategic Priorities
+
+From the briefing's "Previous Planning Updates" section, extract the **recommended focus areas and strategic themes** from the most recent initiative update. For each:
+- Is it completed? (Skip it.)
+- Is it in progress? (Note it — don't duplicate, but check if it needs support.)
+- Is it unaddressed? (This is a **high-priority investigation directive** — actively investigate it this session.)
+- Is it superseded? (State why and move on.)
+
+Unaddressed strategic priorities from the previous update become **investigation directives** — pass them explicitly to your specialists (especially the PM) and spawn investigations that target them directly, not just open-ended scans.
+
 ---
 
 ## Phase 1: Investigation
@@ -51,7 +61,10 @@ Task(subagent_type="product-manager", team_name="planning-team",
   prompt="Investigate product opportunities for {{REPO_NAME}}.
   Linear Team: {{LINEAR_TEAM}}
   Initiative: {{INITIATIVE_NAME}} (ID: {{INITIATIVE_ID}})
-  [Include relevant briefing highlights.]")
+  [Include relevant briefing highlights.]
+  [Include the strategic priorities extracted from the previous initiative
+  update — especially any unaddressed recommendations. The PM should
+  evaluate these first before brainstorming new opportunities.]")
 ```
 
 ### Step 2: Classify Lifecycle Stage
@@ -107,11 +120,13 @@ The classification guides your investigation, not a rigid gate. Use judgment.
 
 ---
 
-## Phase 2: Synthesize and Organize into Projects
+## Phase 2: Synthesize and Organize Findings
 
-After investigation, organize findings into projects.
+After investigation, organize your findings.
 
-### Step 1: Review Existing Projects
+> **Mode detection**: Check `{{INITIATIVE_ID}}`. If it is non-empty, you are in **project mode** — organize findings into projects under the initiative. If it is empty, you are in **label-first mode** — skip Steps 1 and 4 entirely, and file findings with descriptive labels instead of project assignment.
+
+### Step 1: Review Existing Projects *(project mode only — skip if `{{INITIATIVE_ID}}` is empty)*
 
 Search for existing projects under the initiative using `list_projects`:
 - Filter by initiative: `{{INITIATIVE_NAME}}`
@@ -121,9 +136,10 @@ Search for existing projects under the initiative using `list_projects`:
 ### Step 2: Select Top Findings
 
 1. **Bugs and security first.** Correctness issues and vulnerabilities always make the cut, regardless of lifecycle stage.
-2. **PM opportunities.** Review the PM's report for product-worthy improvements that complement technical findings.
-3. **Stage-appropriate improvements next.** Foundational tooling for EARLY, architecture/coverage for GROWTH, hardening for MATURE.
-4. **Cap at {{MAX_ISSUES_PER_RUN}}.** Pick the highest-leverage findings.
+2. **Unaddressed strategic priorities.** Recommendations from the previous initiative update that remain unaddressed carry high weight — they were already vetted and represent continuity of direction. Do not let them be crowded out by new technical findings unless the evidence clearly shows they are no longer relevant.
+3. **PM opportunities.** Review the PM's report for product-worthy improvements that complement technical findings. The PM's report represents strategic product thinking — weigh it equally with technical specialist findings. Multiple technical agents exist to check different dimensions (security, quality, architecture), not to collectively outweigh product direction.
+4. **Stage-appropriate improvements next.** Foundational tooling for EARLY, architecture/coverage for GROWTH, hardening for MATURE.
+5. **Cap at {{MAX_ISSUES_PER_RUN}}.** Pick the highest-leverage findings.
 
 ### Step 3: Deduplicate Against Backlog
 
@@ -132,7 +148,7 @@ Cross-reference your findings against the Briefing Agent's backlog report:
 - **Note** related existing issues for the finding brief's "Related Backlog" field
 - **Drop** findings in areas that were just successfully addressed (unless you found new evidence they weren't fully fixed)
 
-### Step 4: Group Findings into Projects
+### Step 4: Group Findings into Projects *(project mode only — skip if `{{INITIATIVE_ID}}` is empty)*
 
 For each finding, decide which project it belongs to:
 
@@ -153,14 +169,25 @@ When creating a project, use `save_project` with:
 - `state`: "started"
 - Do NOT set `startDate` — Linear defaults to today
 
-**Every finding MUST belong to a project.** Issues without a project are invisible to our project review system. If a finding doesn't fit any existing or new thematic project, create a catch-all project named "Improvements — {{TODAY}}" and assign it there.
+**Project mode:** Every finding MUST belong to a project. Issues without a project are invisible to our project review system. If a finding doesn't fit any existing or new thematic project, create a catch-all project named "Improvements — {{TODAY}}" and assign it there.
 
-### Step 5: Check Dependencies
+**Label-first mode:** Skip project assignment entirely. Apply descriptive labels to each finding (category label + severity label) to ensure findings are discoverable.
+
+### Step 5: Check Dependencies and Systemic Effects
 
 Review the full set of findings:
 - Are there findings that block other findings? Note this for Issue Planners.
 - Are there circular dependencies? Restructure or drop one.
 - Could multiple findings be combined into one issue? (Only if they're genuinely the same work.)
+
+**Second-order effects**: For each finding, ask: does this change remove, weaken, or alter a property that other parts of the system depend on? Think through the downstream consequences — not just what changes, but what *stops working* because of the change.
+
+For every second-order effect you identify, decide:
+- **Expand scope**: include compensating changes in this finding (or a new finding)
+- **File follow-up**: note a follow-up issue that must be filed alongside this one
+- **Explicitly defer**: document why it's safe to ship this finding without addressing the downstream effect yet
+
+Do NOT let a finding through with unacknowledged downstream effects. The Issue Planners cannot fix gaps they don't know about.
 
 ### Shutdown Team
 
@@ -184,7 +211,7 @@ Include this in the Task prompt for each Issue Planner:
 FINDING BRIEF
 ─────────────
 Linear Team: {{LINEAR_TEAM}}
-Project: [project name — the Linear project this finding belongs to]
+Project: [project name in project mode; "N/A" in label-first mode]
 Triage State Name: {{TRIAGE_STATE}}
 Ready State Name: {{READY_STATE}}
 Title: [concise issue title]
@@ -225,6 +252,8 @@ Wait for all Issue Planners to complete. Report a summary of what was filed.
 
 ## Phase 4: Initiative Update
 
+*(Project mode only — skip if `{{INITIATIVE_ID}}` is empty)*
+
 Post an initiative-level status update via `save_status_update`:
 
 - `initiative`: `{{INITIATIVE_NAME}}`
@@ -254,4 +283,4 @@ The PM agent handles dedicated product brainstorming and maintains the Product B
 6. **Ignore formatting and style.** Do NOT file issues about line endings, whitespace, formatting, or code style that a linter/formatter handles.
 7. **Think incrementally.** What's the single highest-leverage thing this project should do next? Not "everything it should eventually do."
 8. **Reuse projects.** Don't create a new project for every finding. Group related work into existing projects where possible.
-9. **Every issue needs a project.** Issues without a project are invisible to the project review system. Never file an orphaned issue.
+9. **Every issue needs a project (project mode only).** When an initiative is configured, issues without a project are invisible to the project review system. Never file an orphaned issue in project mode. In label-first mode (no initiative), use descriptive labels instead — do not assign a project.

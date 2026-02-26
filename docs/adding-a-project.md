@@ -1,6 +1,6 @@
 # Adding a Project
 
-This guide walks you through onboarding a new project repository for claude-autopilot. By the end, the executor will be able to pick up Linear issues, implement them, and open PRs against your project.
+This guide walks you through onboarding a new project repository for autopilot. By the end, the executor will be able to pick up Linear issues, implement them, and open PRs against your project.
 
 ---
 
@@ -18,7 +18,7 @@ Before starting, make sure you have:
 
 ## Step 1: Run the Setup Script
 
-From the claude-autopilot directory, run:
+From the autopilot directory, run:
 
 ```bash
 bun run setup /path/to/your/project
@@ -28,9 +28,9 @@ This script does the following:
 
 1. Verifies that the target path is a git repository
 2. Copies `CLAUDE.md` from the template into your project (if it does not already exist)
-3. Copies `.claude-autopilot.yml` config into your project (if it does not already exist)
+3. Copies `.autopilot.yml` config into your project (if it does not already exist)
 4. Creates `.claude/settings.json` with Agent Teams enabled and Linear MCP configured
-5. Adds `.claude-autopilot.yml` to `.gitignore` (it contains local config and should not be committed)
+5. Adds `.autopilot.yml` to `.gitignore` (it contains local config and should not be committed)
 
 ### What to expect
 
@@ -39,9 +39,9 @@ This script does the following:
 [OK]   /path/to/your/project is a git repository
 [INFO] Setting up project files...
 [OK]   Created CLAUDE.md — fill this in with your project details
-[OK]   Created .claude-autopilot.yml — fill this in with your project config
+[OK]   Created .autopilot.yml — fill this in with your project config
 [OK]   Created .claude/settings.json with Linear MCP and Agent Teams
-[OK]   Added .claude-autopilot.yml to .gitignore
+[OK]   Added .autopilot.yml to .gitignore
 
 === Project onboarded successfully! ===
 ```
@@ -52,7 +52,7 @@ This script does the following:
 |---------|----------|
 | "not a git repository" | Run `git init` in your project directory first |
 | "CLAUDE.md already exists, skipping" | This is fine. Delete the existing file and re-run if you want a fresh template |
-| ".claude-autopilot.yml already exists, skipping" | Same as above. Delete and re-run to get the default template |
+| ".autopilot.yml already exists, skipping" | Same as above. Delete and re-run to get the default template |
 
 ---
 
@@ -92,9 +92,9 @@ npm test
 
 ---
 
-## Step 3: Fill in .claude-autopilot.yml
+## Step 3: Fill in .autopilot.yml
 
-This is the configuration file that controls how claude-autopilot interacts with your project. Open `.claude-autopilot.yml` in your project and configure each section.
+This is the configuration file that controls how autopilot interacts with your project. Open `.autopilot.yml` in your project and configure each section.
 
 ### Required fields
 
@@ -177,7 +177,7 @@ Files the executor must never modify:
 project:
   protected_paths:
     - ".env"
-    - ".claude-autopilot.yml"
+    - ".autopilot.yml"
     - "CLAUDE.md"
 ```
 
@@ -221,7 +221,7 @@ project:
   protected_paths:
     - ".env"
     - ".env.local"
-    - ".claude-autopilot.yml"
+    - ".autopilot.yml"
     - "CLAUDE.md"
     - ".github/workflows"
 
@@ -300,7 +300,7 @@ Use this checklist to verify your setup:
 
 - [ ] `bun run setup /path/to/project` completed successfully
 - [ ] `CLAUDE.md` filled in with project details (architecture, commands, conventions)
-- [ ] `.claude-autopilot.yml` configured (team key, project name at minimum)
+- [ ] `.autopilot.yml` configured (team key, project name at minimum)
 - [ ] `LINEAR_API_KEY` environment variable set
 - [ ] `bun run start /path/to/project` starts successfully and shows dashboard
 - [ ] Dashboard accessible at http://localhost:7890

@@ -90,9 +90,7 @@ const projectPath = resolveProjectPath(process.argv[2]);
 const config = loadConfig(projectPath);
 
 if (!config.linear.team) {
-  fatal(
-    "linear.team is not set in .claude-autopilot.yml. Run 'bun run setup' first.",
-  );
+  fatal("linear.team is not set in .autopilot.yml. Run 'bun run setup' first.");
 }
 
 header("Syncing Linear issue templates");

@@ -166,6 +166,37 @@ export async function recoverStaleIssues(opts: {
 }
 
 /**
+ * Move In Progress issues back to Ready when the process is shutting down.
+ * Best-effort with a 10s timeout — does not add extra retry layers on top of
+ * updateIssue. Returns the count of issues recovered.
+ */
+export async function recoverAgentsOnShutdown(
+  agents: Array<{ linearIssueId?: string }>,
+  readyStateId: string,
+): Promise<number> {
+  const ids = agents
+    .map((a) => a.linearIssueId)
+    .filter((id): id is string => id !== undefined);
+
+  if (ids.length === 0) return 0;
+
+  await Promise.race([
+    Promise.allSettled(
+      ids.map((id) =>
+        updateIssue(id, {
+          stateId: readyStateId,
+          comment:
+            "Autopilot process was interrupted (SIGINT/SIGTERM). Moving issue back to Ready for re-execution.",
+        }),
+      ),
+    ),
+    Bun.sleep(10_000),
+  ]);
+
+  return ids.length;
+}
+
+/**
  * Fill available executor slots by starting agents for ready issues.
  * Returns an array of promises (one per started agent).
  */

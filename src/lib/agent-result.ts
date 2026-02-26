@@ -25,57 +25,62 @@ export function handleAgentResult(
   agentId: string,
   label: string,
 ): AgentResultHandled {
-  const metrics = {
+  const metrics: {
+    costUsd?: number;
+    durationMs?: number;
+    numTurns?: number;
+    sessionId?: string;
+  } = {
     costUsd: result.costUsd,
     durationMs: result.durationMs,
     numTurns: result.numTurns,
-    sessionId: result.sessionId,
   };
+  if (result.sessionId !== undefined) {
+    metrics.sessionId = result.sessionId;
+  }
+
+  const rawMessages =
+    result.rawMessages !== undefined ? result.rawMessages : undefined;
 
   if (result.inactivityTimedOut) {
     warn(`${label} inactive, timed out`);
-    state.completeAgent(
-      agentId,
-      "timed_out",
-      {
-        ...metrics,
-        error: "Inactivity timeout",
-      },
-      result.rawMessages,
-    );
+    const meta = { ...metrics, error: "Inactivity timeout" };
+    if (rawMessages !== undefined) {
+      state.completeAgent(agentId, "timed_out", meta, rawMessages);
+    } else {
+      state.completeAgent(agentId, "timed_out", meta);
+    }
     return { status: "timed_out", metrics };
   }
 
   if (result.timedOut) {
     warn(`${label} timed out`);
-    state.completeAgent(
-      agentId,
-      "timed_out",
-      {
-        ...metrics,
-        error: "Timed out",
-      },
-      result.rawMessages,
-    );
+    const meta = { ...metrics, error: "Timed out" };
+    if (rawMessages !== undefined) {
+      state.completeAgent(agentId, "timed_out", meta, rawMessages);
+    } else {
+      state.completeAgent(agentId, "timed_out", meta);
+    }
     return { status: "timed_out", metrics };
   }
 
   if (result.error) {
     warn(`${label} failed: ${result.error}`);
-    state.completeAgent(
-      agentId,
-      "failed",
-      {
-        ...metrics,
-        error: result.error,
-      },
-      result.rawMessages,
-    );
+    const meta = { ...metrics, error: result.error };
+    if (rawMessages !== undefined) {
+      state.completeAgent(agentId, "failed", meta, rawMessages);
+    } else {
+      state.completeAgent(agentId, "failed", meta);
+    }
     return { status: "failed", metrics };
   }
 
   ok(`${label} completed successfully`);
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  state.completeAgent(agentId, "completed", metrics, result.rawMessages);
+  if (rawMessages !== undefined) {
+    state.completeAgent(agentId, "completed", metrics, rawMessages);
+  } else {
+    state.completeAgent(agentId, "completed", metrics);
+  }
   return { status: "completed", metrics };
 }

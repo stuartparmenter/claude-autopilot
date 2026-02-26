@@ -148,22 +148,22 @@ Data flow: [Describe the primary data flow, e.g., "Client -> API Gateway -> Serv
 - [e.g., Database migrations are not reversible in production — always test locally first]
 - [e.g., The CI pipeline runs lint before tests — fix lint errors first to avoid wasted test runs]
 
-## claude-autopilot Integration
+## autopilot Integration
 
-This project is managed by [claude-autopilot](https://github.com/your-org/claude-autopilot). The automation agents interact with this project as follows:
+This project is managed by [autopilot](https://github.com/your-org/autopilot). The automation agents interact with this project as follows:
 
 - **Executor agent** picks up issues in the **Ready** (Todo) state in Linear, creates a branch, implements the change, and opens a PR.
 - **Planning agent** scans the codebase for improvements and files new issues to **Triage** in Linear for human review.
-- **Protected files** listed in `claude-autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
+- **Protected files** listed in `autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
 
 <!-- TODO: Update the link above and adjust terminology to match your Linear workflow states. -->
 
 ### Customizing Agent Prompts
 
-You can override or augment the built-in agent prompts without forking claude-autopilot. Place a Markdown file at:
+You can override or augment the built-in agent prompts without forking autopilot. Place a Markdown file at:
 
 ```
-.claude-autopilot/prompts/<agent-name>.md
+.autopilot/prompts/<agent-name>.md
 ```
 
 Where `<agent-name>` is one of: `executor`, `fixer`, `auditor`, `planner`, `verifier`, `security-reviewer`, `product-manager`.
@@ -171,7 +171,7 @@ Where `<agent-name>` is one of: `executor`, `fixer`, `auditor`, `planner`, `veri
 **Full override** — replace the entire bundled prompt:
 
 ```
-.claude-autopilot/prompts/executor.md
+.autopilot/prompts/executor.md
 ```
 ```markdown
 # My Custom Executor Prompt
@@ -193,4 +193,4 @@ Where `<agent-name>` is one of: `executor`, `fixer`, `auditor`, `planner`, `veri
 
 The `{{BASE_PROMPT}}` placeholder is replaced with the full content of the bundled prompt at runtime, so agents receive both the standard instructions and your project-specific additions.
 
-The override directory defaults to `.claude-autopilot/prompts` and can be changed via `project.prompt_dir` in `.claude-autopilot.yml`.
+The override directory defaults to `.autopilot/prompts` and can be changed via `project.prompt_dir` in `.autopilot.yml`.

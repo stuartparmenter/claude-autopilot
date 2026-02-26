@@ -1,16 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { AUTOPILOT_ROOT } from "./paths";
 
-export const AUTOPILOT_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../..",
-);
+// Re-export so existing callers that import from "./prompt" still work
+export { AUTOPILOT_ROOT } from "./paths";
 
 /**
  * Load a prompt template, checking for a project-local override first.
  *
- * If `projectPath` is provided, checks `<projectPath>/.claude-autopilot/prompts/<name>.md`
+ * If `projectPath` is provided, checks `<projectPath>/.autopilot/prompts/<name>.md`
  * before falling back to the bundled `prompts/<name>.md`.
  *
  * If the project-local file contains `{{BASE_PROMPT}}`, that placeholder is
@@ -25,7 +23,7 @@ export function loadPrompt(name: string, projectPath?: string): string {
 
   const overridePath = resolve(
     projectPath,
-    ".claude-autopilot",
+    ".autopilot",
     "prompts",
     `${name}.md`,
   );

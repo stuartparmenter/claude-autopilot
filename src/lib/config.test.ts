@@ -7,7 +7,7 @@ import { collectUnknownKeys, DEFAULTS, deepMerge, loadConfig } from "./config";
 let tmpDir: string;
 
 function writeConfig(content: string): string {
-  writeFileSync(join(tmpDir, ".claude-autopilot.yml"), content, "utf-8");
+  writeFileSync(join(tmpDir, ".autopilot.yml"), content, "utf-8");
   return tmpDir;
 }
 
@@ -118,19 +118,16 @@ describe("loadConfig", () => {
   });
 
   test("minimal YAML fills in defaults", () => {
-    writeFileSync(
-      join(tmpDir, ".claude-autopilot.yml"),
-      "linear:\n  team: myteam\n",
-    );
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "linear:\n  team: myteam\n");
     const config = loadConfig(tmpDir);
     expect(config.linear.team).toBe("myteam");
     expect(config.executor.parallel).toBe(3);
-    expect(config.executor.timeout_minutes).toBe(30);
+    expect(config.executor.timeout_minutes).toBe(60);
   });
 
   test("specific overrides are preserved", () => {
     writeFileSync(
-      join(tmpDir, ".claude-autopilot.yml"),
+      join(tmpDir, ".autopilot.yml"),
       "executor:\n  parallel: 5\n  timeout_minutes: 60\n",
     );
     const config = loadConfig(tmpDir);
@@ -140,14 +137,14 @@ describe("loadConfig", () => {
   });
 
   test("empty YAML returns defaults", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config).toEqual(DEFAULTS);
   });
 
   test("nested state overrides are merged", () => {
     writeFileSync(
-      join(tmpDir, ".claude-autopilot.yml"),
+      join(tmpDir, ".autopilot.yml"),
       "linear:\n  states:\n    ready: Backlog\n",
     );
     const config = loadConfig(tmpDir);
@@ -220,13 +217,13 @@ linear:
   });
 
   test("planning timeout_minutes defaults to 90", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.planning.timeout_minutes).toBe(90);
   });
 
   test("planning max_issues_per_run defaults to 5", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.planning.max_issues_per_run).toBe(5);
   });
@@ -242,8 +239,43 @@ planning:
     expect(config.planning.max_issues_per_run).toBe(3);
   });
 
+  test("planning inactivity_timeout_minutes defaults to 30", () => {
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.planning.inactivity_timeout_minutes).toBe(30);
+  });
+
+  test("planning inactivity_timeout_minutes can be overridden", () => {
+    const dir = writeConfig(`
+planning:
+  inactivity_timeout_minutes: 45
+`);
+    const config = loadConfig(dir);
+    expect(config.planning.inactivity_timeout_minutes).toBe(45);
+  });
+
+  test("planning inactivity_timeout_minutes throws below 1", () => {
+    const dir = writeConfig(`
+planning:
+  inactivity_timeout_minutes: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "planning.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  });
+
+  test("planning inactivity_timeout_minutes throws above 120", () => {
+    const dir = writeConfig(`
+planning:
+  inactivity_timeout_minutes: 121
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "planning.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  });
+
   test("poll_interval_minutes defaults to 5", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.executor.poll_interval_minutes).toBe(5);
   });
@@ -304,7 +336,7 @@ executor:
   });
 
   test("executor.parallel defaults to 3", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.executor.parallel).toBe(3);
   });
@@ -536,7 +568,7 @@ planning:
   });
 
   test("executor.stale_timeout_minutes defaults to 15", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.executor.stale_timeout_minutes).toBe(15);
   });
@@ -597,12 +629,12 @@ executor:
   });
 
   test("all default values pass validation", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     expect(() => loadConfig(tmpDir)).not.toThrow();
   });
 
   test("sandbox defaults are applied when YAML omits them", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.sandbox).toEqual({
       enabled: true,
@@ -630,7 +662,7 @@ sandbox:
   });
 
   test("monitor defaults are applied when YAML omits them", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.monitor.respond_to_reviews).toBe(false);
     expect(config.monitor.review_responder_timeout_minutes).toBe(20);
@@ -648,13 +680,13 @@ monitor:
   });
 
   test("empty YAML returns monitor.respond_to_reviews === false", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.monitor.respond_to_reviews).toBe(false);
   });
 
   test("budget defaults are applied when YAML omits them", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.budget).toEqual({
       daily_limit_usd: 0,
@@ -807,13 +839,13 @@ planning:
   });
 
   test("linear.labels defaults to empty array", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.linear.labels).toEqual([]);
   });
 
   test("linear.projects defaults to empty array", () => {
-    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
     const config = loadConfig(tmpDir);
     expect(config.linear.projects).toEqual([]);
   });

@@ -89,10 +89,12 @@ If any check fails, analyze and fix (max 3 attempts). If still failing after 3 a
 ### Push changes (only if code changes were made):
 
 ```
-git add -A
+git add <files you changed>
 git commit -m "{{ISSUE_ID}}: address review feedback"
 git push origin HEAD:{{BRANCH}}
 ```
+
+**NEVER use `git add -A` or `git add .`** — they can stage unrelated files (dotfiles, editor configs, etc.) that pollute the repo. Always add specific files by name.
 
 If the push fails due to diverged history, pull and retry once:
 ```
