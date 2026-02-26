@@ -18,7 +18,6 @@ export const SANDBOX_BASE_DOMAINS = [
   "mcp.linear.app",
 ];
 
-
 export function buildMcpServers(linearToken?: string): Record<string, unknown> {
   const token = linearToken ?? process.env.LINEAR_API_KEY;
   if (!token) {
