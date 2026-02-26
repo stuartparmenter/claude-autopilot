@@ -909,4 +909,158 @@ linear:
     expect(config.linear.labels).toEqual(["autopilot"]);
     expect(config.linear.projects).toEqual(["frontend", "backend"]);
   });
+
+  test("reviewer defaults are applied when YAML omits them", () => {
+    writeFileSync(join(tmpDir, ".autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.reviewer.enabled).toBe(false);
+    expect(config.reviewer.min_interval_minutes).toBe(120);
+    expect(config.reviewer.min_runs_before_review).toBe(10);
+    expect(config.reviewer.timeout_minutes).toBe(60);
+    expect(config.reviewer.model).toBe("opus");
+    expect(config.reviewer.max_issues_per_review).toBe(5);
+  });
+
+  test("reviewer config can be overridden", () => {
+    const dir = writeConfig(`
+reviewer:
+  enabled: true
+  min_interval_minutes: 60
+  min_runs_before_review: 5
+  max_issues_per_review: 3
+`);
+    const config = loadConfig(dir);
+    expect(config.reviewer.enabled).toBe(true);
+    expect(config.reviewer.min_interval_minutes).toBe(60);
+    expect(config.reviewer.min_runs_before_review).toBe(5);
+    expect(config.reviewer.max_issues_per_review).toBe(3);
+  });
+
+  test("reviewer.min_interval_minutes throws below 0", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_interval_minutes: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.min_interval_minutes must be a number between 0 and 1440",
+    );
+  });
+
+  test("reviewer.min_interval_minutes throws above 1440", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_interval_minutes: 1441
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.min_interval_minutes must be a number between 0 and 1440",
+    );
+  });
+
+  test("reviewer.min_interval_minutes accepts boundary value 0", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_interval_minutes: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("reviewer.min_interval_minutes accepts boundary value 1440", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_interval_minutes: 1440
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("reviewer.min_runs_before_review throws below 1", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_runs_before_review: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.min_runs_before_review must be an integer between 1 and 1000",
+    );
+  });
+
+  test("reviewer.min_runs_before_review throws above 1000", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_runs_before_review: 1001
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.min_runs_before_review must be an integer between 1 and 1000",
+    );
+  });
+
+  test("reviewer.min_runs_before_review throws for non-integer value", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_runs_before_review: 5.5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.min_runs_before_review must be an integer between 1 and 1000",
+    );
+  });
+
+  test("reviewer.min_runs_before_review accepts boundary value 1", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_runs_before_review: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("reviewer.min_runs_before_review accepts boundary value 1000", () => {
+    const dir = writeConfig(`
+reviewer:
+  min_runs_before_review: 1000
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("reviewer.max_issues_per_review throws below 1", () => {
+    const dir = writeConfig(`
+reviewer:
+  max_issues_per_review: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.max_issues_per_review must be an integer between 1 and 50",
+    );
+  });
+
+  test("reviewer.max_issues_per_review throws above 50", () => {
+    const dir = writeConfig(`
+reviewer:
+  max_issues_per_review: 51
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.max_issues_per_review must be an integer between 1 and 50",
+    );
+  });
+
+  test("reviewer.max_issues_per_review throws for non-integer value", () => {
+    const dir = writeConfig(`
+reviewer:
+  max_issues_per_review: 2.5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "reviewer.max_issues_per_review must be an integer between 1 and 50",
+    );
+  });
+
+  test("reviewer.max_issues_per_review accepts boundary value 1", () => {
+    const dir = writeConfig(`
+reviewer:
+  max_issues_per_review: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("reviewer.max_issues_per_review accepts boundary value 50", () => {
+    const dir = writeConfig(`
+reviewer:
+  max_issues_per_review: 50
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
 });
