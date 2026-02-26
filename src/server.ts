@@ -25,6 +25,7 @@ function randomSaying(): string {
 
 export interface DashboardOptions {
   authToken?: string;
+  secureCookie?: boolean;
   triggerAudit?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
   config?: AutopilotConfig;
@@ -167,6 +168,7 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           httpOnly: true,
           sameSite: "Strict",
           path: "/",
+          secure: options?.secureCookie,
         });
         return c.redirect("/");
       }
