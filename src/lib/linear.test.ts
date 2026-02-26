@@ -619,7 +619,7 @@ describe("getReadyIssues", () => {
   test("no filters — sends only team and state filter (backwards compat)", async () => {
     await getReadyIssues(TEST_IDS, 10);
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -631,7 +631,7 @@ describe("getReadyIssues", () => {
   test("labels filter — sends labels.some.name.in filter", async () => {
     await getReadyIssues(TEST_IDS, 10, { labels: ["bug", "autopilot"] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -644,7 +644,7 @@ describe("getReadyIssues", () => {
   test("projects filter — sends project.name.in filter", async () => {
     await getReadyIssues(TEST_IDS, 10, { projects: ["frontend", "backend"] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -660,7 +660,7 @@ describe("getReadyIssues", () => {
       projects: ["frontend"],
     });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
@@ -674,7 +674,7 @@ describe("getReadyIssues", () => {
   test("empty labels array — omits labels filter (same as no filter)", async () => {
     await getReadyIssues(TEST_IDS, 10, { labels: [], projects: [] });
 
-    expect(mockIssuesForReady).toHaveBeenCalledWith({
+    expect(mockReadyRawRequest).toHaveBeenCalledWith(expect.any(String), {
       filter: {
         team: { id: { eq: TEST_IDS.teamId } },
         state: { id: { eq: TEST_IDS.states.ready } },
