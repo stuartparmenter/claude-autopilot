@@ -225,6 +225,35 @@ export const DASHBOARD_CSS = `
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .triage-card {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .triage-card .issue-id {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--accent);
+  }
+  .triage-card .title {
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .triage-card .triage-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .action-btn.approve {
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .action-btn.approve:hover {
+    background: #1a3a1a;
+  }
   .pause-btn {
     padding: 4px 12px;
     border-radius: 4px;
@@ -267,7 +296,7 @@ export const DASHBOARD_CSS = `
   .action-btn.danger:hover {
     background: #3f1f1f;
   }
-  .auditor-badge {
+  .planning-badge {
     display: inline-block;
     font-size: 10px;
     padding: 2px 6px;
@@ -291,5 +320,10 @@ export const DASHBOARD_CSS = `
     border-radius: 50%;
     background: var(--green);
     animation: pulse 2s infinite;
+  }
+  .budget-bar {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 0 4px;
   }
 `;

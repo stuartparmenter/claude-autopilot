@@ -1,11 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { fatal } from "./logger";
+import { fatal, warn } from "./logger";
+
+export interface OAuthConfig {
+  client_id: string;
+  client_secret: string;
+}
 
 export interface LinearConfig {
   team: string;
-  project: string;
+  initiative: string;
+  labels: string[];
+  projects: string[];
+  oauth?: OAuthConfig;
   states: {
     triage: string;
     ready: string;
@@ -20,8 +28,8 @@ export interface LinearConfig {
 export interface LinearIds {
   teamId: string;
   teamKey: string;
-  projectId: string;
-  projectName: string;
+  initiativeId?: string;
+  initiativeName?: string;
   states: {
     triage: string;
     ready: string;
@@ -40,32 +48,30 @@ export interface ExecutorConfig {
   max_retries: number;
   inactivity_timeout_minutes: number;
   poll_interval_minutes: number;
+  stale_timeout_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
   commit_pattern: string;
   model: string;
-  planning_model: string;
 }
 
-export interface AuditorConfig {
+export interface PlanningConfig {
   schedule: "when_idle" | "daily" | "manual";
   min_ready_threshold: number;
+  min_interval_minutes: number;
   max_issues_per_run: number;
-  use_agent_teams: boolean;
-  skip_triage: boolean;
-  scan_dimensions: string[];
-  brainstorm_features: boolean;
-  brainstorm_dimensions: string[];
-  max_ideas_per_run: number;
+  timeout_minutes: number;
+  model: string;
+}
+
+export interface MonitorConfig {
+  respond_to_reviews: boolean;
+  review_responder_timeout_minutes: number;
 }
 
 export interface GithubConfig {
   repo: string; // "owner/repo" override — empty = auto-detect from git remote
   automerge: boolean; // Enable auto-merge on PRs created by the executor
-}
-
-export interface ProjectConfig {
-  name: string;
 }
 
 export interface SandboxConfig {
@@ -78,22 +84,44 @@ export interface SandboxConfig {
 export interface PersistenceConfig {
   enabled: boolean;
   db_path: string;
+  retention_days: number;
+}
+
+export interface BudgetConfig {
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  per_agent_limit_usd: number;
+  warn_at_percent: number;
+}
+
+export interface ProjectsConfig {
+  enabled: boolean;
+  poll_interval_minutes: number;
+  backlog_review_interval_minutes: number;
+  max_active_projects: number;
+  timeout_minutes: number;
+  model: string;
 }
 
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
-  auditor: AuditorConfig;
+  planning: PlanningConfig;
+  projects: ProjectsConfig;
+  monitor: MonitorConfig;
   github: GithubConfig;
-  project: ProjectConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
+  budget: BudgetConfig;
 }
 
 export const DEFAULTS: AutopilotConfig = {
   linear: {
     team: "",
-    project: "",
+    initiative: "",
+    labels: [],
+    projects: [],
+    oauth: undefined,
     states: {
       triage: "Triage",
       ready: "Todo",
@@ -105,58 +133,58 @@ export const DEFAULTS: AutopilotConfig = {
   },
   executor: {
     parallel: 3,
-    timeout_minutes: 30,
-    fixer_timeout_minutes: 20,
+    timeout_minutes: 60,
+    fixer_timeout_minutes: 60,
     max_fixer_attempts: 3,
     max_retries: 3,
     inactivity_timeout_minutes: 10,
     poll_interval_minutes: 5,
+    stale_timeout_minutes: 15,
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
     model: "sonnet",
-    planning_model: "opus",
   },
-  auditor: {
+  planning: {
     schedule: "when_idle",
     min_ready_threshold: 5,
-    max_issues_per_run: 10,
-    use_agent_teams: true,
-    skip_triage: true,
-    scan_dimensions: [
-      "test-coverage",
-      "error-handling",
-      "performance",
-      "security",
-      "code-quality",
-      "dependency-health",
-      "documentation",
-    ],
-    brainstorm_features: true,
-    brainstorm_dimensions: [
-      "user-facing-features",
-      "developer-experience",
-      "integrations",
-      "scalability",
-    ],
-    max_ideas_per_run: 5,
+    min_interval_minutes: 60,
+    max_issues_per_run: 5,
+    timeout_minutes: 90,
+    model: "opus",
+  },
+  monitor: {
+    respond_to_reviews: false,
+    review_responder_timeout_minutes: 20,
   },
   github: {
     repo: "",
     automerge: false,
   },
-  project: {
-    name: "",
-  },
   persistence: {
     enabled: true,
     db_path: ".claude/autopilot.db",
+    retention_days: 30,
+  },
+  projects: {
+    enabled: true,
+    poll_interval_minutes: 10,
+    backlog_review_interval_minutes: 240,
+    max_active_projects: 5,
+    timeout_minutes: 60,
+    model: "opus",
   },
   sandbox: {
     enabled: true,
     auto_allow_bash: true,
     network_restricted: false,
     extra_allowed_domains: [],
+  },
+  budget: {
+    daily_limit_usd: 0,
+    monthly_limit_usd: 0,
+    per_agent_limit_usd: 0,
+    warn_at_percent: 80,
   },
 };
 
@@ -187,11 +215,44 @@ export function deepMerge<T extends Record<string, unknown>>(
   return result;
 }
 
+export function collectUnknownKeys(
+  source: Record<string, unknown>,
+  reference: Record<string, unknown>,
+  prefix = "",
+): string[] {
+  const unknown: string[] = [];
+  for (const key of Object.keys(source)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (!(key in reference)) {
+      unknown.push(path);
+    } else {
+      const sourceVal = source[key];
+      const refVal = reference[key];
+      if (
+        sourceVal &&
+        typeof sourceVal === "object" &&
+        !Array.isArray(sourceVal) &&
+        refVal &&
+        typeof refVal === "object" &&
+        !Array.isArray(refVal)
+      ) {
+        unknown.push(
+          ...collectUnknownKeys(
+            sourceVal as Record<string, unknown>,
+            refVal as Record<string, unknown>,
+            path,
+          ),
+        );
+      }
+    }
+  }
+  return unknown;
+}
+
 function validateConfigStrings(config: AutopilotConfig): void {
   const fields: Array<[string, string]> = [
-    ["project.name", config.project.name],
     ["linear.team", config.linear.team],
-    ["linear.project", config.linear.project],
+    ["linear.initiative", config.linear.initiative],
     ["linear.states.triage", config.linear.states.triage],
     ["linear.states.ready", config.linear.states.ready],
     ["linear.states.in_progress", config.linear.states.in_progress],
@@ -201,6 +262,7 @@ function validateConfigStrings(config: AutopilotConfig): void {
   ];
 
   for (const [key, value] of fields) {
+    if (!value) continue;
     if (/[\r\n]/.test(value)) {
       throw new Error(
         `Config validation error: "${key}" must not contain newline characters`,
@@ -212,10 +274,24 @@ function validateConfigStrings(config: AutopilotConfig): void {
       );
     }
   }
+
+  for (const [arrayKey, array] of [
+    ["linear.labels", config.linear.labels],
+    ["linear.projects", config.linear.projects],
+  ] as [string, string[]][]) {
+    for (let i = 0; i < array.length; i++) {
+      const item = array[i];
+      if (typeof item !== "string" || item.trim() === "") {
+        throw new Error(
+          `Config validation error: "${arrayKey}[${i}]" must not be an empty string`,
+        );
+      }
+    }
+  }
 }
 
 export function loadConfig(projectPath: string): AutopilotConfig {
-  const configPath = resolve(projectPath, ".claude-autopilot.yml");
+  const configPath = resolve(projectPath, ".autopilot.yml");
   if (!existsSync(configPath)) {
     throw new Error(
       `Config file not found: ${configPath}\nRun 'bun run setup' first.`,
@@ -229,6 +305,16 @@ export function loadConfig(projectPath: string): AutopilotConfig {
     DEFAULTS as unknown as Record<string, unknown>,
     parsed,
   ) as unknown as AutopilotConfig;
+
+  const unknownKeys = collectUnknownKeys(
+    parsed,
+    DEFAULTS as unknown as Record<string, unknown>,
+  );
+  for (const key of unknownKeys) {
+    warn(
+      `Unknown config key "${key}" in .autopilot.yml — this key has no effect. Check for typos.`,
+    );
+  }
 
   validateConfigStrings(config);
 
@@ -290,26 +376,37 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   }
 
   if (
-    typeof config.auditor.min_ready_threshold !== "number" ||
-    Number.isNaN(config.auditor.min_ready_threshold) ||
-    !Number.isInteger(config.auditor.min_ready_threshold) ||
-    config.auditor.min_ready_threshold < 0 ||
-    config.auditor.min_ready_threshold > 1000
+    typeof config.planning.min_interval_minutes !== "number" ||
+    Number.isNaN(config.planning.min_interval_minutes) ||
+    config.planning.min_interval_minutes < 0 ||
+    config.planning.min_interval_minutes > 1440
   ) {
     throw new Error(
-      "Config validation error: auditor.min_ready_threshold must be an integer between 0 and 1000",
+      "Config validation error: planning.min_interval_minutes must be a number between 0 and 1440",
     );
   }
 
   if (
-    typeof config.auditor.max_issues_per_run !== "number" ||
-    Number.isNaN(config.auditor.max_issues_per_run) ||
-    !Number.isInteger(config.auditor.max_issues_per_run) ||
-    config.auditor.max_issues_per_run < 1 ||
-    config.auditor.max_issues_per_run > 50
+    typeof config.planning.min_ready_threshold !== "number" ||
+    Number.isNaN(config.planning.min_ready_threshold) ||
+    !Number.isInteger(config.planning.min_ready_threshold) ||
+    config.planning.min_ready_threshold < 0 ||
+    config.planning.min_ready_threshold > 1000
   ) {
     throw new Error(
-      "Config validation error: auditor.max_issues_per_run must be an integer between 1 and 50",
+      "Config validation error: planning.min_ready_threshold must be an integer between 0 and 1000",
+    );
+  }
+
+  if (
+    typeof config.planning.max_issues_per_run !== "number" ||
+    Number.isNaN(config.planning.max_issues_per_run) ||
+    !Number.isInteger(config.planning.max_issues_per_run) ||
+    config.planning.max_issues_per_run < 1 ||
+    config.planning.max_issues_per_run > 50
+  ) {
+    throw new Error(
+      "Config validation error: planning.max_issues_per_run must be an integer between 1 and 50",
     );
   }
 
@@ -333,6 +430,42 @@ export function loadConfig(projectPath: string): AutopilotConfig {
     throw new Error(
       "Config validation error: executor.max_fixer_attempts must be an integer between 1 and 10",
     );
+  }
+
+  if (
+    typeof config.executor.stale_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.stale_timeout_minutes) ||
+    !Number.isInteger(config.executor.stale_timeout_minutes) ||
+    config.executor.stale_timeout_minutes < 5 ||
+    config.executor.stale_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.stale_timeout_minutes must be an integer between 5 and 120",
+    );
+  }
+
+  if (
+    typeof config.budget.warn_at_percent !== "number" ||
+    Number.isNaN(config.budget.warn_at_percent) ||
+    config.budget.warn_at_percent < 0 ||
+    config.budget.warn_at_percent > 100
+  ) {
+    throw new Error(
+      "Config validation error: budget.warn_at_percent must be a number between 0 and 100",
+    );
+  }
+
+  for (const field of [
+    "daily_limit_usd",
+    "monthly_limit_usd",
+    "per_agent_limit_usd",
+  ] as const) {
+    const value = config.budget[field];
+    if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
+      throw new Error(
+        `Config validation error: budget.${field} must be a non-negative number`,
+      );
+    }
   }
 
   return config;

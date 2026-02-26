@@ -148,12 +148,49 @@ Data flow: [Describe the primary data flow, e.g., "Client -> API Gateway -> Serv
 - [e.g., Database migrations are not reversible in production — always test locally first]
 - [e.g., The CI pipeline runs lint before tests — fix lint errors first to avoid wasted test runs]
 
-## claude-autopilot Integration
+## autopilot Integration
 
-This project is managed by [claude-autopilot](https://github.com/your-org/claude-autopilot). The automation agents interact with this project as follows:
+This project is managed by [autopilot](https://github.com/your-org/autopilot). The automation agents interact with this project as follows:
 
 - **Executor agent** picks up issues in the **Ready** (Todo) state in Linear, creates a branch, implements the change, and opens a PR.
-- **Auditor agent** scans the codebase for improvements and files new issues to **Triage** in Linear for human review.
-- **Protected files** listed in `claude-autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
+- **Planning agent** scans the codebase for improvements and files new issues to **Triage** in Linear for human review.
+- **Protected files** listed in `autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
 
 <!-- TODO: Update the link above and adjust terminology to match your Linear workflow states. -->
+
+### Customizing Agent Prompts
+
+You can override or augment the built-in agent prompts without forking autopilot. Place a Markdown file at:
+
+```
+.autopilot/prompts/<agent-name>.md
+```
+
+Where `<agent-name>` is one of: `executor`, `fixer`, `auditor`, `planner`, `verifier`, `security-reviewer`, `product-manager`.
+
+**Full override** — replace the entire bundled prompt:
+
+```
+.autopilot/prompts/executor.md
+```
+```markdown
+# My Custom Executor Prompt
+... (your full prompt here) ...
+```
+
+**Partial override** — augment the bundled prompt with project-specific rules using `{{BASE_PROMPT}}`:
+
+```markdown
+{{BASE_PROMPT}}
+
+## Project-Specific Rules
+
+- Always run `pytest` for tests (not `unittest`)
+- All database queries must use the ORM — no raw SQL
+- Follow the error handling conventions in `src/errors.py`
+- Never modify files under `migrations/` directly
+```
+
+The `{{BASE_PROMPT}}` placeholder is replaced with the full content of the bundled prompt at runtime, so agents receive both the standard instructions and your project-specific additions.
+
+The override directory defaults to `.autopilot/prompts` and can be changed via `project.prompt_dir` in `.autopilot.yml`.

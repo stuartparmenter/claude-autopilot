@@ -9,6 +9,7 @@ process.env.GITHUB_TOKEN = "test-token-github";
 let prData: Record<string, unknown> = {
   merged: false,
   mergeable: true,
+  node_id: "PR_12345",
   head: { ref: "feature/test", sha: "abc123" },
 };
 let combinedStatusData: Record<string, unknown> = {
@@ -16,6 +17,14 @@ let combinedStatusData: Record<string, unknown> = {
   statuses: [],
 };
 let checkRunsData: Record<string, unknown> = { check_runs: [] };
+let reviewsData: Record<string, unknown>[] = [];
+let reviewCommentsData: Record<string, unknown>[] = [];
+let reposData: Record<string, unknown> = {
+  allow_merge_commit: true,
+  allow_squash_merge: true,
+  allow_rebase_merge: true,
+};
+let graphqlShouldReject = false;
 
 const mockPullsGet = mock(() => Promise.resolve({ data: prData }));
 const mockGetCombinedStatus = mock(() =>
@@ -24,19 +33,43 @@ const mockGetCombinedStatus = mock(() =>
 const mockChecksListForRef = mock(() =>
   Promise.resolve({ data: checkRunsData }),
 );
+const mockListReviews = mock(() => Promise.resolve({ data: reviewsData }));
+const mockListReviewComments = mock(() =>
+  Promise.resolve({ data: reviewCommentsData }),
+);
+const mockReposGet = mock(() => Promise.resolve({ data: reposData }));
+const mockGraphql = mock(() =>
+  graphqlShouldReject
+    ? Promise.reject(new Error("GraphQL mutation failed"))
+    : Promise.resolve({}),
+);
 
 // Mock octokit so github.ts uses our mock Octokit client.
 mock.module("octokit", () => ({
   Octokit: class MockOctokit {
     rest = {
-      pulls: { get: mockPullsGet },
-      repos: { getCombinedStatusForRef: mockGetCombinedStatus },
+      pulls: {
+        get: mockPullsGet,
+        listReviews: mockListReviews,
+        listReviewComments: mockListReviewComments,
+      },
+      repos: {
+        getCombinedStatusForRef: mockGetCombinedStatus,
+        get: mockReposGet,
+      },
       checks: { listForRef: mockChecksListForRef },
     };
+    graphql = mockGraphql;
   },
 }));
 
-import { detectRepo, getPRStatus, resetClient } from "./github";
+import {
+  detectRepo,
+  enableAutoMerge,
+  getPRReviewInfo,
+  getPRStatus,
+  resetClient,
+} from "./github";
 
 // ---------------------------------------------------------------------------
 // detectRepo — config override path (no Bun.spawnSync needed)
@@ -295,5 +328,239 @@ describe("getPRStatus", () => {
     const status = await getPRStatus("owner", "repo", 9);
 
     expect(status.branch).toBe("feature/my-branch");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPRReviewInfo — review status aggregation
+// ---------------------------------------------------------------------------
+
+describe("getPRReviewInfo", () => {
+  beforeEach(() => {
+    resetClient();
+    reviewsData = [];
+    reviewCommentsData = [];
+  });
+
+  test("returns hasChangesRequested:false when no reviews", async () => {
+    reviewsData = [];
+    reviewCommentsData = [];
+
+    const info = await getPRReviewInfo("owner", "repo", 1);
+
+    expect(info.hasChangesRequested).toBe(false);
+    expect(info.latestChangesRequestedReviewId).toBeNull();
+    expect(info.reviewComments).toBe("");
+    expect(info.reviewSummaries).toBe("");
+  });
+
+  test("returns hasChangesRequested:true when a review is CHANGES_REQUESTED", async () => {
+    reviewsData = [
+      {
+        id: 100,
+        user: { login: "reviewer1" },
+        state: "CHANGES_REQUESTED",
+        body: "Please fix the naming",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 2);
+
+    expect(info.hasChangesRequested).toBe(true);
+    expect(info.latestChangesRequestedReviewId).toBe("100");
+  });
+
+  test("returns hasChangesRequested:false when latest review per user is APPROVED", async () => {
+    // User approved after initially requesting changes
+    reviewsData = [
+      {
+        id: 101,
+        user: { login: "reviewer1" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix it",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+      {
+        id: 102,
+        user: { login: "reviewer1" },
+        state: "APPROVED",
+        body: "",
+        submitted_at: "2026-01-01T12:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 3);
+
+    expect(info.hasChangesRequested).toBe(false);
+    expect(info.latestChangesRequestedReviewId).toBeNull();
+  });
+
+  test("picks latest review per user (not chronological order of all reviews)", async () => {
+    // user A: earlier = CHANGES_REQUESTED, later = APPROVED
+    // user B: CHANGES_REQUESTED
+    reviewsData = [
+      {
+        id: 200,
+        user: { login: "userA" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T09:00:00Z",
+      },
+      {
+        id: 201,
+        user: { login: "userA" },
+        state: "APPROVED",
+        body: "",
+        submitted_at: "2026-01-01T11:00:00Z",
+      },
+      {
+        id: 202,
+        user: { login: "userB" },
+        state: "CHANGES_REQUESTED",
+        body: "And this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 4);
+
+    // Only userB's CHANGES_REQUESTED should count
+    expect(info.hasChangesRequested).toBe(true);
+    expect(info.latestChangesRequestedReviewId).toBe("202");
+  });
+
+  test("latestChangesRequestedReviewId is the most recent when multiple users request changes", async () => {
+    reviewsData = [
+      {
+        id: 300,
+        user: { login: "userA" },
+        state: "CHANGES_REQUESTED",
+        body: "Feedback A",
+        submitted_at: "2026-01-01T08:00:00Z",
+      },
+      {
+        id: 301,
+        user: { login: "userB" },
+        state: "CHANGES_REQUESTED",
+        body: "Feedback B",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 5);
+
+    expect(info.hasChangesRequested).toBe(true);
+    // userB's review (301) is more recent
+    expect(info.latestChangesRequestedReviewId).toBe("301");
+  });
+
+  test("reviewSummaries contains body text from CHANGES_REQUESTED reviews", async () => {
+    reviewsData = [
+      {
+        id: 400,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "The naming is wrong",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 6);
+
+    expect(info.reviewSummaries).toContain("alice");
+    expect(info.reviewSummaries).toContain("The naming is wrong");
+  });
+
+  test("reviewComments contains inline comment text", async () => {
+    reviewsData = [];
+    reviewCommentsData = [
+      {
+        id: 500,
+        user: { login: "bob" },
+        body: "Use const here",
+        path: "src/foo.ts",
+        line: 42,
+        original_line: 42,
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 7);
+
+    expect(info.reviewComments).toContain("src/foo.ts");
+    expect(info.reviewComments).toContain("42");
+    expect(info.reviewComments).toContain("Use const here");
+    expect(info.reviewComments).toContain("bob");
+  });
+
+  test("handles null submitted_at without throwing", async () => {
+    reviewsData = [
+      {
+        id: 600,
+        user: { login: "reviewer" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix it",
+        submitted_at: null,
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 8);
+
+    expect(info.hasChangesRequested).toBe(true);
+    expect(info.latestChangesRequestedReviewId).toBe("600");
+  });
+
+  test("handles null user without throwing", async () => {
+    reviewsData = [
+      {
+        id: 700,
+        user: null,
+        state: "CHANGES_REQUESTED",
+        body: "Fix it",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const info = await getPRReviewInfo("owner", "repo", 9);
+
+    expect(info.hasChangesRequested).toBe(true);
+    expect(info.reviewSummaries).toContain("unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enableAutoMerge — success and failure paths
+// ---------------------------------------------------------------------------
+
+describe("enableAutoMerge", () => {
+  beforeEach(() => {
+    resetClient();
+    prData = {
+      merged: false,
+      mergeable: true,
+      node_id: "PR_12345",
+      head: { ref: "feature/test", sha: "abc123" },
+    };
+    reposData = {
+      allow_merge_commit: true,
+      allow_squash_merge: true,
+      allow_rebase_merge: true,
+    };
+    graphqlShouldReject = false;
+  });
+
+  test("returns success message when GraphQL call succeeds", async () => {
+    const result = await enableAutoMerge("owner", "repo", 42);
+
+    expect(result).toBe("Auto-merge (merge) enabled for PR #42");
+  });
+
+  test("returns failure message when GraphQL call fails (never throws)", async () => {
+    graphqlShouldReject = true;
+
+    const result = await enableAutoMerge("owner", "repo", 99);
+
+    expect(result).toContain("Failed to enable auto-merge");
+    expect(result).toContain("GraphQL mutation failed");
   });
 });

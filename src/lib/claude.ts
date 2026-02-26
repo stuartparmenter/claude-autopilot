@@ -1,28 +1,24 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
-  createSdkMcpServer,
+  type AgentDefinition,
   query,
-  type SDKAssistantMessage,
-  type SDKResultError,
-  tool,
+  type SdkPluginConfig,
 } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
 import type { ActivityEntry } from "../state";
+import { makeErrorActivity, processAgentMessage } from "./activity";
+import { buildQueryOptions, buildSandboxConfig } from "./agent-config";
 import type { SandboxConfig } from "./config";
-import { enableAutoMerge } from "./github";
 import { info, warn } from "./logger";
+import { AUTOPILOT_ROOT } from "./paths";
 import { createWorktree, removeWorktree } from "./worktree";
 
 /** Worktree functions indirected through a mutable object so tests can replace them without mock.module(). */
 export const _worktree = { createWorktree, removeWorktree };
 
-/** Domains agents always need access to when network is restricted. */
-const SANDBOX_BASE_DOMAINS = [
-  "github.com",
-  "api.github.com",
-  "api.githubcopilot.com",
-  "mcp.linear.app",
-];
+// Re-export for backward compatibility — callers import these from "./lib/claude"
+export { buildAgentEnv, buildMcpServers } from "./agent-config";
 
 // Active Query handles — used by closeAllAgents() to forcefully kill
 // child processes on shutdown (sync SIGTERM + 5s SIGKILL escalation).
@@ -85,6 +81,7 @@ export interface ClaudeResult {
   timedOut: boolean;
   inactivityTimedOut: boolean;
   error?: string;
+  rawMessages?: unknown[];
 }
 
 /** Maps tool names to the input field used in their activity summary. */
@@ -123,43 +120,6 @@ export function summarizeToolUse(
   return `Tool: ${toolName}`;
 }
 
-export function buildMcpServers(): Record<string, unknown> {
-  const autoMergeTool = tool(
-    "enable_auto_merge",
-    "Enable auto-merge on a GitHub pull request. Automatically detects the repo's allowed merge method. Requires the repo to have auto-merge enabled and branch protection rules configured.",
-    {
-      owner: z.string().describe("Repository owner (e.g. 'octocat')"),
-      repo: z.string().describe("Repository name (e.g. 'hello-world')"),
-      pull_number: z.number().describe("Pull request number"),
-    },
-    async (args) => {
-      const msg = await enableAutoMerge(
-        args.owner,
-        args.repo,
-        args.pull_number,
-      );
-      return { content: [{ type: "text" as const, text: msg }] };
-    },
-  );
-
-  return {
-    linear: {
-      type: "http",
-      url: "https://mcp.linear.app/mcp",
-      headers: { Authorization: `Bearer ${process.env.LINEAR_API_KEY}` },
-    },
-    github: {
-      type: "http",
-      url: "https://api.githubcopilot.com/mcp/",
-      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
-    },
-    autopilot: createSdkMcpServer({
-      name: "autopilot",
-      tools: [autoMergeTool],
-    }),
-  };
-}
-
 /**
  * Run Claude Code with the Agent SDK.
  * Sends a prompt, runs it against a codebase directory, and returns structured results.
@@ -174,6 +134,8 @@ export async function runClaude(opts: {
   inactivityMs?: number;
   model?: string;
   sandbox?: SandboxConfig;
+  agents?: Record<string, AgentDefinition>;
+  plugins?: SdkPluginConfig[];
   mcpServers?: Record<string, unknown>;
   parentSignal?: AbortSignal;
   onControllerReady?: (controller: AbortController) => void;
@@ -217,6 +179,7 @@ export async function runClaude(opts: {
   };
 
   let worktreeName: string | undefined;
+  let agentTmpDir: string | undefined;
   let inactivityTimedOut = false;
   let loopCompleted = false;
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,53 +190,40 @@ export async function runClaude(opts: {
   const keepBranch = !!opts.worktreeBranch;
 
   try {
-    // Build query options declaratively
-    const queryOpts: Record<string, unknown> = {
-      cwd: opts.cwd,
-      abortController: controller,
-      tools: { type: "preset", preset: "claude_code" },
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      settingSources: ["project"],
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      stderr: (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
-      ...(opts.mcpServers && { mcpServers: opts.mcpServers }),
-      ...(opts.model && { model: opts.model }),
-      // NOTE: SDK Setup hooks don't fire reliably for programmatic callbacks,
-      // so we release the spawn slot on the init stream message instead (below).
-    };
+    const queryOpts = buildQueryOptions(
+      opts.cwd,
+      controller,
+      (data: string) => warn(`${tag}[stderr] ${data.trimEnd()}`),
+      {
+        mcpServers: opts.mcpServers,
+        model: opts.model,
+        agents: opts.agents,
+        plugins: opts.plugins,
+      },
+    );
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
-      const sandbox: Record<string, unknown> = {
-        enabled: true,
-        autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
-        allowUnsandboxedCommands: false,
-        filesystem: {
-          allowWrite: [
-            // Git worktrees share the parent repo's .git directory
-            resolve(opts.cwd, ".git"),
-            // Allow /tmp for Claude Code internals, git, bun, ssh-keygen, etc.
-            // Per-agent TMPDIR scoping is blocked by SDK overriding env vars:
-            // https://github.com/anthropics/claude-code/issues/15700
-            "/tmp",
-          ],
-        },
+      // Create a dedicated temp directory for this agent.
+      // CLAUDE_CODE_TMPDIR tells Claude Code where to put internal temp files
+      // (it appends /claude/ to this path). TMPDIR covers git, bun, etc.
+      agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
+      queryOpts.env = {
+        ...process.env,
+        TMPDIR: agentTmpDir,
+        CLAUDE_CODE_TMPDIR: agentTmpDir,
       };
-      if (opts.sandbox.network_restricted) {
-        const network: Record<string, unknown> = {
-          allowedDomains: [
-            ...SANDBOX_BASE_DOMAINS,
-            ...(opts.sandbox.extra_allowed_domains ?? []),
-          ],
-        };
-        // Allow SSH agent socket for git commit signing
-        if (process.env.SSH_AUTH_SOCK) {
-          network.allowUnixSockets = [process.env.SSH_AUTH_SOCK];
-        }
-        sandbox.network = network;
-      }
-      queryOpts.sandbox = sandbox;
+      queryOpts.sandbox = buildSandboxConfig(opts.cwd, opts.sandbox);
+
+      // Inject sandbox-guard plugin: enforces filesystem restrictions for
+      // Write/Edit tools which bypass bwrap (only Bash is sandboxed at OS level).
+      // See: https://github.com/anthropics/claude-code/issues/29048
+      const sandboxGuard: SdkPluginConfig = {
+        type: "local",
+        path: resolve(AUTOPILOT_ROOT, "plugins/sandbox-guard"),
+      };
+      const existing = (queryOpts.plugins ?? []) as SdkPluginConfig[];
+      queryOpts.plugins = [...existing, sandboxGuard];
     }
 
     // Self-managed worktrees: create before spawning, clean up in finally
@@ -338,72 +288,37 @@ export async function runClaude(opts: {
       });
     }
 
+    const rawMessages: unknown[] = [];
+
     const runSdkLoop = async () => {
       for await (const message of q) {
         lastActivityAt = Date.now();
+        rawMessages.push(message);
 
-        if (message.type === "system" && message.subtype === "init") {
-          result.sessionId = message.session_id;
+        const processed = processAgentMessage(message, queryOpts.cwd as string);
+
+        for (const entry of processed.activities) {
+          emit?.(entry);
+        }
+
+        if (processed.sessionId !== undefined) {
+          result.sessionId = processed.sessionId;
           releaseSpawnSlot?.();
-          emit?.({
-            timestamp: Date.now(),
-            type: "status",
-            summary: "Agent started",
-          });
         }
 
-        if (message.type === "assistant" && message.message) {
-          const { content } = (message as SDKAssistantMessage).message;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block.type === "tool_use" && "name" in block) {
-                emit?.({
-                  timestamp: Date.now(),
-                  type: "tool_use",
-                  summary: summarizeToolUse(
-                    block.name,
-                    block.input,
-                    queryOpts.cwd as string,
-                  ),
-                });
-              } else if (block.type === "text" && "text" in block) {
-                emit?.({
-                  timestamp: Date.now(),
-                  type: "text",
-                  summary: block.text.slice(0, 200),
-                  detail: block.text,
-                });
-              }
-            }
-          }
+        if (processed.successResult) {
+          result.result = processed.successResult.result;
+          result.costUsd = processed.successResult.costUsd;
+          result.durationMs = processed.successResult.durationMs;
+          result.numTurns = processed.successResult.numTurns;
         }
 
-        if (message.type === "result") {
-          if (message.subtype === "success") {
-            result.result = message.result;
-            result.costUsd = message.total_cost_usd;
-            result.durationMs = message.duration_ms;
-            result.numTurns = message.num_turns;
-            emit?.({
-              timestamp: Date.now(),
-              type: "result",
-              summary: "Agent completed successfully",
-            });
-          } else {
-            const errResult = message as SDKResultError;
-            const errSummary = errResult.errors?.length
-              ? errResult.errors.join("; ")
-              : errResult.subtype;
-            result.error = errSummary;
-            emit?.({
-              timestamp: Date.now(),
-              type: "error",
-              summary: `Agent error: ${errSummary.slice(0, 200)}`,
-            });
-          }
+        if (processed.errorMessage !== undefined) {
+          result.error = processed.errorMessage;
         }
       }
       loopCompleted = true;
+      result.rawMessages = rawMessages;
     };
 
     // Hard kill safety net: if the SDK async iterator doesn't exit
@@ -439,29 +354,19 @@ export async function runClaude(opts: {
   } catch (e: unknown) {
     if (timedOut || inactivityTimedOut) {
       result.error = inactivityTimedOut ? "Inactivity timeout" : "Timed out";
-      emit?.({
-        timestamp: Date.now(),
-        type: "error",
-        summary: inactivityTimedOut
-          ? "Agent inactive, timed out"
-          : "Agent timed out",
-      });
+      emit?.(
+        makeErrorActivity(
+          inactivityTimedOut ? "Agent inactive, timed out" : "Agent timed out",
+        ),
+      );
     } else if (opts.parentSignal?.aborted) {
       result.error = "Aborted (shutdown)";
-      emit?.({
-        timestamp: Date.now(),
-        type: "error",
-        summary: "Agent aborted (shutdown)",
-      });
+      emit?.(makeErrorActivity("Agent aborted (shutdown)"));
     } else {
       const errMsg = e instanceof Error ? e.message : String(e);
       result.error = errMsg;
       warn(`${tag}Claude Code error: ${errMsg}`);
-      emit?.({
-        timestamp: Date.now(),
-        type: "error",
-        summary: `Error: ${errMsg.slice(0, 200)}`,
-      });
+      emit?.(makeErrorActivity(`Error: ${errMsg.slice(0, 200)}`));
     }
   } finally {
     if (activeQuery) activeQueries.delete(activeQuery);
@@ -470,6 +375,14 @@ export async function runClaude(opts: {
     if (hardKillTimer) clearTimeout(hardKillTimer);
     if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
+
+    if (agentTmpDir) {
+      try {
+        rmSync(agentTmpDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
 
     if (worktreeName) {
       try {

@@ -1,18 +1,20 @@
-# claude-autopilot configuration
-# Copy this file to your project root as `.claude-autopilot.yml` and fill in the values.
+# autopilot configuration
+# Copy this file to your project root as `.autopilot.yml` and fill in the values.
 # See docs/adding-a-project.md for the full setup guide.
 #
 # Project-specific details (tech stack, test commands, conventions, protected files)
 # belong in your project's CLAUDE.md, not here. This file is for orchestration config only.
 
 # ─── Linear Integration ────────────────────────────────────────────────────────
-# Connect to your Linear workspace so the executor and auditor can manage issues.
+# Connect to your Linear workspace so the executor and planning system can manage issues.
 
 linear:
   team: ""                      # Team key, e.g., "ENG" — find it in Linear team settings URL
-  project: ""                   # Project name — must match a Linear project exactly
+  initiative: ""                # Initiative name — ties projects together under a strategic theme (optional)
+  # labels: ["autopilot"]       # Optional: only pick up issues with any of these label names
+  # projects: ["frontend"]      # Optional: narrow to issues in these projects (combined with labels via AND)
   states:
-    triage: "Triage"            # Auditor files new issues here for human review
+    triage: "Triage"            # Planning system files new issues here for human review
     ready: "Todo"               # Executor picks up issues from this state
     in_progress: "In Progress"  # Executor moves issues here while working
     done: "Done"                # Executor moves issues here on success
@@ -28,15 +30,28 @@ executor:
   # max_fixer_attempts: 3       # Max fixer spawns per PR before giving up (1-10, default: 3)
   poll_interval_minutes: 5      # How often to poll Linear/GitHub (0.5-60, default: 5)
   model: "sonnet"               # Model for executor agents
-  planning_model: "opus"        # Model for auditor/planning
 
-# ─── Auditor ───────────────────────────────────────────────────────────────────
-# The auditor agent scans the codebase and files improvement issues to Triage.
+# ─── Planning ─────────────────────────────────────────────────────────────────
+# The planning system scans the codebase and files improvement issues to Triage.
 
-auditor:
+planning:
   schedule: "when_idle"         # "when_idle" | "daily" | "manual"
-  min_ready_threshold: 5        # Only audit when fewer than N issues are in Ready
-  max_issues_per_run: 10        # Cap on issues filed per audit run
+  min_ready_threshold: 5        # Only plan when fewer than N issues are in Ready+Triage
+  max_issues_per_run: 5         # Cap on issues filed per planning run
+  # min_interval_minutes: 60    # Minimum minutes between planning runs (0-1440, default: 60)
+  model: "opus"                 # Model for the CTO planning agent
+
+# ─── Projects Loop ───────────────────────────────────────────────────────────
+# The projects loop manages project-level ownership: triaging issues, spawning
+# technical planners, and completing projects when all work is done.
+# Requires an initiative to be configured.
+
+# projects:
+#   enabled: true                 # Enable the projects loop (default: true)
+#   poll_interval_minutes: 10     # How often to check projects for triage issues
+#   max_active_projects: 5        # Cap on concurrent project owner agents
+#   timeout_minutes: 60           # Kill project owner agent after this long
+#   model: "opus"                 # Model for project owner agents
 
 # ─── GitHub ───────────────────────────────────────────────────────────────────
 # GitHub integration for PR monitoring, CI checks, and the fixer agent.

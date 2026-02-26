@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * setup-project.ts - Onboard a new project repository for claude-autopilot
+ * setup-project.ts - Onboard a new project repository for autopilot
  *
  * Usage: bun run setup <project-path>
  */
@@ -23,7 +23,7 @@ const projectPath = process.argv[2];
 if (!projectPath) {
   console.log("Usage: bun run setup <project-path>");
   console.log();
-  console.log("Onboard a project repository for claude-autopilot.");
+  console.log("Onboard a project repository for autopilot.");
   console.log(
     "This will set up the necessary config files and Claude Code settings.",
   );
@@ -73,18 +73,16 @@ if (existsSync(claudeMdPath)) {
 
 // --- Copy config template ---
 
-const configPath = resolve(PROJECT_PATH, ".claude-autopilot.yml");
+const configPath = resolve(PROJECT_PATH, ".autopilot.yml");
 if (existsSync(configPath)) {
-  warn(
-    ".claude-autopilot.yml already exists, skipping (delete it to regenerate)",
-  );
+  warn(".autopilot.yml already exists, skipping (delete it to regenerate)");
 } else {
   const template = readFileSync(
-    resolve(AUTOPILOT_ROOT, "templates/claude-autopilot.yml.template"),
+    resolve(AUTOPILOT_ROOT, "templates/autopilot.yml.template"),
     "utf-8",
   );
   writeFileSync(configPath, template);
-  ok("Created .claude-autopilot.yml -fill this in with your project config");
+  ok("Created .autopilot.yml -fill this in with your project config");
 }
 
 // --- Set up .claude/settings.json ---
@@ -162,19 +160,16 @@ if (existsSync(settingsPath)) {
 const gitignorePath = resolve(PROJECT_PATH, ".gitignore");
 if (existsSync(gitignorePath)) {
   const existing = readFileSync(gitignorePath, "utf-8");
-  if (!existing.includes(".claude-autopilot.yml")) {
+  if (!existing.includes(".autopilot.yml")) {
     appendFileSync(
       gitignorePath,
-      "\n# claude-autopilot local config\n.claude-autopilot.yml\n",
+      "\n# autopilot local config\n.autopilot.yml\n",
     );
-    ok("Added .claude-autopilot.yml to .gitignore");
+    ok("Added .autopilot.yml to .gitignore");
   }
 } else {
-  writeFileSync(
-    gitignorePath,
-    "# claude-autopilot local config\n.claude-autopilot.yml\n",
-  );
-  ok("Created .gitignore with .claude-autopilot.yml");
+  writeFileSync(gitignorePath, "# autopilot local config\n.autopilot.yml\n");
+  ok("Created .gitignore with .autopilot.yml");
 }
 
 // --- Print next steps ---
@@ -189,13 +184,17 @@ console.log(
 );
 console.log(`     ${claudeMdPath}`);
 console.log();
-console.log("  2. Configure .claude-autopilot.yml");
+console.log("  2. Configure .autopilot.yml");
 console.log("     Set your Linear team, project, commands, and preferences.");
 console.log(`     ${configPath}`);
 console.log();
-console.log("  3. Set your Linear API key");
-console.log("     export LINEAR_API_KEY=lin_api_...");
-console.log("     Get one at: https://linear.app/settings/api");
+console.log("  3. Authenticate with Linear (choose one option):");
+console.log("     Option A: Set a personal API key");
+console.log("       export LINEAR_API_KEY=lin_api_...");
+console.log("       Get one at: https://linear.app/settings/api");
+console.log("     Option B: Configure OAuth in .claude-autopilot.yml");
+console.log("       Add linear.oauth.client_id and linear.oauth.client_secret");
+console.log("       Then complete OAuth at http://localhost:7890/auth/linear");
 console.log();
 console.log("  4. Set your GitHub token");
 console.log("     export GITHUB_TOKEN=ghp_...");

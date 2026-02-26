@@ -1,8 +1,16 @@
-import { timingSafeEqual } from "node:crypto";
+import type { Database } from "bun:sqlite";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
+import type { AutopilotConfig } from "./lib/config";
+import { resetClient } from "./lib/linear";
+import {
+  buildOAuthUrl,
+  exchangeCodeForToken,
+  saveStoredToken,
+} from "./lib/linear-oauth";
 import type { AppState } from "./state";
 
 const ACTIVITY_SAYINGS = [
@@ -24,15 +32,23 @@ function randomSaying(): string {
 
 export interface DashboardOptions {
   authToken?: string;
-  triggerAudit?: () => void;
+  secureCookie?: boolean;
+  triggerPlanning?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
+  config?: AutopilotConfig;
+  triageIssues?: () => Promise<
+    Array<{ id: string; identifier: string; title: string; priority: number }>
+  >;
+  approveTriageIssue?: (issueId: string) => Promise<void>;
+  rejectTriageIssue?: (issueId: string) => Promise<void>;
+  /** DB instance used to persist OAuth tokens from the callback route. */
+  db?: Database;
 }
 
-function safeCompare(a: string, b: string): boolean {
-  const aBytes = Buffer.from(a);
-  const bBytes = Buffer.from(b);
-  if (aBytes.length !== bBytes.length) return false;
-  return timingSafeEqual(aBytes, bBytes);
+export function safeCompare(a: string, b: string): boolean {
+  const aHash = createHash("sha256").update(a).digest();
+  const bHash = createHash("sha256").update(b).digest();
+  return timingSafeEqual(aHash, bHash);
 }
 
 function loginPage(error?: string): string {
@@ -41,7 +57,7 @@ function loginPage(error?: string): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>claude-autopilot</title>
+    <title>autopilot</title>
     <style>
       ${DASHBOARD_CSS}
       .login-wrap {
@@ -102,7 +118,7 @@ function loginPage(error?: string): string {
   </head>
   <body>
     <div class="login-wrap">
-      <h1>claude-autopilot</h1>
+      <h1>autopilot</h1>
       <form method="POST" action="/auth/login" class="login-form">
         <div>
           <label for="token">Dashboard Token</label>
@@ -122,6 +138,102 @@ function loginPage(error?: string): string {
 </html>`;
 }
 
+type HealthStatus = "pass" | "warn" | "fail";
+
+export interface HealthResponse {
+  status: HealthStatus;
+  uptime: number;
+  memory: { rss: number };
+  subsystems: {
+    executor: {
+      status: HealthStatus;
+      runningAgents: number;
+      queueLastChecked: number | null;
+    };
+    monitor: { status: HealthStatus };
+    planner: {
+      status: HealthStatus;
+      running: boolean;
+      lastResult: string | null;
+      lastRunAt: number | null;
+    };
+    projects: { status: HealthStatus };
+  };
+}
+
+const QUEUE_WARN_MS = 5 * 60 * 1000;
+const QUEUE_FAIL_MS = 10 * 60 * 1000;
+
+export function computeHealth(
+  state: AppState,
+  now = Date.now(),
+): HealthResponse {
+  const snap = state.toJSON();
+  const uptimeSeconds = Math.floor((now - state.startedAt) / 1000);
+  const mem = process.memoryUsage();
+
+  let executorStatus: HealthStatus = "pass";
+  if (snap.queue.lastChecked > 0) {
+    const queueAge = now - snap.queue.lastChecked;
+    if (queueAge > QUEUE_FAIL_MS) {
+      executorStatus = "fail";
+    } else if (queueAge > QUEUE_WARN_MS) {
+      executorStatus = "warn";
+    }
+  }
+
+  const monitorStatus: HealthStatus = executorStatus;
+
+  const plannerStatus: HealthStatus =
+    snap.planning.lastResult === "failed" ||
+    snap.planning.lastResult === "timed_out"
+      ? "warn"
+      : "pass";
+
+  const projectsStatus: HealthStatus = "pass";
+
+  const allStatuses: HealthStatus[] = [
+    executorStatus,
+    monitorStatus,
+    plannerStatus,
+    projectsStatus,
+  ];
+  let overallStatus: HealthStatus;
+  if (allStatuses.includes("fail")) {
+    overallStatus = "fail";
+  } else if (allStatuses.includes("warn") || snap.paused) {
+    overallStatus = "warn";
+  } else {
+    overallStatus = "pass";
+  }
+
+  return {
+    status: overallStatus,
+    uptime: uptimeSeconds,
+    memory: { rss: mem.rss },
+    subsystems: {
+      executor: {
+        status: executorStatus,
+        runningAgents: state.getRunningCount(),
+        queueLastChecked:
+          snap.queue.lastChecked > 0 ? snap.queue.lastChecked : null,
+      },
+      monitor: {
+        status: monitorStatus,
+      },
+      planner: {
+        status: plannerStatus,
+        running: snap.planning.running,
+        lastResult: snap.planning.lastResult ?? null,
+        lastRunAt: snap.planning.lastRunAt ?? null,
+      },
+      projects: {
+        status: projectsStatus,
+      },
+    },
+  };
+}
+
 export function createApp(state: AppState, options?: DashboardOptions): Hono {
   const app = new Hono();
 
@@ -134,7 +246,7 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     const authToken = options.authToken;
 
     app.use("*", async (c, next) => {
-      if (c.req.path.startsWith("/auth/")) {
+      if (c.req.path.startsWith("/auth/") || c.req.path === "/health") {
         return next();
       }
       const authHeader = c.req.header("Authorization");
@@ -145,6 +257,16 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       const tokenToCheck = bearerToken ?? cookieToken;
 
       if (tokenToCheck !== null && safeCompare(tokenToCheck, authToken)) {
+        // CSRF protection: cookie-authenticated POST requests must include a non-simple header
+        const isCookieAuth = bearerToken === null && cookieToken !== null;
+        if (isCookieAuth && c.req.method === "POST") {
+          const hasHxRequest = c.req.header("HX-Request") === "true";
+          const hasXRequestedWith =
+            c.req.header("X-Requested-With") === "XMLHttpRequest";
+          if (!hasHxRequest && !hasXRequestedWith) {
+            return c.json({ error: "Forbidden" }, 403);
+          }
+        }
         return next();
       }
 
@@ -165,6 +287,7 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           httpOnly: true,
           sameSite: "Strict",
           path: "/",
+          secure: options?.secureCookie,
         });
         return c.redirect("/");
       }
@@ -176,6 +299,77 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       return c.redirect("/");
     });
   }
+
+  // --- Linear OAuth routes ---
+
+  app.get("/auth/linear", (c) => {
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    if (!clientId) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID environment variable is not set.</p>",
+        400,
+      );
+    }
+    const redirectUri = new URL("/auth/linear/callback", c.req.url).toString();
+    const url = buildOAuthUrl(clientId, redirectUri);
+    return c.redirect(url);
+  });
+
+  app.get("/auth/linear/callback", async (c) => {
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+
+    if (error) {
+      return c.html(
+        `<p>Linear OAuth error: ${escapeHtml(error)}</p><p><a href="/">Back to dashboard</a></p>`,
+        400,
+      );
+    }
+    if (!code) {
+      return c.html("<p>Error: No authorization code received.</p>", 400);
+    }
+
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    const clientSecret = process.env.LINEAR_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET must be set.</p>",
+        400,
+      );
+    }
+
+    try {
+      const redirectUri = new URL(
+        "/auth/linear/callback",
+        c.req.url,
+      ).toString();
+      const token = await exchangeCodeForToken(
+        clientId,
+        clientSecret,
+        code,
+        redirectUri,
+      );
+      if (options?.db) {
+        saveStoredToken(options.db, token);
+      }
+      // Reset the Linear SDK client so it picks up the new OAuth token
+      resetClient();
+      return c.html(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Linear Connected</title></head>
+  <body>
+    <p>Linear OAuth connected successfully. The autopilot will now act as the app user.</p>
+    <p><a href="/">Back to dashboard</a></p>
+  </body>
+</html>`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.html(
+        `<p>Error: ${escapeHtml(msg)}</p><p><a href="/">Back to dashboard</a></p>`,
+        500,
+      );
+    }
+  });
 
   // --- HTML Shell ---
   app.get("/", (c) => {
@@ -189,14 +383,14 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
               name="viewport"
               content="width=device-width, initial-scale=1"
             />
-            <title>claude-autopilot</title>
+            <title>autopilot</title>
             <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
             <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
             <style>${raw(DASHBOARD_CSS)}</style>
           </head>
           <body>
             <header>
-              <h1>claude-autopilot</h1>
+              <h1>autopilot</h1>
               <div
                 class="meta"
                 hx-get="/partials/header-meta"
@@ -219,8 +413,8 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                   : ""
               }
               <div
-                id="audit-btn"
-                hx-get="/partials/audit-button"
+                id="planning-btn"
+                hx-get="/partials/planning-button"
                 hx-trigger="load, every 5s"
                 hx-swap="innerHTML"
               ></div>
@@ -228,6 +422,18 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                 class="stats-bar"
                 hx-get="/partials/stats"
                 hx-trigger="every 5s"
+                hx-swap="innerHTML"
+              ></div>
+              <div
+                class="budget-bar"
+                hx-get="/partials/budget"
+                hx-trigger="load, every 30s"
+                hx-swap="innerHTML"
+              ></div>
+              <div
+                class="analytics-bar"
+                hx-get="/partials/analytics"
+                hx-trigger="load, every 30s"
                 hx-swap="innerHTML"
               ></div>
             </header>
@@ -238,6 +444,13 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                   id="agents-list"
                   hx-get="/partials/agents"
                   hx-trigger="load, every 3s"
+                  hx-swap="innerHTML"
+                ></div>
+                <div class="section-title">Needs Review</div>
+                <div
+                  id="triage-list"
+                  hx-get="/partials/triage"
+                  hx-trigger="load, every 10s"
                   hx-swap="innerHTML"
                 ></div>
                 <div class="section-title">History</div>
@@ -278,18 +491,33 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     if (!analytics) {
       return c.json({ enabled: false });
     }
-    return c.json({ enabled: true, ...analytics });
+    const today = state.getTodayAnalytics();
+    return c.json({ enabled: true, ...analytics, ...(today ?? {}) });
   });
 
-  app.post("/api/audit", (c) => {
-    if (state.getAuditorStatus().running) {
-      return c.json({ error: "Audit already running" }, 409);
+  app.get("/api/budget", (c) => {
+    if (!options?.config) {
+      return c.json({ enabled: false });
+    }
+    const snapshot = state.getBudgetSnapshot(options.config);
+    return c.json({ enabled: true, ...snapshot });
+  });
+
+  app.get("/health", (c) => {
+    const health = computeHealth(state);
+    const httpStatus = health.status === "fail" ? 503 : 200;
+    return c.json(health, httpStatus);
+  });
+
+  app.post("/api/planning", (c) => {
+    if (state.getPlanningStatus().running) {
+      return c.json({ error: "Planning already running" }, 409);
     }
     try {
-      options?.triggerAudit?.();
+      options?.triggerPlanning?.();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `Audit trigger failed: ${msg}` }, 500);
+      return c.json({ error: `Planning trigger failed: ${msg}` }, 500);
     }
     return c.json({ triggered: true });
   });
@@ -332,6 +560,34 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     return c.json({ retried: true });
   });
 
+  app.post("/api/triage/:issueId/approve", async (c) => {
+    const issueId = c.req.param("issueId");
+    if (!options?.approveTriageIssue) {
+      return c.json({ error: "Triage not configured" }, 400);
+    }
+    try {
+      await options.approveTriageIssue(issueId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Approve failed: ${msg}` }, 500);
+    }
+    return c.json({ approved: true });
+  });
+
+  app.post("/api/triage/:issueId/reject", async (c) => {
+    const issueId = c.req.param("issueId");
+    if (!options?.rejectTriageIssue) {
+      return c.json({ error: "Triage not configured" }, 400);
+    }
+    try {
+      await options.rejectTriageIssue(issueId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Reject failed: ${msg}` }, 500);
+    }
+    return c.json({ rejected: true });
+  });
+
   // --- Partials for htmx ---
 
   app.get("/partials/pause-button", (c) => {
@@ -349,18 +605,18 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     );
   });
 
-  app.get("/partials/audit-button", (c) => {
-    const auditorRunning = state.getAuditorStatus().running;
+  app.get("/partials/planning-button", (c) => {
+    const planningRunning = state.getPlanningStatus().running;
     return c.html(
       html`<button
-        class="action-btn ${auditorRunning ? "disabled" : ""}"
-        hx-post="/api/audit"
-        hx-target="#audit-btn"
+        class="action-btn ${planningRunning ? "disabled" : ""}"
+        hx-post="/api/planning"
+        hx-target="#planning-btn"
         hx-swap="innerHTML"
         hx-select="button"
-        ${auditorRunning ? "disabled" : ""}
+        ${planningRunning ? "disabled" : ""}
       >
-        ${auditorRunning ? "Auditing..." : "Trigger Audit"}
+        ${planningRunning ? "Planning..." : "Trigger Planning"}
       </button>`,
     );
   });
@@ -438,6 +694,46 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           ? `${Math.round(hist.durationMs / 1000)}s`
           : "?";
         const costStr = hist.costUsd ? `$${hist.costUsd.toFixed(4)}` : "";
+        const savedLogs = state.getActivityLogsForRun(id);
+        if (savedLogs.length > 0) {
+          return c.html(html`
+            <div>
+              <div style="display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border)">
+                <div>
+                  <span class="status-dot ${hist.status}"></span>
+                  <strong>${hist.issueId}</strong> — ${hist.issueTitle}
+                </div>
+                <div class="meta">${durationStr} &middot; ${String(savedLogs.length)} activities${costStr ? ` &middot; ${costStr}` : ""}</div>
+              </div>
+              ${raw(
+                savedLogs
+                  .map((act) => {
+                    const time = new Date(act.timestamp).toLocaleTimeString(
+                      "en-US",
+                      { hour12: false },
+                    );
+                    let badgeHtml = `<span class="type-badge ${act.type}">${act.type}</span>`;
+                    let summaryText = act.summary;
+                    if (act.type === "tool_use") {
+                      const colonIdx = act.summary.indexOf(": ");
+                      if (colonIdx !== -1) {
+                        badgeHtml = `<span class="type-badge ${act.type}">${act.summary.slice(0, colonIdx)}</span>`;
+                        summaryText = act.summary.slice(colonIdx + 2);
+                      }
+                    } else if (act.type === "text") {
+                      badgeHtml = "";
+                    }
+                    return `<div class="activity-item">
+                      <span class="time">${time}</span>
+                      ${badgeHtml}
+                      ${escapeHtml(summaryText)}
+                    </div>`;
+                  })
+                  .join(""),
+              )}
+            </div>
+          `);
+        }
         return c.html(html`
           <div style="padding: 8px 0">
             <div>
@@ -543,6 +839,74 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
             <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</span>${retryBtn}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
           </div>`;
+          })
+          .join(""),
+      )}`,
+    );
+  });
+
+  app.get("/partials/budget", (c) => {
+    if (!options?.config) {
+      return c.html(html`<div></div>`);
+    }
+    const snap = state.getBudgetSnapshot(options.config);
+    if (snap.dailyLimit <= 0 && snap.monthlyLimit <= 0) {
+      return c.html(html`<div></div>`);
+    }
+    let colorStyle = "";
+    if (snap.exhausted) {
+      colorStyle = "color: var(--red)";
+    } else if (snap.warning) {
+      colorStyle = "color: var(--yellow)";
+    }
+    const parts: string[] = [];
+    if (snap.dailyLimit > 0) {
+      parts.push(
+        `Daily: $${snap.dailySpend.toFixed(2)} / $${snap.dailyLimit.toFixed(2)}`,
+      );
+    }
+    if (snap.monthlyLimit > 0) {
+      parts.push(
+        `Monthly: $${snap.monthlySpend.toFixed(2)} / $${snap.monthlyLimit.toFixed(2)}`,
+      );
+    }
+    const text = parts.join("  |  ");
+    return c.html(html`<span style="${colorStyle}">${text}</span>`);
+  });
+
+  app.get("/partials/triage", async (c) => {
+    if (!options?.triageIssues) {
+      return c.html(html`<div></div>`);
+    }
+    const issues = await options.triageIssues();
+    if (issues.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No issues awaiting review
+        </div>`,
+      );
+    }
+    const priorityNames: Record<number, string> = {
+      1: "Urgent",
+      2: "High",
+      3: "Normal",
+      4: "Low",
+    };
+    return c.html(
+      html`${raw(
+        issues
+          .map((issue) => {
+            const priorityName = priorityNames[issue.priority] ?? "Low";
+            return `<div class="triage-card">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span class="issue-id">${escapeHtml(issue.identifier)}</span><span style="font-size:11px;color:var(--text-dim)">${escapeHtml(priorityName)}</span></div>
+              <div class="title">${escapeHtml(issue.title)}</div>
+              <div class="triage-actions">
+                <button class="action-btn approve" hx-post="/api/triage/${escapeHtml(issue.id)}/approve" onclick="event.stopPropagation()">Approve</button>
+                <button class="action-btn danger" hx-post="/api/triage/${escapeHtml(issue.id)}/reject" onclick="event.stopPropagation()">Reject</button>
+              </div>
+            </div>`;
           })
           .join(""),
       )}`,

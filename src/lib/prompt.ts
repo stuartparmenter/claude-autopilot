@@ -1,18 +1,38 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { AUTOPILOT_ROOT } from "./paths";
 
-const AUTOPILOT_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../..",
-);
+// Re-export so existing callers that import from "./prompt" still work
+export { AUTOPILOT_ROOT } from "./paths";
 
 /**
- * Load a prompt template from the prompts/ directory.
+ * Load a prompt template, checking for a project-local override first.
+ *
+ * If `projectPath` is provided, checks `<projectPath>/.autopilot/prompts/<name>.md`
+ * before falling back to the bundled `prompts/<name>.md`.
+ *
+ * If the project-local file contains `{{BASE_PROMPT}}`, that placeholder is
+ * replaced with the content of the bundled prompt, allowing partial overrides
+ * that augment rather than fully replace the bundled template.
  */
-export function loadPrompt(name: string): string {
-  const path = resolve(AUTOPILOT_ROOT, "prompts", `${name}.md`);
-  return readFileSync(path, "utf-8");
+export function loadPrompt(name: string, projectPath?: string): string {
+  const bundledPath = resolve(AUTOPILOT_ROOT, "prompts", `${name}.md`);
+  const bundled = readFileSync(bundledPath, "utf-8");
+
+  if (!projectPath) return bundled;
+
+  const overridePath = resolve(
+    projectPath,
+    ".autopilot",
+    "prompts",
+    `${name}.md`,
+  );
+  if (!existsSync(overridePath)) return bundled;
+
+  const override = readFileSync(overridePath, "utf-8");
+  return override.includes("{{BASE_PROMPT}}")
+    ? override.replaceAll("{{BASE_PROMPT}}", bundled)
+    : override;
 }
 
 /**
@@ -20,7 +40,7 @@ export function loadPrompt(name: string): string {
  * Collapses newlines to spaces and strips leading markdown heading markers
  * to prevent prompt injection via multiline config values.
  */
-function sanitizePromptValue(value: string): string {
+export function sanitizePromptValue(value: string): string {
   return value
     .replace(/[\r\n]+/g, " ")
     .replace(/^\s*#+\s*/, "")
@@ -29,60 +49,37 @@ function sanitizePromptValue(value: string): string {
 
 /**
  * Substitute {{VARIABLE}} placeholders in a template string.
- * Values are sanitized before substitution to prevent prompt injection.
+ * Values in `vars` are sanitized before substitution to prevent prompt injection.
+ * Values in `rawVars` are substituted as-is (use only for pre-sanitized multi-line content).
  */
 export function renderPrompt(
   template: string,
   vars: Record<string, string>,
+  rawVars: Record<string, string> = {},
 ): string {
   let result = template;
   for (const [key, value] of Object.entries(vars)) {
     result = result.replaceAll(`{{${key}}}`, sanitizePromptValue(value));
+  }
+  for (const [key, value] of Object.entries(rawVars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
   }
   return result;
 }
 
 /**
  * Load and render a prompt template in one step.
+ *
+ * If `projectPath` is provided, checks for a project-local override before
+ * loading the bundled template. See `loadPrompt` for override details.
+ *
+ * Values in `rawVars` are substituted as-is (use only for pre-sanitized multi-line content).
  */
 export function buildPrompt(
   name: string,
   vars: Record<string, string>,
+  projectPath?: string,
+  rawVars: Record<string, string> = {},
 ): string {
-  return renderPrompt(loadPrompt(name), vars);
-}
-
-/**
- * Build the full auditor prompt with subagent prompts appended.
- */
-export function buildAuditorPrompt(vars: Record<string, string>): string {
-  const auditor = buildPrompt("auditor", vars);
-  const planner = loadPrompt("planner");
-  const verifier = loadPrompt("verifier");
-  const security = loadPrompt("security-reviewer");
-  const productManager = buildPrompt("product-manager", vars);
-
-  return `${auditor}
-
----
-
-# Reference: Subagent Prompts
-
-Use these prompts when spawning Agent Team subagents. Provide them as the system prompt for each subagent.
-
-## Planner Subagent Prompt
-
-${planner}
-
-## Verifier Subagent Prompt
-
-${verifier}
-
-## Security Reviewer Subagent Prompt
-
-${security}
-
-## Product Manager Subagent Prompt
-
-${productManager}`;
+  return renderPrompt(loadPrompt(name, projectPath), vars, rawVars);
 }

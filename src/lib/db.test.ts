@@ -1,7 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AgentResult } from "../state";
-import { getAnalytics, getRecentRuns, insertAgentRun, openDb } from "./db";
+import type { ActivityEntry, AgentResult } from "../state";
+import {
+  getActivityLogs,
+  getAnalytics,
+  getConversationLog,
+  getRecentRuns,
+  insertActivityLogs,
+  insertAgentRun,
+  insertConversationLog,
+  openDb,
+  pruneActivityLogs,
+  pruneConversationLogs,
+} from "./db";
 
 let db: Database;
 
@@ -294,5 +305,240 @@ describe("getAnalytics", () => {
     }
     const result = getAnalytics(db);
     expect(result.totalRuns).toBe(5);
+  });
+});
+
+describe("insertActivityLogs and getActivityLogs", () => {
+  function makeActivity(overrides?: Partial<ActivityEntry>): ActivityEntry {
+    return {
+      timestamp: Date.now(),
+      type: "tool_use",
+      summary: "Test: doing something",
+      ...overrides,
+    };
+  }
+
+  test("insertActivityLogs with empty array is a no-op", () => {
+    expect(() => insertActivityLogs(db, "run-1", [])).not.toThrow();
+    expect(getActivityLogs(db, "run-1")).toEqual([]);
+  });
+
+  test("inserts and retrieves activity logs in timestamp order", () => {
+    const activities: ActivityEntry[] = [
+      makeActivity({ timestamp: 3000, type: "text", summary: "Third" }),
+      makeActivity({ timestamp: 1000, type: "tool_use", summary: "First" }),
+      makeActivity({ timestamp: 2000, type: "result", summary: "Second" }),
+    ];
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(3);
+    expect(logs[0].summary).toBe("First");
+    expect(logs[1].summary).toBe("Second");
+    expect(logs[2].summary).toBe("Third");
+  });
+
+  test("retrieves all five entries inserted", () => {
+    const activities: ActivityEntry[] = Array.from({ length: 5 }, (_, i) =>
+      makeActivity({ timestamp: i * 1000, summary: `Entry ${i}` }),
+    );
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(5);
+  });
+
+  test("returns empty array for unknown agentRunId", () => {
+    expect(getActivityLogs(db, "nonexistent")).toEqual([]);
+  });
+
+  test("stores and retrieves detail field", () => {
+    const activity = makeActivity({ detail: "some detail text" });
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBe("some detail text");
+  });
+
+  test("detail is undefined when not set", () => {
+    const activity = makeActivity();
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBeUndefined();
+  });
+
+  test("isolates logs by agentRunId", () => {
+    insertActivityLogs(db, "run-1", [makeActivity({ summary: "Run 1 entry" })]);
+    insertActivityLogs(db, "run-2", [makeActivity({ summary: "Run 2 entry" })]);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
+    expect(getActivityLogs(db, "run-1")[0].summary).toBe("Run 1 entry");
+    expect(getActivityLogs(db, "run-2")).toHaveLength(1);
+  });
+});
+
+describe("pruneActivityLogs", () => {
+  test("deletes entries older than retention window", () => {
+    const now = Date.now();
+    const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-old", [
+      { timestamp: thirtyOneDaysAgo, type: "text", summary: "Old entry" },
+    ]);
+    insertActivityLogs(db, "run-new", [
+      { timestamp: now, type: "text", summary: "New entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(1);
+    expect(getActivityLogs(db, "run-old")).toHaveLength(0);
+    expect(getActivityLogs(db, "run-new")).toHaveLength(1);
+  });
+
+  test("returns 0 when no entries are old enough to prune", () => {
+    const now = Date.now();
+    insertActivityLogs(db, "run-1", [
+      { timestamp: now, type: "text", summary: "Recent entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+  });
+
+  test("returns 0 on empty table", () => {
+    expect(pruneActivityLogs(db, 30)).toBe(0);
+  });
+
+  test("preserves entries within the retention window", () => {
+    const now = Date.now();
+    const twentyNineDaysAgo = now - 29 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-1", [
+      { timestamp: twentyNineDaysAgo, type: "text", summary: "Within window" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
+  });
+});
+
+describe("session_id migration", () => {
+  test("migration adds session_id column to existing DB without it", () => {
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN session_id TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ session_id: string | null }, [string]>(
+        "SELECT session_id FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.session_id).toBeNull();
+
+    db2.close();
+  });
+
+  test("session_id migration is idempotent on a new DB", () => {
+    // openDb on :memory: already creates schema with the migration applied
+    // Running it again should not throw
+    expect(() => openDb(":memory:")).not.toThrow();
+  });
+});
+
+describe("insertAgentRun with sessionId", () => {
+  test("stores and retrieves sessionId", () => {
+    insertAgentRun(db, makeResult("a1", { sessionId: "sess-abc-123" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.sessionId).toBe("sess-abc-123");
+  });
+
+  test("sessionId is undefined when not set", () => {
+    insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.sessionId).toBeUndefined();
+  });
+
+  test("getRecentRuns does not include messagesJson field", () => {
+    insertAgentRun(db, makeResult("a1", { sessionId: "sess-xyz" }));
+    const run = getRecentRuns(db)[0];
+    expect(
+      (run as unknown as Record<string, unknown>).messagesJson,
+    ).toBeUndefined();
+  });
+});
+
+describe("insertConversationLog and getConversationLog", () => {
+  test("round-trip stores and retrieves messages JSON", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    const messages = [
+      { type: "text", content: "hello" },
+      { type: "result", content: "done" },
+    ];
+    insertConversationLog(db, "run-1", JSON.stringify(messages));
+    const retrieved = getConversationLog(db, "run-1");
+    expect(retrieved).not.toBeNull();
+    expect(JSON.parse(retrieved as string)).toEqual(messages);
+  });
+
+  test("getConversationLog returns null for unknown run ID", () => {
+    expect(getConversationLog(db, "nonexistent-run")).toBeNull();
+  });
+
+  test("INSERT OR REPLACE overwrites existing log for same run ID", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    insertConversationLog(db, "run-1", JSON.stringify(["first"]));
+    insertConversationLog(db, "run-1", JSON.stringify(["second"]));
+    const retrieved = getConversationLog(db, "run-1");
+    expect(retrieved).not.toBeNull();
+    expect(JSON.parse(retrieved as string)).toEqual(["second"]);
+  });
+});
+
+describe("pruneConversationLogs", () => {
+  test("deletes entries older than retention window", () => {
+    const now = Date.now();
+    const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
+    insertAgentRun(db, makeResult("run-old"));
+    insertAgentRun(db, makeResult("run-new"));
+    // Manually insert an old entry
+    db.run(
+      `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+      ["run-old", "[]", thirtyOneDaysAgo],
+    );
+    db.run(
+      `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+      ["run-new", "[]", now],
+    );
+    const deleted = pruneConversationLogs(db, 30);
+    expect(deleted).toBe(1);
+    expect(getConversationLog(db, "run-old")).toBeNull();
+    expect(getConversationLog(db, "run-new")).not.toBeNull();
+  });
+
+  test("returns 0 when no entries are old enough to prune", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    insertConversationLog(db, "run-1", "[]");
+    expect(pruneConversationLogs(db, 30)).toBe(0);
+  });
+
+  test("returns 0 on empty table", () => {
+    expect(pruneConversationLogs(db, 30)).toBe(0);
   });
 });

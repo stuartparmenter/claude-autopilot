@@ -55,7 +55,7 @@ export function detectRepo(
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to detect git remote origin in ${projectPath}. ` +
-        "Set github.repo in .claude-autopilot.yml instead.",
+        "Set github.repo in .autopilot.yml instead.",
     );
   }
 
@@ -75,7 +75,7 @@ export function detectRepo(
 
   throw new Error(
     `Could not parse owner/repo from remote URL: "${url}". ` +
-      "Set github.repo in .claude-autopilot.yml instead.",
+      "Set github.repo in .autopilot.yml instead.",
   );
 }
 
@@ -161,6 +161,99 @@ export async function getPRStatus(
   };
 }
 
+export interface PRReviewInfo {
+  hasChangesRequested: boolean;
+  /** ID of the latest CHANGES_REQUESTED review, used for dedup. Null if none. */
+  latestChangesRequestedReviewId: string | null;
+  /** Formatted inline review comments for use in prompts. */
+  reviewComments: string;
+  /** Formatted reviewer summary bodies for use in prompts. */
+  reviewSummaries: string;
+}
+
+/**
+ * Get review status for a PR: CHANGES_REQUESTED state and comment text.
+ * Considers only the latest review per user to handle re-reviews correctly.
+ */
+export async function getPRReviewInfo(
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<PRReviewInfo> {
+  const octokit = getGitHubClient();
+
+  const { data: reviews } = await withRetry(
+    () =>
+      octokit.rest.pulls.listReviews({ owner, repo, pull_number: prNumber }),
+    `listReviews #${prNumber}`,
+  );
+
+  const { data: comments } = await withRetry(
+    () =>
+      octokit.rest.pulls.listReviewComments({
+        owner,
+        repo,
+        pull_number: prNumber,
+      }),
+    `listReviewComments #${prNumber}`,
+  );
+
+  // Determine the latest review per user (handles re-reviews)
+  const latestByUser = new Map<string, (typeof reviews)[0]>();
+  for (const review of reviews) {
+    const userId = review.user?.login ?? "unknown";
+    const existing = latestByUser.get(userId);
+    const reviewTime = review.submitted_at
+      ? new Date(review.submitted_at).getTime()
+      : 0;
+    const existingTime = existing?.submitted_at
+      ? new Date(existing.submitted_at).getTime()
+      : 0;
+    if (!existing || reviewTime > existingTime) {
+      latestByUser.set(userId, review);
+    }
+  }
+
+  // Find latest reviews with CHANGES_REQUESTED from each user
+  const changesRequestedReviews = [...latestByUser.values()].filter(
+    (r) => r.state === "CHANGES_REQUESTED",
+  );
+
+  const hasChangesRequested = changesRequestedReviews.length > 0;
+
+  // Pick the most recently submitted CHANGES_REQUESTED review for dedup
+  let latestChangesRequestedReviewId: string | null = null;
+  if (hasChangesRequested) {
+    const latest = changesRequestedReviews.reduce((a, b) => {
+      const aTime = a.submitted_at ? new Date(a.submitted_at).getTime() : 0;
+      const bTime = b.submitted_at ? new Date(b.submitted_at).getTime() : 0;
+      return aTime >= bTime ? a : b;
+    });
+    latestChangesRequestedReviewId = String(latest.id);
+  }
+
+  // Format review summaries (body text from CHANGES_REQUESTED reviews)
+  const reviewSummaries = changesRequestedReviews
+    .filter((r) => r.body)
+    .map((r) => `Reviewer ${r.user?.login ?? "unknown"}: ${r.body}`)
+    .join("\n\n");
+
+  // Format inline review comments
+  const reviewComments = comments
+    .map(
+      (c) =>
+        `File: ${c.path} (line ${c.line ?? c.original_line ?? "?"})\nReviewer: ${c.user?.login ?? "unknown"}\nComment: ${c.body}`,
+    )
+    .join("\n\n");
+
+  return {
+    hasChangesRequested,
+    latestChangesRequestedReviewId,
+    reviewComments,
+    reviewSummaries,
+  };
+}
+
 /**
  * Detect which merge method the repo allows.
  * Priority: MERGE > SQUASH > REBASE (matches `gh` CLI behavior).
@@ -201,13 +294,17 @@ export async function enableAutoMerge(
   ]);
 
   try {
-    await octokit.graphql(
-      `mutation($prId: ID!, $mergeMethod: PullRequestMergeMethod!) {
-        enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $mergeMethod }) {
-          pullRequest { autoMergeRequest { enabledAt } }
-        }
-      }`,
-      { prId: pr.node_id, mergeMethod },
+    await withRetry(
+      () =>
+        octokit.graphql(
+          `mutation($prId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+            enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $mergeMethod }) {
+              pullRequest { autoMergeRequest { enabledAt } }
+            }
+          }`,
+          { prId: pr.node_id, mergeMethod },
+        ),
+      `enableAutoMerge #${prNumber}`,
     );
     return `Auto-merge (${mergeMethod.toLowerCase()}) enabled for PR #${prNumber}`;
   } catch (e: unknown) {

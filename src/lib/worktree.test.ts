@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import * as fs from "node:fs";
 
-import { createWorktree, removeWorktree } from "./worktree";
+import { createWorktree, removeWorktree, sweepWorktrees } from "./worktree";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,12 +42,14 @@ const PROJECT = "/project";
 // without using mock.module (which causes permanent leakage — Bun bug #7823).
 let existsSpy: ReturnType<typeof spyOn<typeof fs, "existsSync">>;
 let rmSyncSpy: ReturnType<typeof spyOn<typeof fs, "rmSync">>;
+let readdirSyncSpy: ReturnType<typeof spyOn<typeof fs, "readdirSync">>;
 let spawnSpy: ReturnType<typeof spyOn<typeof Bun, "spawnSync">>;
 let sleepSpy: ReturnType<typeof spyOn<typeof Bun, "sleep">>;
 
 beforeEach(() => {
   existsSpy = spyOn(fs, "existsSync").mockReturnValue(false);
   rmSyncSpy = spyOn(fs, "rmSync").mockReturnValue(undefined as unknown as void);
+  readdirSyncSpy = spyOn(fs, "readdirSync").mockReturnValue([] as any);
   spawnSpy = spyOn(Bun, "spawnSync").mockReturnValue(spawnOk());
   sleepSpy = spyOn(Bun, "sleep").mockResolvedValue(
     undefined as unknown as void,
@@ -291,5 +293,82 @@ describe("forceRemoveDir retry logic", () => {
 
     expect(removeAttempts).toBe(1);
     expect(sleepSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sweepWorktrees
+// ---------------------------------------------------------------------------
+
+describe("sweepWorktrees", () => {
+  test("removes all worktrees when active set is empty (default)", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1", "ENG-2"] as any);
+
+    await sweepWorktrees(PROJECT);
+
+    const removeCalls = spawnSpy.mock.calls.filter(
+      (c) => c[0][1] === "worktree" && c[0][2] === "remove",
+    );
+    // One git worktree remove call per stale worktree
+    expect(removeCalls.length).toBe(2);
+  });
+
+  test("skips worktrees in the active set", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1", "ENG-2", "ENG-3"] as any);
+
+    await sweepWorktrees(PROJECT, new Set(["ENG-2"]));
+
+    const removeCalls = spawnSpy.mock.calls.filter(
+      (c) => c[0][1] === "worktree" && c[0][2] === "remove",
+    );
+    // ENG-1 and ENG-3 removed; ENG-2 is active and skipped
+    expect(removeCalls.length).toBe(2);
+  });
+
+  test("continues past individual removal failures", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1", "ENG-2"] as any);
+    // All git worktree remove attempts fail; directory never disappears
+    existsSpy.mockReturnValue(true);
+    spawnSpy.mockImplementation(((cmds: string[]) => {
+      if (cmds[1] === "worktree" && cmds[2] === "remove")
+        return spawnFail("locked");
+      return spawnOk();
+    }) as any);
+
+    await expect(sweepWorktrees(PROJECT)).resolves.toBeUndefined();
+    // rmSync called once per stale worktree (fallback after max retries)
+    expect(rmSyncSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not throw when worktrees directory does not exist", async () => {
+    readdirSyncSpy.mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT: no such file or directory"), {
+        code: "ENOENT",
+      });
+    });
+
+    await expect(sweepWorktrees(PROJECT)).resolves.toBeUndefined();
+  });
+
+  test("calls git worktree prune after sweep", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1"] as any);
+
+    await sweepWorktrees(PROJECT);
+
+    const pruneCall = spawnSpy.mock.calls.find(
+      (c) => c[0][1] === "worktree" && c[0][2] === "prune",
+    );
+    expect(pruneCall).toBeDefined();
+  });
+
+  test("does nothing when worktrees directory is empty", async () => {
+    readdirSyncSpy.mockReturnValue([] as any);
+
+    await sweepWorktrees(PROJECT);
+
+    const removeCalls = spawnSpy.mock.calls.filter(
+      (c) => c[0][1] === "worktree" && c[0][2] === "remove",
+    );
+    expect(removeCalls.length).toBe(0);
   });
 });

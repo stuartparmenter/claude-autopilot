@@ -1,0 +1,17 @@
+{
+  "description": "Deny Write/Edit to paths outside the agent's working directory and /tmp",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/validate-write-path.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
