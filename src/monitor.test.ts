@@ -146,6 +146,8 @@ function makeConfig(
     linear: {
       team: "ENG",
       initiative: "test-initiative",
+      labels: [],
+      projects: [],
       states: {
         triage: "triage-id",
         ready: "ready-id",

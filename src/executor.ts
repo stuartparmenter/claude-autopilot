@@ -196,6 +196,10 @@ export async function fillSlots(opts: {
   const allReady = await getReadyIssues(
     linearIds,
     available + activeIssueIds.size,
+    {
+      labels: config.linear.labels,
+      projects: config.linear.projects,
+    },
   );
   const issues = allReady.filter((i) => !activeIssueIds.has(i.id));
 

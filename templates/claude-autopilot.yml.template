@@ -10,8 +10,9 @@
 
 linear:
   team: ""                      # Team key, e.g., "ENG" — find it in Linear team settings URL
-  project: ""                   # Project name — must match a Linear project exactly
   initiative: ""                # Initiative name — ties projects together under a strategic theme (optional)
+  # labels: ["autopilot"]       # Optional: only pick up issues with any of these label names
+  # projects: ["frontend"]      # Optional: narrow to issues in these projects (combined with labels via AND)
   states:
     triage: "Triage"            # Planning system files new issues here for human review
     ready: "Todo"               # Executor picks up issues from this state

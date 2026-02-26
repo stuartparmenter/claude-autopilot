@@ -200,15 +200,27 @@ interface GetReadyIssuesResponse {
  * Queries by team (not project) so issues in dynamically-created projects
  * are visible. Skips parent issues that have children.
  * Uses a single GraphQL request to fetch issues with relations and children.
+ *
+ * Optional filters:
+ * - labels: only return issues matching any of these label names
+ * - projects: only return issues in any of these project names (combined with
+ *   labels via AND: issue must match both label and project)
  */
 export async function getReadyIssues(
   linearIds: LinearIds,
   limit: number = 10,
+  filters?: { labels?: string[]; projects?: string[] },
 ): Promise<Issue[]> {
   const client = getLinearClient();
   const filter = {
     team: { id: { eq: linearIds.teamId } },
     state: { id: { eq: linearIds.states.ready } },
+    ...(filters?.labels?.length
+      ? { labels: { some: { name: { in: filters.labels } } } }
+      : {}),
+    ...(filters?.projects?.length
+      ? { project: { name: { in: filters.projects } } }
+      : {}),
   };
 
   const response = await withRetry(
