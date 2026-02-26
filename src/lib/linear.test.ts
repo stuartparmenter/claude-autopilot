@@ -757,6 +757,73 @@ describe("getTriageIssues", () => {
       "no-pri",
     ]);
   });
+
+  test("no filters — sends only team and state filter (backwards compat)", async () => {
+    await getTriageIssues(TEST_IDS);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+      },
+      first: 50,
+    });
+  });
+
+  test("labels filter — sends labels.some.name.in filter", async () => {
+    await getTriageIssues(TEST_IDS, 50, { labels: ["autopilot"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+        labels: { some: { name: { in: ["autopilot"] } } },
+      },
+      first: 50,
+    });
+  });
+
+  test("projects filter — sends project.name.in filter", async () => {
+    await getTriageIssues(TEST_IDS, 50, { projects: ["Alpha"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+        project: { name: { in: ["Alpha"] } },
+      },
+      first: 50,
+    });
+  });
+
+  test("labels + projects — sends both labels and project filters", async () => {
+    await getTriageIssues(TEST_IDS, 50, {
+      labels: ["autopilot"],
+      projects: ["Alpha"],
+    });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+        labels: { some: { name: { in: ["autopilot"] } } },
+        project: { name: { in: ["Alpha"] } },
+      },
+      first: 50,
+    });
+  });
+
+  test("empty arrays — omits labels and project filters (same as no filter)", async () => {
+    await getTriageIssues(TEST_IDS, 50, { labels: [], projects: [] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+      },
+      first: 50,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
