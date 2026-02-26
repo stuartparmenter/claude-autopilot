@@ -125,7 +125,7 @@ describe("loadConfig", () => {
     const config = loadConfig(tmpDir);
     expect(config.linear.team).toBe("myteam");
     expect(config.executor.parallel).toBe(3);
-    expect(config.executor.timeout_minutes).toBe(30);
+    expect(config.executor.timeout_minutes).toBe(60);
   });
 
   test("specific overrides are preserved", () => {

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { type CircuitState, defaultRegistry } from "./lib/circuit-breaker";
 import { type AutopilotConfig, DEFAULTS } from "./lib/config";
 import type { AnalyticsResult, TodayAnalyticsResult } from "./lib/db";
 import {
@@ -8,6 +9,7 @@ import {
   getTodayAnalytics,
   insertActivityLogs,
   insertAgentRun,
+  insertConversationLog,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -43,6 +45,7 @@ export interface AgentResult {
   costUsd?: number;
   durationMs?: number;
   numTurns?: number;
+  sessionId?: string;
   error?: string;
 }
 
@@ -60,6 +63,11 @@ export interface PlanningStatus {
   threshold?: number;
 }
 
+export interface ApiHealthStatus {
+  linear: CircuitState;
+  github: CircuitState;
+}
+
 export interface AppStateSnapshot {
   paused: boolean;
   agents: AgentState[];
@@ -67,6 +75,7 @@ export interface AppStateSnapshot {
   queue: QueueInfo;
   planning: PlanningStatus;
   startedAt: number;
+  apiHealth: ApiHealthStatus;
 }
 
 const MAX_HISTORY = 50;
@@ -132,8 +141,10 @@ export class AppState {
       costUsd?: number;
       durationMs?: number;
       numTurns?: number;
+      sessionId?: string;
       error?: string;
     },
+    rawMessages?: unknown[],
   ): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
@@ -158,12 +169,16 @@ export class AppState {
       costUsd: agent.costUsd,
       durationMs: agent.durationMs,
       numTurns: agent.numTurns,
+      sessionId: meta?.sessionId,
       error: agent.error,
     };
 
     if (this.db) {
       insertAgentRun(this.db, result);
       insertActivityLogs(this.db, result.id, agent.activities);
+      if (rawMessages && rawMessages.length > 0) {
+        insertConversationLog(this.db, result.id, JSON.stringify(rawMessages));
+      }
     }
 
     if (meta?.costUsd && meta.costUsd > 0) {
@@ -374,6 +389,7 @@ export class AppState {
       queue: this.queue,
       planning: this.planning,
       startedAt: this.startedAt,
+      apiHealth: defaultRegistry.getAllStates(),
     };
   }
 }

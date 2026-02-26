@@ -69,6 +69,7 @@ export interface ClaudeResult {
   timedOut: boolean;
   inactivityTimedOut: boolean;
   error?: string;
+  rawMessages?: unknown[];
 }
 
 /**
@@ -229,9 +230,12 @@ export async function runClaude(opts: {
       });
     }
 
+    const rawMessages: unknown[] = [];
+
     const runSdkLoop = async () => {
       for await (const message of q) {
         lastActivityAt = Date.now();
+        rawMessages.push(message);
 
         const processed = processAgentMessage(message, queryOpts.cwd as string);
 
@@ -256,6 +260,7 @@ export async function runClaude(opts: {
         }
       }
       loopCompleted = true;
+      result.rawMessages = rawMessages;
     };
 
     // Hard kill safety net: if the SDK async iterator doesn't exit

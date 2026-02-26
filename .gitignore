@@ -15,12 +15,32 @@ node_modules/
 .claude/worktrees/
 
 # Editor
+.idea
 .idea/
+.vscode
 .vscode/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Home directory dotfiles (accidentally committed by agents)
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.mcp.json
+.profile
+.ripgreprc
+.zprofile
+.zshrc
+
+# Git internals (accidentally committed by agents)
+/HEAD
+/config
+/hooks
+/objects
+/refs
 
 # Generated docs
 docs/plans/

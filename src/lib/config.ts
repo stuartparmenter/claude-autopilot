@@ -125,8 +125,8 @@ export const DEFAULTS: AutopilotConfig = {
   },
   executor: {
     parallel: 3,
-    timeout_minutes: 30,
-    fixer_timeout_minutes: 20,
+    timeout_minutes: 60,
+    fixer_timeout_minutes: 60,
     max_fixer_attempts: 3,
     max_retries: 3,
     inactivity_timeout_minutes: 10,

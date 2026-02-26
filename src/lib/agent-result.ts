@@ -6,7 +6,12 @@ export type AgentResultStatus = "completed" | "timed_out" | "failed";
 
 export interface AgentResultHandled {
   status: AgentResultStatus;
-  metrics: { costUsd?: number; durationMs?: number; numTurns?: number };
+  metrics: {
+    costUsd?: number;
+    durationMs?: number;
+    numTurns?: number;
+    sessionId?: string;
+  };
 }
 
 /**
@@ -24,37 +29,53 @@ export function handleAgentResult(
     costUsd: result.costUsd,
     durationMs: result.durationMs,
     numTurns: result.numTurns,
+    sessionId: result.sessionId,
   };
 
   if (result.inactivityTimedOut) {
     warn(`${label} inactive, timed out`);
-    state.completeAgent(agentId, "timed_out", {
-      ...metrics,
-      error: "Inactivity timeout",
-    });
+    state.completeAgent(
+      agentId,
+      "timed_out",
+      {
+        ...metrics,
+        error: "Inactivity timeout",
+      },
+      result.rawMessages,
+    );
     return { status: "timed_out", metrics };
   }
 
   if (result.timedOut) {
     warn(`${label} timed out`);
-    state.completeAgent(agentId, "timed_out", {
-      ...metrics,
-      error: "Timed out",
-    });
+    state.completeAgent(
+      agentId,
+      "timed_out",
+      {
+        ...metrics,
+        error: "Timed out",
+      },
+      result.rawMessages,
+    );
     return { status: "timed_out", metrics };
   }
 
   if (result.error) {
     warn(`${label} failed: ${result.error}`);
-    state.completeAgent(agentId, "failed", {
-      ...metrics,
-      error: result.error,
-    });
+    state.completeAgent(
+      agentId,
+      "failed",
+      {
+        ...metrics,
+        error: result.error,
+      },
+      result.rawMessages,
+    );
     return { status: "failed", metrics };
   }
 
   ok(`${label} completed successfully`);
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  state.completeAgent(agentId, "completed", metrics);
+  state.completeAgent(agentId, "completed", metrics, result.rawMessages);
   return { status: "completed", metrics };
 }
