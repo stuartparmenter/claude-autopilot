@@ -30,13 +30,14 @@ const mockRunClaude = mock(
 // Inject via setClientForTesting to avoid mock.module("./lib/linear") which
 // causes Bun 1.3.9 mock/restore cross-file interference.
 let issueNodeCounts: number[] = [];
-const mockIssues = mock(async () => {
+const mockRawRequest = mock(async () => {
   const count = issueNodeCounts.shift() ?? 0;
   return {
-    nodes: Array.from({ length: count }, (_, i) => ({ id: `issue-${i}` })),
-    pageInfo: { hasNextPage: false },
-    fetchNext: async () => {
-      throw new Error("unexpected fetchNext in planner tests");
+    data: {
+      issues: {
+        nodes: Array.from({ length: count }, (_, i) => ({ id: `issue-${i}` })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
     },
   };
 });
@@ -52,8 +53,10 @@ import { runPlanning, shouldRunPlanning } from "./planner";
 // reads from prompts/ on disk and doesn't leak across test files.
 beforeEach(() => {
   issueNodeCounts = [];
-  mockIssues.mockClear();
-  setClientForTesting({ issues: mockIssues } as unknown as LinearClient);
+  mockRawRequest.mockClear();
+  setClientForTesting({
+    client: { rawRequest: mockRawRequest },
+  } as unknown as LinearClient);
   mock.module("./lib/claude", () => ({
     runClaude: mockRunClaude,
     buildMcpServers: () => ({}),
@@ -165,7 +168,7 @@ describe("shouldRunPlanning — schedule checks", () => {
   test("returns false when schedule === 'manual'", async () => {
     const config = makeConfig();
     config.planning.schedule = "manual";
-    mockIssues.mockClear();
+    mockRawRequest.mockClear();
 
     const result = await shouldRunPlanning({
       config,
@@ -175,7 +178,7 @@ describe("shouldRunPlanning — schedule checks", () => {
 
     expect(result).toBe(false);
     // Short-circuits before any API call
-    expect(mockIssues.mock.calls).toHaveLength(0);
+    expect(mockRawRequest.mock.calls).toHaveLength(0);
   });
 });
 
@@ -217,8 +220,8 @@ describe("shouldRunPlanning — backlog threshold", () => {
   });
 
   test("calls countIssuesInState with ready and triage state IDs", async () => {
-    mockIssues.mockClear();
-    // issueNodeCounts stays empty — mockIssues defaults to 0 nodes per call
+    mockRawRequest.mockClear();
+    // issueNodeCounts stays empty — mockRawRequest defaults to 0 nodes per call
 
     const linearIds = makeLinearIds();
     await shouldRunPlanning({
@@ -227,14 +230,87 @@ describe("shouldRunPlanning — backlog threshold", () => {
       state,
     });
 
-    // Verify the state IDs queried via the LinearClient filter
-    const calledStateIds = mockIssues.mock.calls.map(
+    // Verify the state IDs queried via the rawRequest variables (second arg)
+    const calledStateIds = mockRawRequest.mock.calls.map(
       (call: unknown[]) =>
-        (call[0] as { filter: { state: { id: { eq: string } } } })?.filter
+        (call[1] as { filter: { state: { id: { eq: string } } } })?.filter
           ?.state?.id?.eq,
     );
     expect(calledStateIds).toContain("ready-id");
     expect(calledStateIds).toContain("triage-id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPlanning — success path
+// ---------------------------------------------------------------------------
+
+describe("shouldRunPlanning — min interval check", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  test("returns false when lastRunAt is within the interval", async () => {
+    // Set lastRunAt to 30 minutes ago, interval is 60 minutes
+    state.updatePlanning({ lastRunAt: Date.now() - 30 * 60 * 1000 });
+    // Backlog is low so threshold check would pass
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunPlanning({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(false);
+    // Should short-circuit before making any API calls
+    expect(mockRawRequest.mock.calls).toHaveLength(0);
+  });
+
+  test("returns true when lastRunAt is older than the interval and backlog is low", async () => {
+    // Set lastRunAt to 90 minutes ago, interval is 60 minutes
+    state.updatePlanning({ lastRunAt: Date.now() - 90 * 60 * 1000 });
+    // Backlog is low so threshold check passes
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunPlanning({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("returns true when lastRunAt is undefined (first run) and backlog is low", async () => {
+    // No lastRunAt set — first run
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunPlanning({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("returns false when lastRunAt is within interval even if backlog is below threshold", async () => {
+    const config = makeConfig();
+    config.planning.min_interval_minutes = 120;
+    // Set lastRunAt to 60 minutes ago — within 120 minute interval
+    state.updatePlanning({ lastRunAt: Date.now() - 60 * 60 * 1000 });
+    issueNodeCounts = [0, 0];
+
+    const result = await shouldRunPlanning({
+      config,
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(result).toBe(false);
   });
 });
 
