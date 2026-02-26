@@ -110,7 +110,7 @@ const isLocalhost =
   host === "127.0.0.1" || host === "localhost" || host === "::1";
 
 if (!isLocalhost && !dashboardToken) {
-  error(
+  fatal(
     `AUTOPILOT_DASHBOARD_TOKEN must be set when binding dashboard to non-localhost.\n` +
       `Set: export AUTOPILOT_DASHBOARD_TOKEN=<your-secret-token>\n` +
       `Or bind to localhost only (omit --host).`,
