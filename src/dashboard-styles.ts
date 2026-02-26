@@ -334,4 +334,41 @@ export const DASHBOARD_CSS = `
     color: var(--text-dim);
     padding: 0 4px;
   }
+  .cost-trends-bar {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .cost-trends-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .cost-trend-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .cost-trend-date {
+    width: 30px;
+  }
+  .cost-trend-bar-track {
+    width: 60px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .cost-trend-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  .cost-trend-amount {
+    width: 38px;
+    text-align: right;
+  }
+  .cost-trends-summary {
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
 `;

@@ -216,6 +216,103 @@ export function getAnalytics(db: Database): AnalyticsResult {
   };
 }
 
+export interface DailyCostEntry {
+  date: string; // "YYYY-MM-DD"
+  totalCost: number;
+  runCount: number;
+}
+
+export interface WeeklyCostEntry {
+  weekStart: string; // "YYYY-WW" (ISO year-week)
+  totalCost: number;
+  runCount: number;
+}
+
+export interface CostByStatusEntry {
+  status: string;
+  totalCost: number;
+  runCount: number;
+}
+
+interface DailyCostRow {
+  date: string;
+  total_cost: number;
+  run_count: number;
+}
+
+interface WeeklyCostRow {
+  week: string;
+  total_cost: number;
+  run_count: number;
+}
+
+interface CostByStatusRow {
+  status: string;
+  total_cost: number;
+  run_count: number;
+}
+
+export function getDailyCostTrend(db: Database, days = 30): DailyCostEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<DailyCostRow, [number]>(
+      `SELECT
+         DATE(finished_at/1000, 'unixepoch') AS date,
+         SUM(COALESCE(cost_usd, 0)) AS total_cost,
+         COUNT(*) AS run_count
+       FROM agent_runs
+       WHERE finished_at >= ?
+       GROUP BY date
+       ORDER BY date ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    date: row.date,
+    totalCost: row.total_cost,
+    runCount: row.run_count,
+  }));
+}
+
+export function getWeeklyCostTrend(db: Database, weeks = 8): WeeklyCostEntry[] {
+  const cutoffMs = Date.now() - weeks * 7 * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<WeeklyCostRow, [number]>(
+      `SELECT
+         strftime('%Y-%W', datetime(finished_at/1000, 'unixepoch')) AS week,
+         SUM(COALESCE(cost_usd, 0)) AS total_cost,
+         COUNT(*) AS run_count
+       FROM agent_runs
+       WHERE finished_at >= ?
+       GROUP BY week
+       ORDER BY week ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    weekStart: row.week,
+    totalCost: row.total_cost,
+    runCount: row.run_count,
+  }));
+}
+
+export function getCostByStatus(db: Database): CostByStatusEntry[] {
+  const rows = db
+    .query<CostByStatusRow, []>(
+      `SELECT
+         status,
+         SUM(COALESCE(cost_usd, 0)) AS total_cost,
+         COUNT(*) AS run_count
+       FROM agent_runs
+       GROUP BY status
+       ORDER BY status ASC`,
+    )
+    .all();
+  return rows.map((row) => ({
+    status: row.status,
+    totalCost: row.total_cost,
+    runCount: row.run_count,
+  }));
+}
+
 export function getTodayAnalytics(db: Database): TodayAnalyticsResult {
   const now = new Date();
   const startOfTodayMs = Date.UTC(

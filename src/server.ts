@@ -436,6 +436,12 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                 hx-trigger="load, every 30s"
                 hx-swap="innerHTML"
               ></div>
+              <div
+                class="cost-trends-bar"
+                hx-get="/partials/cost-trends"
+                hx-trigger="load, every 60s"
+                hx-swap="innerHTML"
+              ></div>
             </header>
             <div class="layout">
               <div class="sidebar">
@@ -501,6 +507,14 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     }
     const snapshot = state.getBudgetSnapshot(options.config);
     return c.json({ enabled: true, ...snapshot });
+  });
+
+  app.get("/api/cost-trends", (c) => {
+    const trends = state.getCostTrends();
+    if (!trends) {
+      return c.json({ enabled: false });
+    }
+    return c.json({ enabled: true, ...trends });
   });
 
   app.get("/health", (c) => {
@@ -893,6 +907,57 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       <div class="stat">
         <div class="value">${totalCost}</div>
         <div class="label">Total Cost</div>
+      </div>
+    `);
+  });
+
+  app.get("/partials/cost-trends", (c) => {
+    const trends = state.getCostTrends();
+    if (!trends) {
+      return c.html(html`<div></div>`);
+    }
+    const recentDays = trends.daily.slice(-7);
+    if (recentDays.length === 0) {
+      return c.html(html`<div></div>`);
+    }
+    const maxCost = Math.max(...recentDays.map((d) => d.totalCost), 0.01);
+    const dayRows = recentDays
+      .map((d) => {
+        const pct = Math.round((d.totalCost / maxCost) * 100);
+        const dateLabel = escapeHtml(d.date.slice(5)); // "MM-DD"
+        const amount = escapeHtml(`$${d.totalCost.toFixed(2)}`);
+        return `<div class="cost-trend-row"><span class="cost-trend-date">${dateLabel}</span><div class="cost-trend-bar-track"><div class="cost-trend-bar-fill" style="width:${pct}%"></div></div><span class="cost-trend-amount">${amount}</span></div>`;
+      })
+      .join("");
+
+    const statusParts = trends.byStatus.map(
+      (b) =>
+        `${escapeHtml(b.status.charAt(0).toUpperCase() + b.status.slice(1))}: $${b.totalCost.toFixed(2)}`,
+    );
+    const statusLine = statusParts.join(" | ");
+
+    let weekLine = "";
+    if (trends.weekly.length >= 2) {
+      const thisWeek = trends.weekly[trends.weekly.length - 1];
+      const lastWeek = trends.weekly[trends.weekly.length - 2];
+      weekLine = `This wk: $${thisWeek.totalCost.toFixed(2)}  Last wk: $${lastWeek.totalCost.toFixed(2)}`;
+    } else if (trends.weekly.length === 1) {
+      weekLine = `This wk: $${trends.weekly[0].totalCost.toFixed(2)}`;
+    }
+
+    return c.html(html`
+      <div class="cost-trends-section">
+        ${raw(dayRows)}
+        ${
+          weekLine
+            ? html`<div class="cost-trends-summary">${weekLine}</div>`
+            : ""
+        }
+        ${
+          statusLine
+            ? html`<div class="cost-trends-summary">${statusLine}</div>`
+            : ""
+        }
       </div>
     `);
   });

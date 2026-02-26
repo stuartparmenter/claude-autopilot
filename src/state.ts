@@ -1,12 +1,21 @@
 import type { Database } from "bun:sqlite";
 import { type CircuitState, defaultRegistry } from "./lib/circuit-breaker";
 import { type AutopilotConfig, DEFAULTS } from "./lib/config";
-import type { AnalyticsResult, TodayAnalyticsResult } from "./lib/db";
+import type {
+  AnalyticsResult,
+  CostByStatusEntry,
+  DailyCostEntry,
+  TodayAnalyticsResult,
+  WeeklyCostEntry,
+} from "./lib/db";
 import {
   getActivityLogs,
   getAnalytics,
+  getCostByStatus,
+  getDailyCostTrend,
   getRecentRuns,
   getTodayAnalytics,
+  getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
@@ -258,6 +267,19 @@ export class AppState {
   getTodayAnalytics(): TodayAnalyticsResult | null {
     if (!this.db) return null;
     return getTodayAnalytics(this.db);
+  }
+
+  getCostTrends(): {
+    daily: DailyCostEntry[];
+    weekly: WeeklyCostEntry[];
+    byStatus: CostByStatusEntry[];
+  } | null {
+    if (!this.db) return null;
+    return {
+      daily: getDailyCostTrend(this.db),
+      weekly: getWeeklyCostTrend(this.db),
+      byStatus: getCostByStatus(this.db),
+    };
   }
 
   getActivityLogsForRun(agentRunId: string): ActivityEntry[] {
