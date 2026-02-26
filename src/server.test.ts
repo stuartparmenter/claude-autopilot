@@ -162,7 +162,7 @@ describe("auth", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("claude-autopilot");
+    expect(body).toContain("autopilot");
     expect(body).toContain("htmx");
   });
 
@@ -268,7 +268,7 @@ describe("routes", () => {
     const res = await app.request("/");
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("claude-autopilot");
+    expect(body).toContain("autopilot");
   });
 
   test("GET / includes htmx script tag with SRI integrity hash and crossorigin", async () => {

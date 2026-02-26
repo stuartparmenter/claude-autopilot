@@ -30,7 +30,7 @@ if (!projectArg) {
   process.exit(1);
 }
 
-header("claude-autopilot explain");
+header("autopilot explain");
 
 const projectPath = resolveProjectPath(projectArg);
 info(`Project: ${projectPath}`);
@@ -61,7 +61,7 @@ if (
 }
 
 if (!config.linear.team) {
-  fatal("linear.team is not set in .claude-autopilot.yml");
+  fatal("linear.team is not set in .autopilot.yml");
 }
 
 if (!process.env.GITHUB_TOKEN) {

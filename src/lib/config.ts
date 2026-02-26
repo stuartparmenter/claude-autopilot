@@ -284,7 +284,7 @@ function validateConfigStrings(config: AutopilotConfig): void {
 }
 
 export function loadConfig(projectPath: string): AutopilotConfig {
-  const configPath = resolve(projectPath, ".claude-autopilot.yml");
+  const configPath = resolve(projectPath, ".autopilot.yml");
   if (!existsSync(configPath)) {
     throw new Error(
       `Config file not found: ${configPath}\nRun 'bun run setup' first.`,
@@ -305,7 +305,7 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   );
   for (const key of unknownKeys) {
     warn(
-      `Unknown config key "${key}" in .claude-autopilot.yml — this key has no effect. Check for typos.`,
+      `Unknown config key "${key}" in .autopilot.yml — this key has no effect. Check for typos.`,
     );
   }
 

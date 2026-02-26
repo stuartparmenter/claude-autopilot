@@ -58,7 +58,7 @@ Execute your plan with disciplined, focused changes.
 - **NEVER delete or modify existing passing tests to make your changes work**. If existing tests fail, your implementation is wrong — fix the implementation
 
 ### Protected files
-Never modify `.env`, `.claude-autopilot.yml`, or `CLAUDE.md`. Additional protected paths should be documented in CLAUDE.md.
+Never modify `.env`, `.autopilot.yml`, or `CLAUDE.md`. Additional protected paths should be documented in CLAUDE.md.
 
 ---
 

@@ -1,8 +1,8 @@
 {
-  "name": "claude-autopilot",
+  "name": "autopilot",
   "version": "0.2.0",
   "type": "module",
-  "description": "Self-sustaining AI development loop using Claude Code + Linear",
+  "description": "Fully autonomous AI development loop using Claude Code + Linear",
   "scripts": {
     "start": "bun run src/main.ts",
     "setup": "bun run src/setup-project.ts",

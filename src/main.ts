@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * main.ts — Single entry point for claude-autopilot.
+ * main.ts — Single entry point for autopilot.
  *
  * Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]
  */
@@ -52,7 +52,7 @@ if (!projectArg) {
     "Usage: bun run start <project-path> [--port 7890] [--host 127.0.0.1]",
   );
   console.log();
-  console.log("Start the claude-autopilot loop with a web dashboard.");
+  console.log("Start the autopilot loop with a web dashboard.");
   console.log();
   console.log("Options:");
   console.log("  --port <number>   Dashboard port (default: 7890)");
@@ -65,8 +65,7 @@ if (!projectArg) {
 const projectPath = resolveProjectPath(projectArg);
 const config = loadConfig(projectPath);
 
-if (!config.linear.team)
-  fatal("linear.team is not set in .claude-autopilot.yml");
+if (!config.linear.team) fatal("linear.team is not set in .autopilot.yml");
 
 // --- Check environment variables ---
 
@@ -119,7 +118,7 @@ if (!isLocalhost && !dashboardToken) {
   );
 }
 
-header("claude-autopilot v0.2.0");
+header("autopilot v0.2.0");
 
 info(`Project: ${projectPath}`);
 info(

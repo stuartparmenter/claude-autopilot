@@ -12,7 +12,7 @@ import {
 let tmpDir: string;
 
 function writeConfig(content: string): string {
-  writeFileSync(join(tmpDir, ".claude-autopilot.yml"), content, "utf-8");
+  writeFileSync(join(tmpDir, ".autopilot.yml"), content, "utf-8");
   return tmpDir;
 }
 

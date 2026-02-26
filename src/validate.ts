@@ -104,7 +104,7 @@ export async function checkGitHub(
 /**
  * Check 6: Load all bundled prompt templates and verify they render without
  * leaving unsubstituted {{VARIABLE}} placeholders.
- * Also checks for any project-local overrides at <projectPath>/.claude-autopilot/prompts/.
+ * Also checks for any project-local overrides at <projectPath>/.autopilot/prompts/.
  */
 export async function checkPromptTemplates(
   projectPath: string,
@@ -185,7 +185,7 @@ if (import.meta.main) {
 
   const projectPath = resolveProjectPath(projectArg);
 
-  header("claude-autopilot validate");
+  header("autopilot validate");
   info(`Project: ${projectPath}`);
   console.log();
 

@@ -5,7 +5,7 @@ node_modules/
 .env
 .env.local
 .env.*.local
-.claude-autopilot.yml
+.autopilot.yml
 
 # Build artifacts
 *.tsbuildinfo

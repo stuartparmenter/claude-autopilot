@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-An orchestration toolkit that creates a self-sustaining AI development loop using Claude Code + Linear. Users clone this repo and point it at their own project repos. The toolkit provides:
+A fully autonomous AI development loop using Claude Code + Linear. Users clone this repo and point it at their own project repos. The toolkit provides:
 - **Prompts** (`prompts/`) — the core product, defining what Claude Code agents do
 - **TypeScript scripts** (Bun runtime) — orchestration plumbing
 - **A web dashboard** (Hono + htmx) — live monitoring
@@ -57,7 +57,7 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 
 - **`src/projects.ts`** — Projects loop. `checkProjects()` queries active projects under the initiative for triage issues, spawns project-owner agents.
 - **`src/lib/claude.ts`** — Wraps `@anthropic-ai/claude-agent-sdk` `query()`. Handles worktree creation/cleanup, timeout/inactivity watchdogs, activity streaming to `AppState`, and a **spawn gate** (sequential agent init to avoid `~/.claude.json` race conditions).
-- **`src/lib/config.ts`** — Loads `.claude-autopilot.yml` from the target project, deep-merges with `DEFAULTS`, validates string fields against injection.
+- **`src/lib/config.ts`** — Loads `.autopilot.yml` from the target project, deep-merges with `DEFAULTS`, validates string fields against injection.
 - **`src/lib/linear.ts`** — Linear SDK wrapper. All calls use `withRetry()` for transient error resilience.
 - **`src/lib/github.ts`** — Octokit wrapper. `detectRepo()` auto-detects owner/repo from git remote. `getPRStatus()` combines Checks API results.
 - **`src/lib/prompt.ts`** — Loads `prompts/*.md` templates and substitutes `{{VARIABLE}}` placeholders with sanitized values.
@@ -78,7 +78,7 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 ## Conventions
 
 - **Template variables** use `{{VARIABLE}}` mustache syntax, substituted by `src/lib/prompt.ts`
-- **Config** is YAML (`.claude-autopilot.yml`) with typed defaults in `src/lib/config.ts`
+- **Config** is YAML (`.autopilot.yml`) with typed defaults in `src/lib/config.ts`
 - **All external API calls** (Linear, GitHub) use `withRetry()` from `src/lib/retry.ts`
 - **MCP servers** (Linear + GitHub) are injected into agents via `buildMcpServers()` in `src/lib/claude.ts`
 - **Tests** use Bun's built-in test runner, colocated as `*.test.ts` alongside source files
