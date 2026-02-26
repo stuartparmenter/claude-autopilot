@@ -16,6 +16,7 @@ import {
   setClientForTesting,
   validateIdentifier,
 } from "./linear";
+import { resetLinearAuth } from "./linear-oauth";
 
 // ---------------------------------------------------------------------------
 // Shared test constants
@@ -180,6 +181,7 @@ function makeStandardClient(): LinearClient {
 describe("getLinearClient", () => {
   beforeEach(() => {
     resetClient();
+    resetLinearAuth();
     process.env.LINEAR_API_KEY = "test-linear-key";
   });
 
@@ -194,9 +196,11 @@ describe("getLinearClient", () => {
     expect(a).toBe(b);
   });
 
-  test("throws with helpful message when LINEAR_API_KEY is missing", () => {
+  test("throws with helpful message when no auth is configured", () => {
     delete process.env.LINEAR_API_KEY;
-    expect(() => getLinearClient()).toThrow("LINEAR_API_KEY");
+    expect(() => getLinearClient()).toThrow(
+      "No Linear authentication configured",
+    );
   });
 
   test("returns a new instance after resetClient()", () => {

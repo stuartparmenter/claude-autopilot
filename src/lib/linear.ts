@@ -8,27 +8,39 @@ import {
   type WorkflowState,
 } from "@linear/sdk";
 import type { LinearConfig, LinearIds } from "./config";
+import { getCurrentLinearToken } from "./linear-oauth";
 import { info, warn } from "./logger";
 import { withRetry } from "./retry";
 
 let _client: LinearClient | null = null;
+let _clientToken: string | null = null;
+let _testClient: LinearClient | null = null;
 
 /**
- * Get or create the Linear client. Reads LINEAR_API_KEY from environment.
+ * Get or create the Linear client. Uses OAuth token if configured, otherwise
+ * falls back to LINEAR_API_KEY environment variable.
  */
 export function getLinearClient(): LinearClient {
-  if (_client) return _client;
+  // Test injection takes priority — bypasses token management entirely
+  if (_testClient) return _testClient;
 
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
+  const token = getCurrentLinearToken();
+  if (!token) {
     throw new Error(
-      "LINEAR_API_KEY environment variable is not set.\n" +
-        "Create one at: https://linear.app/settings/api\n" +
-        "Then: export LINEAR_API_KEY=lin_api_...",
+      "No Linear authentication configured.\n" +
+        "Option 1: Set LINEAR_API_KEY environment variable.\n" +
+        "  Create one at: https://linear.app/settings/api\n" +
+        "  Then: export LINEAR_API_KEY=lin_api_...\n" +
+        "Option 2: Connect via OAuth at the dashboard (/auth/linear).\n" +
+        "  Required: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET env vars.",
     );
   }
 
-  _client = new LinearClient({ apiKey });
+  // Re-create client if token changed (e.g. after OAuth token refresh)
+  if (_client && _clientToken === token) return _client;
+
+  _clientToken = token;
+  _client = new LinearClient({ accessToken: token });
   return _client;
 }
 
@@ -37,13 +49,15 @@ export function getLinearClient(): LinearClient {
  */
 export function resetClient(): void {
   _client = null;
+  _clientToken = null;
+  _testClient = null;
 }
 
 /**
  * Inject a mock client directly. Used in unit tests to avoid real API calls.
  */
 export function setClientForTesting(client: LinearClient): void {
-  _client = client;
+  _testClient = client;
 }
 
 /**

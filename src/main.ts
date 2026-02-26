@@ -19,6 +19,7 @@ import { openDb, pruneActivityLogs } from "./lib/db";
 import { interruptibleSleep, isFatalError } from "./lib/errors";
 import { detectRepo } from "./lib/github";
 import { getTriageIssues, resolveLinearIds, updateIssue } from "./lib/linear";
+import { getCurrentLinearToken, initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sanitizeMessage } from "./lib/sanitize";
 import { sweepWorktrees } from "./lib/worktree";
@@ -67,13 +68,21 @@ const config = loadConfig(projectPath);
 
 if (!config.linear.team) fatal("linear.team is not set in .autopilot.yml");
 
-// --- Check environment variables ---
+// --- Initialize Linear auth (OAuth or API key) ---
 
-if (!process.env.LINEAR_API_KEY && !config.linear.oauth) {
+// Always open the DB for OAuth token storage, regardless of persistence.enabled
+const authDbPath = resolve(projectPath, config.persistence.db_path);
+const authDb = openDb(authDbPath);
+await initLinearAuth(authDb);
+
+if (!getCurrentLinearToken()) {
   fatal(
     "No Linear authentication configured.\n" +
-      "Option 1: Set LINEAR_API_KEY (https://linear.app/settings/api)\n" +
-      "Option 2: Configure linear.oauth in .claude-autopilot.yml and complete OAuth at /auth/linear",
+      "Option 1: Set LINEAR_API_KEY environment variable.\n" +
+      "  Create one at: https://linear.app/settings/api\n" +
+      "  Then: export LINEAR_API_KEY=lin_api_...\n" +
+      "Option 2: Connect via OAuth at the dashboard (/auth/linear).\n" +
+      "  Required: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET env vars.",
   );
 }
 
@@ -162,18 +171,18 @@ ok(
 const state = new AppState(config.executor.parallel);
 
 if (config.persistence.enabled) {
-  const dbPath = resolve(projectPath, config.persistence.db_path);
-  const db = openDb(dbPath);
-  state.setDb(db);
-  const pruned = pruneActivityLogs(db, config.persistence.retention_days);
+  // Reuse the already-opened authDb (same file) for persistence
+  state.setDb(authDb);
+  const pruned = pruneActivityLogs(authDb, config.persistence.retention_days);
   if (pruned > 0) info(`Pruned ${pruned} old activity log entries`);
-  ok(`Persistence: ${dbPath}`);
+  ok(`Persistence: ${authDbPath}`);
 }
 
 const app = createApp(state, {
   authToken: dashboardToken,
   secureCookie: !isLocalhost,
   config,
+  db: authDb,
   triggerPlanning: () => {
     runPlanning({
       config,

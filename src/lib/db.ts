@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS conversation_log (
   messages_json TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS linear_oauth_tokens (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  expires_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 export interface AnalyticsResult {

@@ -1,9 +1,16 @@
+import type { Database } from "bun:sqlite";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
 import type { AutopilotConfig } from "./lib/config";
+import { resetClient } from "./lib/linear";
+import {
+  buildOAuthUrl,
+  exchangeCodeForToken,
+  saveStoredToken,
+} from "./lib/linear-oauth";
 import type { AppState } from "./state";
 
 const ACTIVITY_SAYINGS = [
@@ -34,6 +41,8 @@ export interface DashboardOptions {
   >;
   approveTriageIssue?: (issueId: string) => Promise<void>;
   rejectTriageIssue?: (issueId: string) => Promise<void>;
+  /** DB instance used to persist OAuth tokens from the callback route. */
+  db?: Database;
 }
 
 export function safeCompare(a: string, b: string): boolean {
@@ -290,6 +299,77 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       return c.redirect("/");
     });
   }
+
+  // --- Linear OAuth routes ---
+
+  app.get("/auth/linear", (c) => {
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    if (!clientId) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID environment variable is not set.</p>",
+        400,
+      );
+    }
+    const redirectUri = new URL("/auth/linear/callback", c.req.url).toString();
+    const url = buildOAuthUrl(clientId, redirectUri);
+    return c.redirect(url);
+  });
+
+  app.get("/auth/linear/callback", async (c) => {
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+
+    if (error) {
+      return c.html(
+        `<p>Linear OAuth error: ${escapeHtml(error)}</p><p><a href="/">Back to dashboard</a></p>`,
+        400,
+      );
+    }
+    if (!code) {
+      return c.html("<p>Error: No authorization code received.</p>", 400);
+    }
+
+    const clientId = process.env.LINEAR_CLIENT_ID;
+    const clientSecret = process.env.LINEAR_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return c.html(
+        "<p>Error: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET must be set.</p>",
+        400,
+      );
+    }
+
+    try {
+      const redirectUri = new URL(
+        "/auth/linear/callback",
+        c.req.url,
+      ).toString();
+      const token = await exchangeCodeForToken(
+        clientId,
+        clientSecret,
+        code,
+        redirectUri,
+      );
+      if (options?.db) {
+        saveStoredToken(options.db, token);
+      }
+      // Reset the Linear SDK client so it picks up the new OAuth token
+      resetClient();
+      return c.html(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Linear Connected</title></head>
+  <body>
+    <p>Linear OAuth connected successfully. The autopilot will now act as the app user.</p>
+    <p><a href="/">Back to dashboard</a></p>
+  </body>
+</html>`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.html(
+        `<p>Error: ${escapeHtml(msg)}</p><p><a href="/">Back to dashboard</a></p>`,
+        500,
+      );
+    }
+  });
 
   // --- HTML Shell ---
   app.get("/", (c) => {
