@@ -138,98 +138,116 @@ export async function findOrCreateInitiative(
   return initiative;
 }
 
+// Single GraphQL query that fetches ready issues with their relations (including
+// related issue states) and children counts in one HTTP request, replacing the
+// previous N+1 SDK lazy-loading pattern.
+const GET_READY_ISSUES_QUERY = `
+  query getReadyIssues($filter: IssueFilter, $first: Int) {
+    issues(filter: $filter, first: $first) {
+      nodes {
+        id
+        identifier
+        title
+        priority
+        relations {
+          nodes {
+            type
+            relatedIssue {
+              id
+              state {
+                type
+              }
+            }
+          }
+        }
+        children {
+          nodes {
+            id
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface ReadyIssueNode {
+  id: string;
+  identifier: string;
+  title: string;
+  priority?: number | null;
+  relations: {
+    nodes: Array<{
+      type: string;
+      relatedIssue: {
+        id: string;
+        state: { type: string } | null;
+      } | null;
+    }>;
+  };
+  children: {
+    nodes: Array<{ id: string }>;
+  };
+}
+
+interface GetReadyIssuesResponse {
+  issues: {
+    nodes: ReadyIssueNode[];
+  };
+}
+
 /**
  * Get ready, unblocked leaf issues across the team, sorted by priority.
  * Queries by team (not project) so issues in dynamically-created projects
  * are visible. Skips parent issues that have children.
+ * Uses a single GraphQL request to fetch issues with relations and children.
  */
 export async function getReadyIssues(
   linearIds: LinearIds,
   limit: number = 10,
 ): Promise<Issue[]> {
   const client = getLinearClient();
+  const filter = {
+    team: { id: { eq: linearIds.teamId } },
+    state: { id: { eq: linearIds.states.ready } },
+  };
 
-  const result = await withRetry(
+  const response = await withRetry(
     () =>
-      client.issues({
-        filter: {
-          team: { id: { eq: linearIds.teamId } },
-          state: { id: { eq: linearIds.states.ready } },
-        },
-        first: limit,
-      }),
+      client.client.rawRequest<GetReadyIssuesResponse, Record<string, unknown>>(
+        GET_READY_ISSUES_QUERY,
+        { filter, first: limit },
+      ),
     "getReadyIssues",
   );
 
-  // Sort by priority (lower number = higher priority in Linear)
-  const sorted = [...result.nodes].sort(
+  const nodes = response.data?.issues?.nodes ?? [];
+
+  // Sort by priority (lower number = higher priority in Linear, undefined/null treated as 4)
+  const sorted = [...nodes].sort(
     (a, b) => (a.priority ?? 4) - (b.priority ?? 4),
   );
 
-  // Filter out issues that are blocked by incomplete issues
-  const unblocked: Issue[] = [];
+  // Filter: exclude parent issues (have children) and issues blocked by incomplete issues
+  const leafUnblocked: ReadyIssueNode[] = [];
+  for (const node of sorted) {
+    // Skip parent issues — only leaf issues are work units
+    if (node.children.nodes.length > 0) continue;
 
-  for (const issue of sorted) {
-    try {
-      const relations = await withRetry(
-        () => issue.relations(),
-        "getReadyIssues",
-      );
-      let isBlocked = false;
-
-      for (const relation of relations.nodes) {
-        if (relation.type === "blocks") {
-          const related = await withRetry(
-            async () => relation.relatedIssue,
-            "getReadyIssues",
-          );
-          if (related) {
-            const state = await withRetry(
-              async () => related.state,
-              "getReadyIssues",
-            );
-            if (
-              state &&
-              state.type !== "completed" &&
-              state.type !== "canceled"
-            ) {
-              isBlocked = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!isBlocked) {
-        unblocked.push(issue);
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      warn(
-        `Skipping issue ${issue.identifier}: failed to check relations — ${msg}`,
-      );
+    // Skip issues blocked by an incomplete related issue
+    const isBlocked = node.relations.nodes.some(
+      (rel) =>
+        rel.type === "blocks" &&
+        rel.relatedIssue !== null &&
+        rel.relatedIssue.state !== null &&
+        rel.relatedIssue.state.type !== "completed" &&
+        rel.relatedIssue.state.type !== "canceled",
+    );
+    if (!isBlocked) {
+      leafUnblocked.push(node);
     }
   }
 
-  // Skip parent issues that have children — only leaf issues are work units
-  const leafIssues: Issue[] = [];
-  for (const issue of unblocked) {
-    try {
-      const children = await withRetry(
-        () => issue.children(),
-        "getReadyIssues",
-      );
-      if (children.nodes.length > 0) continue;
-      leafIssues.push(issue);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      warn(
-        `Skipping issue ${issue.identifier}: failed to check children — ${msg}`,
-      );
-    }
-  }
-
-  return leafIssues;
+  return leafUnblocked as unknown as Issue[];
 }
 
 // Minimal GraphQL query to count issues — fetches only { id } per node to
