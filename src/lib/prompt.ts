@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,11 +8,33 @@ export const AUTOPILOT_ROOT = resolve(
 );
 
 /**
- * Load a prompt template from the prompts/ directory.
+ * Load a prompt template, checking for a project-local override first.
+ *
+ * If `projectPath` is provided, checks `<projectPath>/.claude-autopilot/prompts/<name>.md`
+ * before falling back to the bundled `prompts/<name>.md`.
+ *
+ * If the project-local file contains `{{BASE_PROMPT}}`, that placeholder is
+ * replaced with the content of the bundled prompt, allowing partial overrides
+ * that augment rather than fully replace the bundled template.
  */
-export function loadPrompt(name: string): string {
-  const path = resolve(AUTOPILOT_ROOT, "prompts", `${name}.md`);
-  return readFileSync(path, "utf-8");
+export function loadPrompt(name: string, projectPath?: string): string {
+  const bundledPath = resolve(AUTOPILOT_ROOT, "prompts", `${name}.md`);
+  const bundled = readFileSync(bundledPath, "utf-8");
+
+  if (!projectPath) return bundled;
+
+  const overridePath = resolve(
+    projectPath,
+    ".claude-autopilot",
+    "prompts",
+    `${name}.md`,
+  );
+  if (!existsSync(overridePath)) return bundled;
+
+  const override = readFileSync(overridePath, "utf-8");
+  return override.includes("{{BASE_PROMPT}}")
+    ? override.replaceAll("{{BASE_PROMPT}}", bundled)
+    : override;
 }
 
 /**
@@ -44,10 +66,14 @@ export function renderPrompt(
 
 /**
  * Load and render a prompt template in one step.
+ *
+ * If `projectPath` is provided, checks for a project-local override before
+ * loading the bundled template. See `loadPrompt` for override details.
  */
 export function buildPrompt(
   name: string,
   vars: Record<string, string>,
+  projectPath?: string,
 ): string {
-  return renderPrompt(loadPrompt(name), vars);
+  return renderPrompt(loadPrompt(name, projectPath), vars);
 }

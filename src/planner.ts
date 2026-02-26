@@ -85,7 +85,7 @@ export async function runPlanning(opts: {
       TODAY: new Date().toISOString().slice(0, 10),
     };
 
-    const prompt = buildPrompt("cto", vars);
+    const prompt = buildPrompt("cto", vars, projectPath);
     const plugins: SdkPluginConfig[] = [
       {
         type: "local",

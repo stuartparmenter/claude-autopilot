@@ -157,3 +157,40 @@ This project is managed by [claude-autopilot](https://github.com/your-org/claude
 - **Protected files** listed in `claude-autopilot.yml` (including this file, `.env`, and the config itself) must **never** be modified by the executor. Changes to these files require human intervention.
 
 <!-- TODO: Update the link above and adjust terminology to match your Linear workflow states. -->
+
+### Customizing Agent Prompts
+
+You can override or augment the built-in agent prompts without forking claude-autopilot. Place a Markdown file at:
+
+```
+.claude-autopilot/prompts/<agent-name>.md
+```
+
+Where `<agent-name>` is one of: `executor`, `fixer`, `auditor`, `planner`, `verifier`, `security-reviewer`, `product-manager`.
+
+**Full override** — replace the entire bundled prompt:
+
+```
+.claude-autopilot/prompts/executor.md
+```
+```markdown
+# My Custom Executor Prompt
+... (your full prompt here) ...
+```
+
+**Partial override** — augment the bundled prompt with project-specific rules using `{{BASE_PROMPT}}`:
+
+```markdown
+{{BASE_PROMPT}}
+
+## Project-Specific Rules
+
+- Always run `pytest` for tests (not `unittest`)
+- All database queries must use the ORM — no raw SQL
+- Follow the error handling conventions in `src/errors.py`
+- Never modify files under `migrations/` directly
+```
+
+The `{{BASE_PROMPT}}` placeholder is replaced with the full content of the bundled prompt at runtime, so agents receive both the standard instructions and your project-specific additions.
+
+The override directory defaults to `.claude-autopilot/prompts` and can be changed via `project.prompt_dir` in `.claude-autopilot.yml`.
