@@ -30,6 +30,20 @@ describe("buildOAuthUrl", () => {
     expect(url).toContain("read");
     expect(url).toContain("write");
   });
+
+  test("includes state parameter when provided", () => {
+    const url = buildOAuthUrl(
+      "cid",
+      "https://example.com/cb",
+      "random-state-123",
+    );
+    expect(url).toContain("state=random-state-123");
+  });
+
+  test("omits state parameter when not provided", () => {
+    const url = buildOAuthUrl("cid", "https://example.com/cb");
+    expect(url).not.toContain("state=");
+  });
 });
 
 // ---------------------------------------------------------------------------
