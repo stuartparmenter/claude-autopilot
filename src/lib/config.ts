@@ -104,11 +104,21 @@ export interface ProjectsConfig {
   model: string;
 }
 
+export interface ReviewerConfig {
+  enabled: boolean;
+  min_interval_minutes: number;
+  min_runs_before_review: number;
+  timeout_minutes: number;
+  model: string;
+  max_issues_per_review: number;
+}
+
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
   planning: PlanningConfig;
   projects: ProjectsConfig;
+  reviewer: ReviewerConfig;
   monitor: MonitorConfig;
   github: GithubConfig;
   persistence: PersistenceConfig;
@@ -175,6 +185,14 @@ export const DEFAULTS: AutopilotConfig = {
     max_active_projects: 5,
     timeout_minutes: 60,
     model: "opus",
+  },
+  reviewer: {
+    enabled: false,
+    min_interval_minutes: 120,
+    min_runs_before_review: 10,
+    timeout_minutes: 60,
+    model: "opus",
+    max_issues_per_review: 5,
   },
   sandbox: {
     enabled: true,
@@ -420,6 +438,41 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   ) {
     throw new Error(
       "Config validation error: planning.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  }
+
+  if (
+    typeof config.reviewer.min_interval_minutes !== "number" ||
+    Number.isNaN(config.reviewer.min_interval_minutes) ||
+    config.reviewer.min_interval_minutes < 0 ||
+    config.reviewer.min_interval_minutes > 1440
+  ) {
+    throw new Error(
+      "Config validation error: reviewer.min_interval_minutes must be a number between 0 and 1440",
+    );
+  }
+
+  if (
+    typeof config.reviewer.min_runs_before_review !== "number" ||
+    Number.isNaN(config.reviewer.min_runs_before_review) ||
+    !Number.isInteger(config.reviewer.min_runs_before_review) ||
+    config.reviewer.min_runs_before_review < 1 ||
+    config.reviewer.min_runs_before_review > 1000
+  ) {
+    throw new Error(
+      "Config validation error: reviewer.min_runs_before_review must be an integer between 1 and 1000",
+    );
+  }
+
+  if (
+    typeof config.reviewer.max_issues_per_review !== "number" ||
+    Number.isNaN(config.reviewer.max_issues_per_review) ||
+    !Number.isInteger(config.reviewer.max_issues_per_review) ||
+    config.reviewer.max_issues_per_review < 1 ||
+    config.reviewer.max_issues_per_review > 50
+  ) {
+    throw new Error(
+      "Config validation error: reviewer.max_issues_per_review must be an integer between 1 and 50",
     );
   }
 

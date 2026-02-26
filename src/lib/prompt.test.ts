@@ -340,3 +340,63 @@ describe("buildPrompt — CTO prompt", () => {
     expect(result).toContain("Phase 3");
   });
 });
+
+describe("loadPrompt — reviewer prompt", () => {
+  test("loads the reviewer prompt and it is non-empty", () => {
+    const prompt = loadPrompt("reviewer");
+    expect(prompt.length).toBeGreaterThan(0);
+  });
+
+  test("reviewer prompt contains expected placeholders", () => {
+    const prompt = loadPrompt("reviewer");
+    expect(prompt).toContain("{{LINEAR_TEAM}}");
+    expect(prompt).toContain("{{TRIAGE_STATE}}");
+    expect(prompt).toContain("{{MAX_ISSUES}}");
+    expect(prompt).toContain("{{RUN_SUMMARIES}}");
+    expect(prompt).toContain("{{REPO_NAME}}");
+  });
+});
+
+describe("buildPrompt — reviewer prompt", () => {
+  test("renders without errors and substitutes all variables", () => {
+    const result = buildPrompt(
+      "reviewer",
+      {
+        LINEAR_TEAM: "ENG",
+        TRIAGE_STATE: "Triage",
+        MAX_ISSUES: "5",
+        REPO_NAME: "test-repo",
+      },
+      undefined,
+      { RUN_SUMMARIES: "--- Run run-1 ---\nIssue: ENG-1\nStatus: completed" },
+    );
+    expect(result).toContain("ENG");
+    expect(result).toContain("Triage");
+    expect(result).toContain("5");
+    expect(result).toContain("test-repo");
+    expect(result).toContain("run-1");
+    expect(result).not.toContain("{{LINEAR_TEAM}}");
+    expect(result).not.toContain("{{TRIAGE_STATE}}");
+    expect(result).not.toContain("{{MAX_ISSUES}}");
+    expect(result).not.toContain("{{REPO_NAME}}");
+    expect(result).not.toContain("{{RUN_SUMMARIES}}");
+  });
+
+  test("RUN_SUMMARIES preserves multi-line formatting", () => {
+    const summaries =
+      "--- Run run-1 ---\nIssue: ENG-1\nStatus: completed\n\n--- Run run-2 ---\nIssue: ENG-2\nStatus: failed";
+    const result = buildPrompt(
+      "reviewer",
+      {
+        LINEAR_TEAM: "ENG",
+        TRIAGE_STATE: "Triage",
+        MAX_ISSUES: "5",
+        REPO_NAME: "test",
+      },
+      undefined,
+      { RUN_SUMMARIES: summaries },
+    );
+    expect(result).toContain("--- Run run-1 ---\nIssue: ENG-1");
+    expect(result).toContain("--- Run run-2 ---\nIssue: ENG-2");
+  });
+});

@@ -146,6 +146,14 @@ function makeConfig(): AutopilotConfig {
       network_restricted: false,
       extra_allowed_domains: [],
     },
+    reviewer: {
+      enabled: false,
+      min_interval_minutes: 120,
+      min_runs_before_review: 10,
+      timeout_minutes: 60,
+      model: "opus",
+      max_issues_per_review: 5,
+    },
     budget: {
       daily_limit_usd: 0,
       monthly_limit_usd: 0,

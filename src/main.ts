@@ -31,6 +31,7 @@ import { sweepWorktrees } from "./lib/worktree";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
+import { runReviewer, shouldRunReviewer } from "./reviewer";
 import { createApp } from "./server";
 import { type AgentState, AppState } from "./state";
 
@@ -146,6 +147,11 @@ info(`Poll interval: ${config.executor.poll_interval_minutes}m`);
 if (config.projects.enabled && config.linear.initiative) {
   info(
     `Projects loop: every ${config.projects.poll_interval_minutes}m, max ${config.projects.max_active_projects} owners`,
+  );
+}
+if (config.reviewer.enabled) {
+  info(
+    `Reviewer loop: every ${config.reviewer.min_interval_minutes}m, after ${config.reviewer.min_runs_before_review} runs`,
   );
 }
 info(
@@ -303,6 +309,7 @@ const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CONSECUTIVE_FAILURES = 5;
 const running = new Set<Promise<boolean>>();
 let planningPromise: Promise<void> | null = null;
+let reviewerPromise: Promise<void> | null = null;
 let lastProjectsCheckAt = 0;
 
 let consecutiveFailures = 0;
@@ -405,6 +412,37 @@ while (!shuttingDown) {
       }
     }
 
+    // Check reviewer loop
+    if (
+      config.reviewer.enabled &&
+      state.getDb() &&
+      !state.getReviewerStatus().running &&
+      state.getRunningCount() < state.getMaxParallel()
+    ) {
+      const shouldReview = await shouldRunReviewer({
+        config,
+        state,
+        db: authDb,
+      });
+      if (shouldReview) {
+        reviewerPromise = runReviewer({
+          config,
+          projectPath,
+          linearIds,
+          state,
+          db: authDb,
+          shutdownSignal: shutdownController.signal,
+        })
+          .catch((e) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            warn(`Reviewer error: ${msg}`);
+          })
+          .finally(() => {
+            reviewerPromise = null;
+          });
+      }
+    }
+
     // Check projects loop
     if (
       config.projects.enabled &&
@@ -484,6 +522,7 @@ while (!shuttingDown) {
 
 const drainablePromises: Promise<unknown>[] = [...running];
 if (planningPromise) drainablePromises.push(planningPromise);
+if (reviewerPromise) drainablePromises.push(reviewerPromise);
 
 if (drainablePromises.length > 0) {
   info(
