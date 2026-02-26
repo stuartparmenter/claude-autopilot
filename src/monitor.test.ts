@@ -870,6 +870,39 @@ describe("checkOpenPRs — budget enforcement", () => {
   });
 });
 
+describe("checkOpenPRs — runClaude throws", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    // CI failure so a fixer is spawned
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/crash", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+  });
+
+  test("no ghost agent when runClaude rejects inside fixPR", async () => {
+    mockRunClaude.mockRejectedValue(new Error("Spawn gate error"));
+
+    const issue = makeIssue("crash-pr", "https://github.com/o/r/pull/700");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    const result = await checkOpenPRs(makeOpts(state));
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+
+    expect(state.getRunningCount()).toBe(0);
+    expect(state.getHistory()[0].status).toBe("failed");
+  });
+});
+
 describe("checkOpenPRs — fixer timeout and attempt budget", () => {
   let state: AppState;
 

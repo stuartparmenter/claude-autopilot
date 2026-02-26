@@ -378,6 +378,11 @@ async function fixPR(opts: {
       `Fixer for ${issueIdentifier}`,
     );
     return status === "completed";
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    warn(`Fixer agent for ${issueIdentifier} crashed: ${msg}`);
+    state.completeAgent(agentId, "failed", { error: msg });
+    return false;
   } finally {
     activeFixerIssues.delete(issueId);
   }

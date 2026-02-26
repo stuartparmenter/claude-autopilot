@@ -111,6 +111,11 @@ export async function executeIssue(opts: {
 
     state.clearIssueFailures(issue.id);
     return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    warn(`Executor agent for ${issue.identifier} crashed: ${msg}`);
+    state.completeAgent(agentId, "failed", { error: msg });
+    return false;
   } finally {
     activeIssueIds.delete(issue.id);
   }

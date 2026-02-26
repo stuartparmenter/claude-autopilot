@@ -478,6 +478,30 @@ describe("executeIssue — error path", () => {
   });
 });
 
+describe("executeIssue — runClaude throws", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("no ghost agent when runClaude rejects", async () => {
+    mockRunClaude.mockRejectedValue(new Error("Worktree creation failed"));
+
+    await executeIssue({
+      issue: makeIssue(),
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(state.getRunningCount()).toBe(0);
+    expect(state.getHistory()[0].status).toBe("failed");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // fillSlots
 // ---------------------------------------------------------------------------
