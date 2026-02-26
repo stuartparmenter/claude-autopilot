@@ -14,6 +14,9 @@ import { info, warn } from "./logger";
 import { AUTOPILOT_ROOT } from "./paths";
 import { createWorktree, removeWorktree } from "./worktree";
 
+/** Worktree functions indirected through a mutable object so tests can replace them without mock.module(). */
+export const _worktree = { createWorktree, removeWorktree };
+
 // Re-export for backward compatibility — callers import these from "./lib/claude"
 export { buildAgentEnv, buildMcpServers } from "./agent-config";
 
@@ -46,7 +49,10 @@ let spawnGate: Promise<void> = Promise.resolve();
  * Returns a release function — call it when the agent emits its init message,
  * or in the finally block if the agent never starts.
  */
-function acquireSpawnSlot(): { ready: Promise<void>; release: () => void } {
+export function acquireSpawnSlot(): {
+  ready: Promise<void>;
+  release: () => void;
+} {
   const previous = spawnGate;
   let release!: () => void;
   let released = false;
@@ -61,6 +67,11 @@ function acquireSpawnSlot(): { ready: Promise<void>; release: () => void } {
   return { ready: previous, release };
 }
 
+/** Reset the spawn gate to its initial resolved state. For use in tests only. */
+export function resetSpawnGate(): void {
+  spawnGate = Promise.resolve();
+}
+
 export interface ClaudeResult {
   result: string;
   sessionId?: string;
@@ -71,6 +82,42 @@ export interface ClaudeResult {
   inactivityTimedOut: boolean;
   error?: string;
   rawMessages?: unknown[];
+}
+
+/** Maps tool names to the input field used in their activity summary. */
+const TOOL_SUMMARY_FIELDS: Record<string, string> = {
+  Read: "file_path",
+  Write: "file_path",
+  Edit: "file_path",
+  Bash: "command",
+  Glob: "pattern",
+  Grep: "pattern",
+  WebFetch: "url",
+  WebSearch: "query",
+};
+
+export function summarizeToolUse(
+  toolName: string,
+  input: unknown,
+  cwd?: string,
+): string {
+  const inp =
+    input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
+
+  const field = TOOL_SUMMARY_FIELDS[toolName];
+  if (field) {
+    let value = String(inp[field] ?? "");
+    if (cwd && value.startsWith(cwd)) {
+      value = value.slice(cwd.length).replace(/^\//, "");
+    }
+    return `${toolName}: ${value}`;
+  }
+  if (toolName === "Task") {
+    return `Task: ${inp.description ?? inp.subagent_type ?? "subagent"}`;
+  }
+  return `Tool: ${toolName}`;
 }
 
 /**
@@ -181,7 +228,7 @@ export async function runClaude(opts: {
 
     // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {
-      queryOpts.cwd = await createWorktree(
+      queryOpts.cwd = await _worktree.createWorktree(
         opts.cwd,
         opts.worktree,
         opts.worktreeBranch,
@@ -192,7 +239,7 @@ export async function runClaude(opts: {
     // Check for shutdown before proceeding
     if (opts.parentSignal?.aborted) {
       if (worktreeName) {
-        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await _worktree.removeWorktree(opts.cwd, worktreeName, { keepBranch });
       }
       result.error = "Aborted before start";
       return result;
@@ -339,7 +386,7 @@ export async function runClaude(opts: {
 
     if (worktreeName) {
       try {
-        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await _worktree.removeWorktree(opts.cwd, worktreeName, { keepBranch });
       } catch (e) {
         warn(`${tag}Worktree cleanup failed for '${worktreeName}': ${e}`);
       }
