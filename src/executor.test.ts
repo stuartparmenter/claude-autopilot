@@ -111,7 +111,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       max_ideas_per_run: 5,
     },
     github: { repo: "", automerge: false },
-    project: { name: "test-project" },
+    project: { name: "test-project", prompt_dir: ".claude-autopilot/prompts" },
     persistence: {
       enabled: false,
       db_path: ".claude/autopilot.db",

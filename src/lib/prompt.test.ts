@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildAuditorPrompt,
   buildPrompt,
@@ -110,6 +112,104 @@ describe("buildPrompt", () => {
     });
     expect(result).toContain("ENG-99");
     expect(result).not.toContain("{{ISSUE_ID}}");
+  });
+});
+
+describe("loadPrompt project-local overrides", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = join("/tmp/claude-1002", `prompt-override-test-${Date.now()}`);
+    mkdirSync(join(tmpDir, ".claude-autopilot", "prompts"), {
+      recursive: true,
+    });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("falls back to bundled prompt when no project-local file exists", () => {
+    const bundled = loadPrompt("executor");
+    const result = loadPrompt("executor", tmpDir);
+    expect(result).toBe(bundled);
+  });
+
+  test("uses project-local file when it exists (full override)", () => {
+    const overridePath = join(
+      tmpDir,
+      ".claude-autopilot",
+      "prompts",
+      "executor.md",
+    );
+    writeFileSync(overridePath, "# Custom executor prompt");
+
+    const result = loadPrompt("executor", tmpDir);
+    expect(result).toBe("# Custom executor prompt");
+  });
+
+  test("substitutes {{BASE_PROMPT}} with bundled content (partial override)", () => {
+    const bundled = loadPrompt("executor");
+    const overridePath = join(
+      tmpDir,
+      ".claude-autopilot",
+      "prompts",
+      "executor.md",
+    );
+    writeFileSync(
+      overridePath,
+      "{{BASE_PROMPT}}\n\n## Project Rules\n- Always use pytest",
+    );
+
+    const result = loadPrompt("executor", tmpDir);
+    expect(result).toBe(`${bundled}\n\n## Project Rules\n- Always use pytest`);
+    expect(result).toContain("{{ISSUE_ID}}"); // bundled content preserved
+    expect(result).toContain("Always use pytest"); // project rules appended
+  });
+
+  test("partial override preserves all bundled prompt occurrences of {{BASE_PROMPT}}", () => {
+    const bundled = loadPrompt("executor");
+    const overridePath = join(
+      tmpDir,
+      ".claude-autopilot",
+      "prompts",
+      "executor.md",
+    );
+    writeFileSync(
+      overridePath,
+      "Before\n{{BASE_PROMPT}}\nMiddle\n{{BASE_PROMPT}}\nAfter",
+    );
+
+    const result = loadPrompt("executor", tmpDir);
+    expect(result).toBe(`Before\n${bundled}\nMiddle\n${bundled}\nAfter`);
+  });
+
+  test("buildPrompt uses project-local override when projectPath provided", () => {
+    const overridePath = join(
+      tmpDir,
+      ".claude-autopilot",
+      "prompts",
+      "executor.md",
+    );
+    writeFileSync(overridePath, "Custom: {{ISSUE_ID}}");
+
+    const result = buildPrompt("executor", { ISSUE_ID: "ENG-42" }, tmpDir);
+    expect(result).toBe("Custom: ENG-42");
+  });
+
+  test("loadPrompt without projectPath returns bundled prompt regardless of override files", () => {
+    const overridePath = join(
+      tmpDir,
+      ".claude-autopilot",
+      "prompts",
+      "executor.md",
+    );
+    writeFileSync(overridePath, "Should not be used");
+
+    const bundled = loadPrompt("executor");
+    // No projectPath → bundled is used
+    expect(bundled).not.toBe("Should not be used");
+    expect(bundled.length).toBeGreaterThan(0);
   });
 });
 

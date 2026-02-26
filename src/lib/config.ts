@@ -67,6 +67,7 @@ export interface GithubConfig {
 
 export interface ProjectConfig {
   name: string;
+  prompt_dir: string;
 }
 
 export interface SandboxConfig {
@@ -158,6 +159,7 @@ export const DEFAULTS: AutopilotConfig = {
   },
   project: {
     name: "",
+    prompt_dir: ".claude-autopilot/prompts",
   },
   persistence: {
     enabled: true,

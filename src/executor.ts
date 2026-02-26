@@ -33,15 +33,19 @@ export async function executeIssue(opts: {
   // Move to In Progress immediately so it's not picked up again
   await updateIssue(issue.id, { stateId: linearIds.states.in_progress });
 
-  const prompt = buildPrompt("executor", {
-    ISSUE_ID: issue.identifier,
-    IN_REVIEW_STATE: config.linear.states.in_review,
-    BLOCKED_STATE: config.linear.states.blocked,
-    PROJECT_NAME: config.project.name,
-    AUTOMERGE_INSTRUCTION: config.github.automerge
-      ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
-      : "Skip — auto-merge is not enabled for this project.",
-  });
+  const prompt = buildPrompt(
+    "executor",
+    {
+      ISSUE_ID: issue.identifier,
+      IN_REVIEW_STATE: config.linear.states.in_review,
+      BLOCKED_STATE: config.linear.states.blocked,
+      PROJECT_NAME: config.project.name,
+      AUTOMERGE_INSTRUCTION: config.github.automerge
+        ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+        : "Skip — auto-merge is not enabled for this project.",
+    },
+    projectPath,
+  );
 
   const worktree = issue.identifier;
   const timeoutMs = config.executor.timeout_minutes * 60 * 1000;

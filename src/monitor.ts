@@ -223,15 +223,19 @@ async function fixPR(opts: {
   );
   activeFixerIssues.add(issueId);
 
-  const prompt = buildPrompt("fixer", {
-    ISSUE_ID: issueIdentifier,
-    BRANCH: branch,
-    FAILURE_TYPE: failureType,
-    PR_NUMBER: String(prNumber),
-    PROJECT_NAME: config.project.name,
-    IN_REVIEW_STATE: config.linear.states.in_review,
-    BLOCKED_STATE: config.linear.states.blocked,
-  });
+  const prompt = buildPrompt(
+    "fixer",
+    {
+      ISSUE_ID: issueIdentifier,
+      BRANCH: branch,
+      FAILURE_TYPE: failureType,
+      PR_NUMBER: String(prNumber),
+      PROJECT_NAME: config.project.name,
+      IN_REVIEW_STATE: config.linear.states.in_review,
+      BLOCKED_STATE: config.linear.states.blocked,
+    },
+    projectPath,
+  );
 
   const worktree = `fix-${issueIdentifier}`;
   const timeoutMs = config.executor.fixer_timeout_minutes * 60 * 1000;
