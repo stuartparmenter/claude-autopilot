@@ -36,6 +36,11 @@ export interface AnalyticsResult {
   avgDurationMs: number;
 }
 
+export interface TodayAnalyticsResult {
+  todayRuns: number;
+  todaySuccessRate: number;
+}
+
 interface AgentRunRow {
   id: string;
   issue_id: string;
@@ -55,6 +60,11 @@ interface AnalyticsRow {
   success_count: number;
   total_cost_usd: number | null;
   avg_duration_ms: number | null;
+}
+
+interface TodayAnalyticsRow {
+  today_runs: number;
+  today_success_count: number | null;
 }
 
 interface ActivityLogRow {
@@ -149,6 +159,33 @@ export function getAnalytics(db: Database): AnalyticsResult {
     successRate: totalRuns > 0 ? successCount / totalRuns : 0,
     totalCostUsd: row?.total_cost_usd ?? 0,
     avgDurationMs: row?.avg_duration_ms ?? 0,
+  };
+}
+
+export function getTodayAnalytics(db: Database): TodayAnalyticsResult {
+  const now = new Date();
+  const startOfTodayMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+
+  const row = db
+    .query<TodayAnalyticsRow, [number]>(
+      `SELECT
+         COUNT(*) AS today_runs,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS today_success_count
+       FROM agent_runs
+       WHERE finished_at >= ?`,
+    )
+    .get(startOfTodayMs);
+
+  const todayRuns = row?.today_runs ?? 0;
+  const todaySuccessCount = row?.today_success_count ?? 0;
+
+  return {
+    todayRuns,
+    todaySuccessRate: todayRuns > 0 ? todaySuccessCount / todayRuns : 0,
   };
 }
 

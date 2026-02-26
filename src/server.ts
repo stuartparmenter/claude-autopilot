@@ -254,6 +254,12 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                 hx-trigger="load, every 30s"
                 hx-swap="innerHTML"
               ></div>
+              <div
+                class="analytics-bar"
+                hx-get="/partials/analytics"
+                hx-trigger="load, every 30s"
+                hx-swap="innerHTML"
+              ></div>
             </header>
             <div class="layout">
               <div class="sidebar">
@@ -309,7 +315,8 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     if (!analytics) {
       return c.json({ enabled: false });
     }
-    return c.json({ enabled: true, ...analytics });
+    const today = state.getTodayAnalytics();
+    return c.json({ enabled: true, ...analytics, ...(today ?? {}) });
   });
 
   app.get("/api/budget", (c) => {

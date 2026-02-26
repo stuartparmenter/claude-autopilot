@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { type AutopilotConfig, DEFAULTS } from "./lib/config";
-import type { AnalyticsResult } from "./lib/db";
+import type { AnalyticsResult, TodayAnalyticsResult } from "./lib/db";
 import {
   getActivityLogs,
   getAnalytics,
   getRecentRuns,
+  getTodayAnalytics,
   insertActivityLogs,
   insertAgentRun,
 } from "./lib/db";
@@ -222,6 +223,11 @@ export class AppState {
   getAnalytics(): AnalyticsResult | null {
     if (!this.db) return null;
     return getAnalytics(this.db);
+  }
+
+  getTodayAnalytics(): TodayAnalyticsResult | null {
+    if (!this.db) return null;
+    return getTodayAnalytics(this.db);
   }
 
   getActivityLogsForRun(agentRunId: string): ActivityEntry[] {

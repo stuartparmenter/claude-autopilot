@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AutopilotConfig } from "./lib/config";
 import { DEFAULTS } from "./lib/config";
+import { insertAgentRun, openDb } from "./lib/db";
 import { createApp, escapeHtml, formatDuration, safeCompare } from "./server";
 import { AppState } from "./state";
 
@@ -878,6 +879,150 @@ describe("GET /partials/planning-button", () => {
     const body = await res.text();
     expect(body).toContain("Planning...");
     expect(body).toContain("disabled");
+  });
+});
+
+describe("dashboard HTML includes analytics partial div", () => {
+  test("includes analytics-bar div with /partials/analytics and 30s poll", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("/partials/analytics");
+    expect(body).toContain("analytics-bar");
+    expect(body).toContain("every 30s");
+  });
+});
+
+describe("GET /partials/analytics", () => {
+  test("returns fallback message when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/analytics");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Analytics not available");
+  });
+
+  test("returns stat cards with Total Runs, Success Rate, Avg Duration, Total Cost when DB connected", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.5,
+      durationMs: 60000,
+      numTurns: 5,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/analytics");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Total Runs");
+    expect(body).toContain("Success Rate");
+    expect(body).toContain("Avg Duration");
+    expect(body).toContain("Total Cost");
+    expect(body).toContain("100%");
+  });
+});
+
+describe("GET /api/analytics", () => {
+  test("returns { enabled: false } when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/analytics");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { enabled: boolean };
+    expect(json.enabled).toBe(false);
+  });
+
+  test("returns all-time and today-windowed metrics when DB connected", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    // Two runs today: one completed, one failed
+    insertAgentRun(db, {
+      id: "run-today-1",
+      issueId: "ENG-1",
+      issueTitle: "Test 1",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.5,
+      durationMs: 60000,
+      numTurns: 5,
+    });
+    insertAgentRun(db, {
+      id: "run-today-2",
+      issueId: "ENG-2",
+      issueTitle: "Test 2",
+      status: "failed",
+      startedAt: now - 30000,
+      finishedAt: now - 1000,
+      costUsd: 0.1,
+      durationMs: 29000,
+      numTurns: 2,
+    });
+    // One run from yesterday (outside today's window)
+    const yesterday = now - 25 * 60 * 60 * 1000;
+    insertAgentRun(db, {
+      id: "run-yesterday",
+      issueId: "ENG-3",
+      issueTitle: "Old run",
+      status: "completed",
+      startedAt: yesterday - 60000,
+      finishedAt: yesterday,
+      costUsd: 1.0,
+      durationMs: 60000,
+      numTurns: 10,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/analytics");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      totalRuns: number;
+      successRate: number;
+      todayRuns: number;
+      todaySuccessRate: number;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.totalRuns).toBe(3);
+    expect(json.todayRuns).toBe(2);
+    expect(json.todaySuccessRate).toBeCloseTo(0.5);
+  });
+
+  test("todayRuns is 0 and todaySuccessRate is 0 when no runs today", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    // Only a run from yesterday
+    const yesterday = Date.now() - 25 * 60 * 60 * 1000;
+    insertAgentRun(db, {
+      id: "run-old",
+      issueId: "ENG-1",
+      issueTitle: "Old",
+      status: "completed",
+      startedAt: yesterday - 60000,
+      finishedAt: yesterday,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/analytics");
+    const json = (await res.json()) as {
+      enabled: boolean;
+      todayRuns: number;
+      todaySuccessRate: number;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.todayRuns).toBe(0);
+    expect(json.todaySuccessRate).toBe(0);
   });
 });
 
