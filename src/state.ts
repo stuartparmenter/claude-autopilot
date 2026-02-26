@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { type CircuitState, defaultRegistry } from "./lib/circuit-breaker";
 import { type AutopilotConfig, DEFAULTS } from "./lib/config";
 import type { AnalyticsResult, TodayAnalyticsResult } from "./lib/db";
 import {
@@ -60,6 +61,11 @@ export interface PlanningStatus {
   threshold?: number;
 }
 
+export interface ApiHealthStatus {
+  linear: CircuitState;
+  github: CircuitState;
+}
+
 export interface AppStateSnapshot {
   paused: boolean;
   agents: AgentState[];
@@ -67,6 +73,7 @@ export interface AppStateSnapshot {
   queue: QueueInfo;
   planning: PlanningStatus;
   startedAt: number;
+  apiHealth: ApiHealthStatus;
 }
 
 const MAX_HISTORY = 50;
@@ -374,6 +381,7 @@ export class AppState {
       queue: this.queue,
       planning: this.planning,
       startedAt: this.startedAt,
+      apiHealth: defaultRegistry.getAllStates(),
     };
   }
 }
