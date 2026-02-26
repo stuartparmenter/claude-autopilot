@@ -232,6 +232,22 @@ export async function getReadyIssues(
   return leafIssues;
 }
 
+export async function getTriageIssues(linearIds: LinearIds): Promise<Issue[]> {
+  const client = getLinearClient();
+  const result = await withRetry(
+    () =>
+      client.issues({
+        filter: {
+          team: { id: { eq: linearIds.teamId } },
+          state: { id: { eq: linearIds.states.triage } },
+        },
+        first: 50,
+      }),
+    "getTriageIssues",
+  );
+  return result.nodes;
+}
+
 const MAX_PAGES = 100;
 
 /**

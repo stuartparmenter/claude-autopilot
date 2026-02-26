@@ -225,6 +225,35 @@ export const DASHBOARD_CSS = `
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .triage-card {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .triage-card .issue-id {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--accent);
+  }
+  .triage-card .title {
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .triage-card .triage-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .action-btn.approve {
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .action-btn.approve:hover {
+    background: #1a3a1a;
+  }
   .pause-btn {
     padding: 4px 12px;
     border-radius: 4px;

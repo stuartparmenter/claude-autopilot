@@ -129,6 +129,15 @@ describe("auth", () => {
     expect(json.error).toBe("Unauthorized");
   });
 
+  test("with authToken: GET /partials/triage without auth returns 401 JSON", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/partials/triage");
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Unauthorized");
+  });
+
   test("with authToken: GET /api/status with valid Bearer token returns 200", async () => {
     const state = new AppState();
     const app = createApp(state, { authToken: TOKEN });
@@ -695,6 +704,16 @@ describe("dashboard HTML includes budget partial div", () => {
     expect(body).toContain("/partials/budget");
     expect(body).toContain("every 30s");
   });
+
+  test("includes triage-list div with 10s poll trigger", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("triage-list");
+    expect(body).toContain("/partials/triage");
+    expect(body).toContain("every 10s");
+  });
 });
 
 describe("CSRF protection", () => {
@@ -808,6 +827,34 @@ describe("CSRF protection", () => {
     const res = await app.request("/api/pause", { method: "POST" });
     expect(res.status).toBe(200);
   });
+
+  test("cookie-only POST to /api/triage/:issueId/approve returns 403", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/triage/some-uuid/approve", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Forbidden");
+  });
+
+  test("cookie + HX-Request: true allows POST to /api/triage/:issueId/approve", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/triage/some-uuid/approve", {
+      method: "POST",
+      headers: {
+        Cookie: `autopilot_token=${TOKEN}`,
+        "HX-Request": "true",
+      },
+    });
+    // 400 because callback not configured, but CSRF check passed
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Triage not configured");
+  });
 });
 
 describe("GET /partials/planning-button", () => {
@@ -831,5 +878,158 @@ describe("GET /partials/planning-button", () => {
     const body = await res.text();
     expect(body).toContain("Planning...");
     expect(body).toContain("disabled");
+  });
+});
+
+describe("GET /partials/triage", () => {
+  test("returns empty div when triageIssues callback not configured", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/triage");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("shows 'No issues awaiting review' when triage list is empty", async () => {
+    const state = new AppState();
+    const triageIssues = mock(async () => []);
+    const app = createApp(state, { triageIssues });
+    const res = await app.request("/partials/triage");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("No issues awaiting review");
+  });
+
+  test("renders issue identifiers and titles", async () => {
+    const state = new AppState();
+    const triageIssues = mock(async () => [
+      {
+        id: "uuid-1",
+        identifier: "ENG-10",
+        title: "Fix login bug",
+        priority: 2,
+      },
+    ]);
+    const app = createApp(state, { triageIssues });
+    const res = await app.request("/partials/triage");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("ENG-10");
+    expect(body).toContain("Fix login bug");
+  });
+
+  test("escapes HTML in issue titles", async () => {
+    const state = new AppState();
+    const triageIssues = mock(async () => [
+      {
+        id: "uuid-xss",
+        identifier: "ENG-99",
+        title: "<script>alert(1)</script>",
+        priority: 3,
+      },
+    ]);
+    const app = createApp(state, { triageIssues });
+    const res = await app.request("/partials/triage");
+    const body = await res.text();
+    expect(body).toContain("&lt;script&gt;");
+    expect(body).not.toContain("<script>alert(1)</script>");
+  });
+
+  test("renders approve and reject buttons", async () => {
+    const state = new AppState();
+    const triageIssues = mock(async () => [
+      {
+        id: "uuid-1",
+        identifier: "ENG-10",
+        title: "Fix login bug",
+        priority: 2,
+      },
+    ]);
+    const app = createApp(state, { triageIssues });
+    const res = await app.request("/partials/triage");
+    const body = await res.text();
+    expect(body).toContain('hx-post="/api/triage/uuid-1/approve"');
+    expect(body).toContain('hx-post="/api/triage/uuid-1/reject"');
+  });
+});
+
+describe("POST /api/triage/:issueId/approve", () => {
+  test("returns 400 when approveTriageIssue callback not configured", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/triage/some-uuid/approve", {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Triage not configured");
+  });
+
+  test("calls approveTriageIssue and returns approved: true", async () => {
+    const state = new AppState();
+    const approveTriageIssue = mock(async (_id: string) => {});
+    const app = createApp(state, { approveTriageIssue });
+    const res = await app.request("/api/triage/uuid-1/approve", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { approved: boolean };
+    expect(json.approved).toBe(true);
+    expect(approveTriageIssue).toHaveBeenCalledWith("uuid-1");
+  });
+
+  test("returns 500 with error when approveTriageIssue throws", async () => {
+    const state = new AppState();
+    const approveTriageIssue = mock(async (_id: string) => {
+      throw new Error("Linear API error");
+    });
+    const app = createApp(state, { approveTriageIssue });
+    const res = await app.request("/api/triage/uuid-1/approve", {
+      method: "POST",
+    });
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Approve failed: Linear API error");
+  });
+});
+
+describe("POST /api/triage/:issueId/reject", () => {
+  test("returns 400 when rejectTriageIssue callback not configured", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/triage/some-uuid/reject", {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Triage not configured");
+  });
+
+  test("calls rejectTriageIssue and returns rejected: true", async () => {
+    const state = new AppState();
+    const rejectTriageIssue = mock(async (_id: string) => {});
+    const app = createApp(state, { rejectTriageIssue });
+    const res = await app.request("/api/triage/uuid-1/reject", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { rejected: boolean };
+    expect(json.rejected).toBe(true);
+    expect(rejectTriageIssue).toHaveBeenCalledWith("uuid-1");
+  });
+
+  test("returns 500 with error when rejectTriageIssue throws", async () => {
+    const state = new AppState();
+    const rejectTriageIssue = mock(async (_id: string) => {
+      throw new Error("Network error");
+    });
+    const app = createApp(state, { rejectTriageIssue });
+    const res = await app.request("/api/triage/uuid-1/reject", {
+      method: "POST",
+    });
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Reject failed: Network error");
   });
 });
