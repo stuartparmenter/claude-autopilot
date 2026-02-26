@@ -4,11 +4,14 @@ import type { ActivityEntry, AgentResult } from "../state";
 import {
   getActivityLogs,
   getAnalytics,
+  getConversationLog,
   getRecentRuns,
   insertActivityLogs,
   insertAgentRun,
+  insertConversationLog,
   openDb,
   pruneActivityLogs,
+  pruneConversationLogs,
 } from "./db";
 
 let db: Database;
@@ -408,5 +411,134 @@ describe("pruneActivityLogs", () => {
     const deleted = pruneActivityLogs(db, 30);
     expect(deleted).toBe(0);
     expect(getActivityLogs(db, "run-1")).toHaveLength(1);
+  });
+});
+
+describe("session_id migration", () => {
+  test("migration adds session_id column to existing DB without it", () => {
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN session_id TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ session_id: string | null }, [string]>(
+        "SELECT session_id FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.session_id).toBeNull();
+
+    db2.close();
+  });
+
+  test("session_id migration is idempotent on a new DB", () => {
+    // openDb on :memory: already creates schema with the migration applied
+    // Running it again should not throw
+    expect(() => openDb(":memory:")).not.toThrow();
+  });
+});
+
+describe("insertAgentRun with sessionId", () => {
+  test("stores and retrieves sessionId", () => {
+    insertAgentRun(db, makeResult("a1", { sessionId: "sess-abc-123" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.sessionId).toBe("sess-abc-123");
+  });
+
+  test("sessionId is undefined when not set", () => {
+    insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.sessionId).toBeUndefined();
+  });
+
+  test("getRecentRuns does not include messagesJson field", () => {
+    insertAgentRun(db, makeResult("a1", { sessionId: "sess-xyz" }));
+    const run = getRecentRuns(db)[0];
+    expect(
+      (run as unknown as Record<string, unknown>).messagesJson,
+    ).toBeUndefined();
+  });
+});
+
+describe("insertConversationLog and getConversationLog", () => {
+  test("round-trip stores and retrieves messages JSON", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    const messages = [
+      { type: "text", content: "hello" },
+      { type: "result", content: "done" },
+    ];
+    insertConversationLog(db, "run-1", JSON.stringify(messages));
+    const retrieved = getConversationLog(db, "run-1");
+    expect(retrieved).not.toBeNull();
+    expect(JSON.parse(retrieved as string)).toEqual(messages);
+  });
+
+  test("getConversationLog returns null for unknown run ID", () => {
+    expect(getConversationLog(db, "nonexistent-run")).toBeNull();
+  });
+
+  test("INSERT OR REPLACE overwrites existing log for same run ID", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    insertConversationLog(db, "run-1", JSON.stringify(["first"]));
+    insertConversationLog(db, "run-1", JSON.stringify(["second"]));
+    const retrieved = getConversationLog(db, "run-1");
+    expect(retrieved).not.toBeNull();
+    expect(JSON.parse(retrieved as string)).toEqual(["second"]);
+  });
+});
+
+describe("pruneConversationLogs", () => {
+  test("deletes entries older than retention window", () => {
+    const now = Date.now();
+    const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
+    insertAgentRun(db, makeResult("run-old"));
+    insertAgentRun(db, makeResult("run-new"));
+    // Manually insert an old entry
+    db.run(
+      `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+      ["run-old", "[]", thirtyOneDaysAgo],
+    );
+    db.run(
+      `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+      ["run-new", "[]", now],
+    );
+    const deleted = pruneConversationLogs(db, 30);
+    expect(deleted).toBe(1);
+    expect(getConversationLog(db, "run-old")).toBeNull();
+    expect(getConversationLog(db, "run-new")).not.toBeNull();
+  });
+
+  test("returns 0 when no entries are old enough to prune", () => {
+    insertAgentRun(db, makeResult("run-1"));
+    insertConversationLog(db, "run-1", "[]");
+    expect(pruneConversationLogs(db, 30)).toBe(0);
+  });
+
+  test("returns 0 on empty table", () => {
+    expect(pruneConversationLogs(db, 30)).toBe(0);
   });
 });

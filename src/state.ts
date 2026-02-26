@@ -8,6 +8,7 @@ import {
   getTodayAnalytics,
   insertActivityLogs,
   insertAgentRun,
+  insertConversationLog,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -43,6 +44,7 @@ export interface AgentResult {
   costUsd?: number;
   durationMs?: number;
   numTurns?: number;
+  sessionId?: string;
   error?: string;
 }
 
@@ -132,8 +134,10 @@ export class AppState {
       costUsd?: number;
       durationMs?: number;
       numTurns?: number;
+      sessionId?: string;
       error?: string;
     },
+    rawMessages?: unknown[],
   ): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
@@ -158,12 +162,16 @@ export class AppState {
       costUsd: agent.costUsd,
       durationMs: agent.durationMs,
       numTurns: agent.numTurns,
+      sessionId: meta?.sessionId,
       error: agent.error,
     };
 
     if (this.db) {
       insertAgentRun(this.db, result);
       insertActivityLogs(this.db, result.id, agent.activities);
+      if (rawMessages && rawMessages.length > 0) {
+        insertConversationLog(this.db, result.id, JSON.stringify(rawMessages));
+      }
     }
 
     if (meta?.costUsd && meta.costUsd > 0) {

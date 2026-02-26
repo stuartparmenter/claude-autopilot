@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_activity_logs_agent_run_id ON activity_logs(agent_run_id);
+CREATE TABLE IF NOT EXISTS conversation_log (
+  agent_run_id TEXT PRIMARY KEY,
+  messages_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 export interface AnalyticsResult {
@@ -53,6 +58,7 @@ interface AgentRunRow {
   num_turns: number | null;
   error: string | null;
   linear_issue_id: string | null;
+  session_id: string | null;
 }
 
 interface AnalyticsRow {
@@ -86,14 +92,19 @@ export function openDb(dbFilePath: string): Database {
   } catch {
     // Column already exists — safe to ignore
   }
+  try {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN session_id TEXT");
+  } catch {
+    // Column already exists — safe to ignore
+  }
   return db;
 }
 
 export function insertAgentRun(db: Database, result: AgentResult): void {
   db.run(
     `INSERT OR REPLACE INTO agent_runs
-     (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       result.id,
       result.issueId,
@@ -106,6 +117,7 @@ export function insertAgentRun(db: Database, result: AgentResult): void {
       result.numTurns ?? null,
       result.error ?? null,
       result.linearIssueId ?? null,
+      result.sessionId ?? null,
     ],
   );
 }
@@ -123,6 +135,7 @@ function rowToResult(row: AgentRunRow): AgentResult {
     numTurns: row.num_turns ?? undefined,
     error: row.error ?? undefined,
     linearIssueId: row.linear_issue_id ?? undefined,
+    sessionId: row.session_id ?? undefined,
   };
 }
 
@@ -130,7 +143,7 @@ export function getRecentRuns(db: Database, limit = 50): AgentResult[] {
   const rows = db
     .query<AgentRunRow, [number]>(
       `SELECT id, issue_id, issue_title, status, started_at, finished_at,
-              cost_usd, duration_ms, num_turns, error, linear_issue_id
+              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id
        FROM agent_runs
        ORDER BY finished_at DESC
        LIMIT ?`,
@@ -235,6 +248,40 @@ export function getActivityLogs(
 export function pruneActivityLogs(db: Database, retentionDays: number): number {
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const result = db.run(`DELETE FROM activity_logs WHERE timestamp < ?`, [
+    cutoffMs,
+  ]);
+  return result.changes;
+}
+
+export function insertConversationLog(
+  db: Database,
+  agentRunId: string,
+  messagesJson: string,
+): void {
+  db.run(
+    `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+    [agentRunId, messagesJson, Date.now()],
+  );
+}
+
+export function getConversationLog(
+  db: Database,
+  agentRunId: string,
+): string | null {
+  const row = db
+    .query<{ messages_json: string }, [string]>(
+      `SELECT messages_json FROM conversation_log WHERE agent_run_id = ?`,
+    )
+    .get(agentRunId);
+  return row?.messages_json ?? null;
+}
+
+export function pruneConversationLogs(
+  db: Database,
+  retentionDays: number,
+): number {
+  const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const result = db.run(`DELETE FROM conversation_log WHERE created_at < ?`, [
     cutoffMs,
   ]);
   return result.changes;

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULTS } from "./lib/config";
+import { getConversationLog, openDb } from "./lib/db";
 import type { ActivityEntry } from "./state";
 import { AppState } from "./state";
 
@@ -166,6 +167,63 @@ describe("AppState — completeAgent", () => {
     const history = state.getHistory();
     expect(history[0].issueId).toBe("ISSUE-2");
     expect(history[1].issueId).toBe("ISSUE-1");
+  });
+
+  test("completeAgent with sessionId populates it in the result", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed", { sessionId: "sess-abc-123" });
+    const result = state.getHistory()[0];
+    expect(result.sessionId).toBe("sess-abc-123");
+  });
+
+  test("completeAgent without sessionId leaves it undefined in result", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed");
+    const result = state.getHistory()[0];
+    expect(result.sessionId).toBeUndefined();
+  });
+
+  test("completeAgent with rawMessages does not crash", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    expect(() =>
+      state.completeAgent("a1", "completed", {}, [
+        { type: "text" },
+        { type: "result" },
+      ]),
+    ).not.toThrow();
+  });
+
+  test("completeAgent without rawMessages does not crash", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    expect(() => state.completeAgent("a1", "completed")).not.toThrow();
+  });
+
+  test("completeAgent with empty rawMessages does not crash", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    expect(() => state.completeAgent("a1", "completed", {}, [])).not.toThrow();
+  });
+
+  test("completeAgent with rawMessages and DB persists conversation log", () => {
+    const db = openDb(":memory:");
+    state.setDb(db);
+    state.addAgent("a1", "ISSUE-1", "Test");
+    const messages = [{ type: "text", content: "hello" }];
+    state.completeAgent("a1", "completed", {}, messages);
+    const agentId = state.getHistory()[0].id;
+    const log = getConversationLog(db, agentId);
+    expect(log).not.toBeNull();
+    expect(JSON.parse(log as string)).toEqual(messages);
+    db.close();
+  });
+
+  test("completeAgent with empty rawMessages does not persist conversation log", () => {
+    const db = openDb(":memory:");
+    state.setDb(db);
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed", {}, []);
+    const agentId = state.getHistory()[0].id;
+    expect(getConversationLog(db, agentId)).toBeNull();
+    db.close();
   });
 });
 
