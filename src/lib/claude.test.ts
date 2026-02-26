@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ActivityEntry } from "../state";
 
 // ─── Environment setup ───────────────────────────────────────────────────────
@@ -65,6 +65,9 @@ const mockQuery = mock(
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 // Must be at top level so Bun processes them before static imports resolve.
+// Only mock external modules here — internal modules (./worktree, ./logger, ./github)
+// must NOT be mocked via mock.module() because it causes permanent cross-file leakage
+// (Bun bug #7823). Worktree is injected via _worktree instead (see beforeEach below).
 
 mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   query: mockQuery,
@@ -75,29 +78,18 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   }),
 }));
 
-mock.module("./worktree", () => ({
-  createWorktree: mockCreateWorktree,
-  removeWorktree: mockRemoveWorktree,
-}));
-
-mock.module("./logger", () => ({
-  info: mock(() => {}),
-  warn: mock(() => {}),
-  error: mock(() => {}),
-  debug: mock(() => {}),
-}));
-
-mock.module("./github", () => ({
-  enableAutoMerge: mock(() => Promise.resolve("auto-merge enabled")),
-}));
-
 import {
+  _worktree,
   acquireSpawnSlot,
   buildMcpServers,
   resetSpawnGate,
   runClaude,
   summarizeToolUse,
 } from "./claude";
+
+// Capture real worktree functions before tests replace them
+const origCreateWorktree = _worktree.createWorktree;
+const origRemoveWorktree = _worktree.removeWorktree;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -145,6 +137,18 @@ beforeEach(() => {
   mockRemoveWorktree.mockClear();
   mockQuery.mockClear();
   resetSpawnGate();
+  // Inject mock worktree functions via the exported indirection object so we
+  // don't need mock.module("./worktree") which leaks into other test files.
+  _worktree.createWorktree =
+    mockCreateWorktree as unknown as typeof _worktree.createWorktree;
+  _worktree.removeWorktree =
+    mockRemoveWorktree as unknown as typeof _worktree.removeWorktree;
+});
+
+afterEach(() => {
+  // Restore real worktree functions so other test files are not affected.
+  _worktree.createWorktree = origCreateWorktree;
+  _worktree.removeWorktree = origRemoveWorktree;
 });
 
 // ─── summarizeToolUse ────────────────────────────────────────────────────────

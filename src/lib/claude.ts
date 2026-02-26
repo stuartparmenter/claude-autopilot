@@ -13,6 +13,9 @@ import { enableAutoMerge } from "./github";
 import { info, warn } from "./logger";
 import { createWorktree, removeWorktree } from "./worktree";
 
+/** Worktree functions indirected through a mutable object so tests can replace them without mock.module(). */
+export const _worktree = { createWorktree, removeWorktree };
+
 /** Domains agents always need access to when network is restricted. */
 const SANDBOX_BASE_DOMAINS = [
   "github.com",
@@ -275,7 +278,7 @@ export async function runClaude(opts: {
 
     // Self-managed worktrees: create before spawning, clean up in finally
     if (opts.worktree) {
-      queryOpts.cwd = await createWorktree(
+      queryOpts.cwd = await _worktree.createWorktree(
         opts.cwd,
         opts.worktree,
         opts.worktreeBranch,
@@ -286,7 +289,7 @@ export async function runClaude(opts: {
     // Check for shutdown before proceeding
     if (opts.parentSignal?.aborted) {
       if (worktreeName) {
-        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await _worktree.removeWorktree(opts.cwd, worktreeName, { keepBranch });
       }
       result.error = "Aborted before start";
       return result;
@@ -470,7 +473,7 @@ export async function runClaude(opts: {
 
     if (worktreeName) {
       try {
-        await removeWorktree(opts.cwd, worktreeName, { keepBranch });
+        await _worktree.removeWorktree(opts.cwd, worktreeName, { keepBranch });
       } catch (e) {
         warn(`${tag}Worktree cleanup failed for '${worktreeName}': ${e}`);
       }

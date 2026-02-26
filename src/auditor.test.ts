@@ -1,12 +1,34 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import type { LinearClient } from "@linear/sdk";
 import type { ClaudeResult } from "./lib/claude";
+// Captured at module load time (before beforeEach mocks the module) so
+// afterAll can restore the real exports and prevent contaminating claude.test.ts.
+import * as realClaudeModule from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import {
   resetClient as resetLinearClient,
   setClientForTesting,
 } from "./lib/linear";
 import { AppState } from "./state";
+
+// Bun mutates the namespace object in-place when mock.module() is called, so
+// `realClaudeModule.runClaude` reflects the MOCKED value by the time afterAll runs.
+// Capture individual values via const assignment before any mock runs.
+const _snapRunClaude = realClaudeModule.runClaude;
+const _snapBuildMcpServers = realClaudeModule.buildMcpServers;
+const _snapWorktree = realClaudeModule._worktree;
+const _snapAcquireSpawnSlot = realClaudeModule.acquireSpawnSlot;
+const _snapResetSpawnGate = realClaudeModule.resetSpawnGate;
+const _snapSummarizeToolUse = realClaudeModule.summarizeToolUse;
+const _snapCloseAllAgents = realClaudeModule.closeAllAgents;
 
 // ---------------------------------------------------------------------------
 // Mock functions — created once, re-wired per test via beforeEach
@@ -63,6 +85,20 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore();
   resetLinearClient();
+});
+
+// Restore the real claude module after all auditor tests complete so that
+// later test files (executor, monitor, claude) are not contaminated.
+afterAll(() => {
+  mock.module("./lib/claude", () => ({
+    _worktree: _snapWorktree,
+    closeAllAgents: _snapCloseAllAgents,
+    acquireSpawnSlot: _snapAcquireSpawnSlot,
+    resetSpawnGate: _snapResetSpawnGate,
+    summarizeToolUse: _snapSummarizeToolUse,
+    buildMcpServers: _snapBuildMcpServers,
+    runClaude: _snapRunClaude,
+  }));
 });
 
 // ---------------------------------------------------------------------------
