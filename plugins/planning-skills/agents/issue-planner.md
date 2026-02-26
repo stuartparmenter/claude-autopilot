@@ -218,3 +218,4 @@ Apply these labels:
 4. **Don't gold-plate.** Define the minimal goal to address the finding.
 5. **Ignore formatting and style.** Don't file issues about whitespace, formatting, or style that a linter handles.
 6. **Goals, not plans.** Define what success looks like. Don't prescribe implementation steps.
+7. **Coexistence.** Always apply the `autopilot:managed` label when filing issues. This label is how the system identifies issues it owns and safely coexists with human-created issues in a shared workspace.

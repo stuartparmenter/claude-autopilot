@@ -58,6 +58,8 @@ Group your findings into improvement categories. For each finding:
    - `[hook]`: New hooks or hook improvements (automated pre/post actions)
    - `[claude-md]`: Changes to CLAUDE.md instructions
 
+**Coexistence violations**: Treat as a high-priority `[prompt]` improvement category. If any run transcript shows an agent acting on issues, PRs, or branches that were NOT created by the autopilot system (e.g., modifying a PR whose branch does not start with `worktree-ap-`, or transitioning an issue that lacks the `autopilot:managed` label), flag it immediately. Coexistence violations can disrupt human developer workflows and must be addressed.
+
 2. **Affected file**: Which specific file needs changing (e.g., `prompts/executor.md`)
 
 3. **Problem**: What specific behavior caused the issue (be precise — quote transcript excerpts where possible)
@@ -99,6 +101,7 @@ For each unique, non-duplicate improvement finding (up to {{MAX_ISSUES}}):
    - `teamId`: Look up using the `get_team` tool for team `{{LINEAR_TEAM}}`
    - `stateId`: Look up using the `list_issue_statuses` tool for state `{{TRIAGE_STATE}}`
    - `title`: The formatted title above
+   - `labels`: Always include `autopilot:managed` plus the relevant category labels
    - `description`: A detailed description including:
      - **Problem**: What behavior was observed
      - **Evidence**: Run IDs and relevant transcript excerpts

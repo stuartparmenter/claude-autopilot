@@ -36,7 +36,17 @@ If the fetch fails (branch doesn't exist on remote), STOP immediately and report
 
 ---
 
-## Phase 2: Understand Feedback
+## Phase 2: Ownership Verification
+
+Before making any changes, verify that this PR is autopilot-managed.
+
+Check the branch name `{{BRANCH}}`:
+- Autopilot branches follow the pattern `worktree-ap-<identifier>` (e.g., `worktree-ap-ENG-123`)
+- If the branch does NOT start with `worktree-ap-`, STOP immediately. Add a comment to the Linear issue explaining that the PR branch `{{BRANCH}}` is not autopilot-managed, and do NOT proceed with any changes.
+
+---
+
+## Phase 3: Understand Feedback
 
 Use the GitHub MCP to read the full PR review on PR #{{PR_NUMBER}} — check for any comments not listed above (they may have been posted after the snapshot above was taken).
 
@@ -46,7 +56,7 @@ Categorize each comment as one of:
 - **Style issue** — formatting or naming convention (fix if consistent with the project's style guide)
 - **Design concern** — reviewer questions the overall approach or architecture
 
-**STOP immediately if you see design concerns.** You cannot make architectural decisions. Move to Phase 5 with a failure report explaining what the design concern is and what the reviewer said.
+**STOP immediately if you see design concerns.** You cannot make architectural decisions. Move to Phase 6 with a failure report explaining what the design concern is and what the reviewer said.
 
 Signs of design concerns:
 - "I think we should rethink this approach..."
@@ -57,7 +67,7 @@ Signs of design concerns:
 
 ---
 
-## Phase 3: Address Each Comment
+## Phase 4: Address Each Comment
 
 For each **code change** and **style issue**:
 1. Read the full context of the file at the mentioned line (use Read tool)
@@ -80,11 +90,11 @@ Check CLAUDE.md in the project for the exact commands, then run:
 3. Formatter with auto-fix (e.g., `biome format --write`)
 4. Test suite (e.g., `bun test`)
 
-If any check fails, analyze and fix (max 3 attempts). If still failing after 3 attempts, STOP and move to Phase 5 with a failure report.
+If any check fails, analyze and fix (max 3 attempts). If still failing after 3 attempts, STOP and move to Phase 6 with a failure report.
 
 ---
 
-## Phase 4: Push and Reply
+## Phase 5: Push and Reply
 
 ### Push changes (only if code changes were made):
 
@@ -113,7 +123,7 @@ Do NOT reply to overall review summaries — only reply to individual inline com
 
 ---
 
-## Phase 5: Update Linear
+## Phase 6: Update Linear
 
 Use the Linear MCP to update {{ISSUE_ID}}.
 

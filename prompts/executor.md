@@ -88,13 +88,13 @@ Create a clean commit and PR.
    git fetch origin main && git rebase origin/main
    ```
    If there are merge conflicts, resolve them carefully — preserve the intent of both your changes and the upstream changes. After resolving, re-run validation (Phase 4) to confirm nothing broke.
-2. **Branch**: You are already on the `worktree-{{ISSUE_ID}}` branch. Do NOT create or switch branches.
+2. **Branch**: You are already on the `worktree-ap-{{ISSUE_ID}}` branch. Do NOT create or switch branches.
 3. **Commit message**: `{{ISSUE_ID}}: <concise description of what changed>`
    - First line: issue ID + summary (under 72 chars)
    - Blank line
    - Body: brief explanation of the approach if non-obvious
 4. **Final check** (MANDATORY — do NOT skip): After staging, run ALL validation steps again: type check, lint, format (with `--write`), and tests. If ANYTHING fails, fix it, amend the commit, and re-run until every check passes with zero errors. Do NOT push until this gate passes.
-5. **Push** the branch with `git push -u origin worktree-{{ISSUE_ID}}`
+5. **Push** the branch with `git push -u origin worktree-ap-{{ISSUE_ID}}`
 6. **Create PR** using the GitHub MCP `create_pull_request` tool:
    - Title: `{{ISSUE_ID}}: <concise description>`
    - Base branch: `main`
@@ -136,3 +136,4 @@ Use the Linear MCP to update the issue.
 3. **When in doubt, block**. A blocked issue with a clear explanation is infinitely better than a bad implementation that breaks things.
 4. **Leave the codebase better than you found it** — but only within the scope of your issue.
 5. **Be honest in your Linear updates**. If something was tricky, say so. If you made an assumption, document it.
+6. **Coexistence**. This workspace may be shared with human developers. You are operating on issue {{ISSUE_ID}} which was assigned to autopilot. Only modify files relevant to your assigned issue. Do not touch issues, PRs, or branches that were not created by the autopilot system (autopilot branches start with `worktree-ap-`).
