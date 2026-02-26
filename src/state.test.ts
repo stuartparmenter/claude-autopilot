@@ -193,26 +193,26 @@ describe("AppState — updateQueue", () => {
   });
 });
 
-describe("AppState — updateAuditor", () => {
+describe("AppState — updatePlanning", () => {
   let state: AppState;
 
   beforeEach(() => {
     state = new AppState();
   });
 
-  test("initially auditor is not running", () => {
-    expect(state.getAuditorStatus().running).toBe(false);
+  test("initially planning is not running", () => {
+    expect(state.getPlanningStatus().running).toBe(false);
   });
 
-  test("partial update merges into auditor status", () => {
-    state.updateAuditor({ running: true });
-    expect(state.getAuditorStatus().running).toBe(true);
+  test("partial update merges into planning status", () => {
+    state.updatePlanning({ running: true });
+    expect(state.getPlanningStatus().running).toBe(true);
   });
 
   test("multiple updates are merged cumulatively", () => {
-    state.updateAuditor({ running: true, readyCount: 5 });
-    state.updateAuditor({ lastResult: "completed", running: false });
-    const status = state.getAuditorStatus();
+    state.updatePlanning({ running: true, readyCount: 5 });
+    state.updatePlanning({ lastResult: "completed", running: false });
+    const status = state.getPlanningStatus();
     expect(status.running).toBe(false);
     expect(status.readyCount).toBe(5);
     expect(status.lastResult).toBe("completed");
@@ -352,7 +352,7 @@ describe("AppState — toJSON", () => {
     expect(snap).toHaveProperty("agents");
     expect(snap).toHaveProperty("history");
     expect(snap).toHaveProperty("queue");
-    expect(snap).toHaveProperty("auditor");
+    expect(snap).toHaveProperty("planning");
     expect(snap).toHaveProperty("startedAt");
     expect(Array.isArray(snap.agents)).toBe(true);
     expect(Array.isArray(snap.history)).toBe(true);

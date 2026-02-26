@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
@@ -25,16 +25,16 @@ function randomSaying(): string {
 
 export interface DashboardOptions {
   authToken?: string;
-  triggerAudit?: () => void;
+  secureCookie?: boolean;
+  triggerPlanning?: () => void;
   retryIssue?: (linearIssueId: string) => Promise<void>;
   config?: AutopilotConfig;
 }
 
-function safeCompare(a: string, b: string): boolean {
-  const aBytes = Buffer.from(a);
-  const bBytes = Buffer.from(b);
-  if (aBytes.length !== bBytes.length) return false;
-  return timingSafeEqual(aBytes, bBytes);
+export function safeCompare(a: string, b: string): boolean {
+  const aHash = createHash("sha256").update(a).digest();
+  const bHash = createHash("sha256").update(b).digest();
+  return timingSafeEqual(aHash, bHash);
 }
 
 function loginPage(error?: string): string {
@@ -147,6 +147,16 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       const tokenToCheck = bearerToken ?? cookieToken;
 
       if (tokenToCheck !== null && safeCompare(tokenToCheck, authToken)) {
+        // CSRF protection: cookie-authenticated POST requests must include a non-simple header
+        const isCookieAuth = bearerToken === null && cookieToken !== null;
+        if (isCookieAuth && c.req.method === "POST") {
+          const hasHxRequest = c.req.header("HX-Request") === "true";
+          const hasXRequestedWith =
+            c.req.header("X-Requested-With") === "XMLHttpRequest";
+          if (!hasHxRequest && !hasXRequestedWith) {
+            return c.json({ error: "Forbidden" }, 403);
+          }
+        }
         return next();
       }
 
@@ -167,6 +177,7 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           httpOnly: true,
           sameSite: "Strict",
           path: "/",
+          secure: options?.secureCookie,
         });
         return c.redirect("/");
       }
@@ -221,8 +232,8 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                   : ""
               }
               <div
-                id="audit-btn"
-                hx-get="/partials/audit-button"
+                id="planning-btn"
+                hx-get="/partials/planning-button"
                 hx-trigger="load, every 5s"
                 hx-swap="innerHTML"
               ></div>
@@ -297,15 +308,15 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     return c.json({ enabled: true, ...snapshot });
   });
 
-  app.post("/api/audit", (c) => {
-    if (state.getAuditorStatus().running) {
-      return c.json({ error: "Audit already running" }, 409);
+  app.post("/api/planning", (c) => {
+    if (state.getPlanningStatus().running) {
+      return c.json({ error: "Planning already running" }, 409);
     }
     try {
-      options?.triggerAudit?.();
+      options?.triggerPlanning?.();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `Audit trigger failed: ${msg}` }, 500);
+      return c.json({ error: `Planning trigger failed: ${msg}` }, 500);
     }
     return c.json({ triggered: true });
   });
@@ -365,18 +376,18 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     );
   });
 
-  app.get("/partials/audit-button", (c) => {
-    const auditorRunning = state.getAuditorStatus().running;
+  app.get("/partials/planning-button", (c) => {
+    const planningRunning = state.getPlanningStatus().running;
     return c.html(
       html`<button
-        class="action-btn ${auditorRunning ? "disabled" : ""}"
-        hx-post="/api/audit"
-        hx-target="#audit-btn"
+        class="action-btn ${planningRunning ? "disabled" : ""}"
+        hx-post="/api/planning"
+        hx-target="#planning-btn"
         hx-swap="innerHTML"
         hx-select="button"
-        ${auditorRunning ? "disabled" : ""}
+        ${planningRunning ? "disabled" : ""}
       >
-        ${auditorRunning ? "Auditing..." : "Trigger Audit"}
+        ${planningRunning ? "Planning..." : "Trigger Planning"}
       </button>`,
     );
   });

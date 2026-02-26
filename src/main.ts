@@ -8,7 +8,6 @@
 
 import { resolve } from "node:path";
 import { RatelimitedLinearError } from "@linear/sdk";
-import { runAudit, shouldRunAudit } from "./auditor";
 import { fillSlots } from "./executor";
 import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
@@ -19,6 +18,8 @@ import { resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sanitizeMessage } from "./lib/sanitize";
 import { checkOpenPRs } from "./monitor";
+import { runPlanning, shouldRunPlanning } from "./planner";
+import { checkProjects } from "./projects";
 import { createApp } from "./server";
 import { AppState } from "./state";
 
@@ -61,10 +62,6 @@ const config = loadConfig(projectPath);
 
 if (!config.linear.team)
   fatal("linear.team is not set in .claude-autopilot.yml");
-if (!config.linear.project)
-  fatal("linear.project is not set in .claude-autopilot.yml");
-if (!config.project.name)
-  fatal("project.name is not set in .claude-autopilot.yml");
 
 // --- Check environment variables ---
 
@@ -110,7 +107,7 @@ const isLocalhost =
   host === "127.0.0.1" || host === "localhost" || host === "::1";
 
 if (!isLocalhost && !dashboardToken) {
-  error(
+  fatal(
     `AUTOPILOT_DASHBOARD_TOKEN must be set when binding dashboard to non-localhost.\n` +
       `Set: export AUTOPILOT_DASHBOARD_TOKEN=<your-secret-token>\n` +
       `Or bind to localhost only (omit --host).`,
@@ -120,11 +117,21 @@ if (!isLocalhost && !dashboardToken) {
 header("claude-autopilot v0.2.0");
 
 info(`Project: ${projectPath}`);
-info(`Team: ${config.linear.team}, Project: ${config.linear.project}`);
+info(
+  `Team: ${config.linear.team}` +
+    (config.linear.initiative
+      ? `, Initiative: ${config.linear.initiative}`
+      : ""),
+);
 info(`Max parallel: ${config.executor.parallel}`);
 info(`Poll interval: ${config.executor.poll_interval_minutes}m`);
+if (config.projects.enabled && config.linear.initiative) {
+  info(
+    `Projects loop: every ${config.projects.poll_interval_minutes}m, max ${config.projects.max_active_projects} owners`,
+  );
+}
 info(
-  `Model: ${config.executor.model} (planning: ${config.executor.planning_model})`,
+  `Models: executor=${config.executor.model}, planning=${config.planning.model}, projects=${config.projects.model}`,
 );
 
 // --- Detect GitHub repo ---
@@ -139,7 +146,12 @@ ok(`GitHub repo: ${ghOwner}/${ghRepo}`);
 
 info("Connecting to Linear...");
 const linearIds = await resolveLinearIds(config.linear);
-ok(`Connected - team ${config.linear.team}, project ${config.linear.project}`);
+ok(
+  `Connected - team ${config.linear.team}` +
+    (linearIds.initiativeName
+      ? `, initiative ${linearIds.initiativeName}`
+      : ""),
+);
 
 // --- Init state and server ---
 
@@ -156,9 +168,10 @@ if (config.persistence.enabled) {
 
 const app = createApp(state, {
   authToken: dashboardToken,
+  secureCookie: !isLocalhost,
   config,
-  triggerAudit: () => {
-    runAudit({
+  triggerPlanning: () => {
+    runPlanning({
       config,
       projectPath,
       linearIds,
@@ -235,11 +248,13 @@ process.on("uncaughtException", (err) => {
 // --- Main loop ---
 
 const POLL_INTERVAL_MS = config.executor.poll_interval_minutes * 60 * 1000;
+const PROJECTS_INTERVAL_MS = config.projects.poll_interval_minutes * 60 * 1000;
 const BASE_BACKOFF_MS = 10_000; // 10s
 const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CONSECUTIVE_FAILURES = 5;
 const running = new Set<Promise<boolean>>();
-let auditorPromise: Promise<void> | null = null;
+let planningPromise: Promise<void> | null = null;
+let lastProjectsCheckAt = 0;
 
 let consecutiveFailures = 0;
 
@@ -284,18 +299,18 @@ while (!shuttingDown) {
       running.add(tracked);
     }
 
-    // Check auditor (counts against parallel limit)
+    // Check planning (counts against parallel limit)
     if (
-      !state.getAuditorStatus().running &&
+      !state.getPlanningStatus().running &&
       state.getRunningCount() < config.executor.parallel
     ) {
-      const shouldAudit = await shouldRunAudit({
+      const shouldPlan = await shouldRunPlanning({
         config,
         linearIds,
         state,
       });
-      if (shouldAudit) {
-        auditorPromise = runAudit({
+      if (shouldPlan) {
+        planningPromise = runPlanning({
           config,
           projectPath,
           linearIds,
@@ -304,11 +319,31 @@ while (!shuttingDown) {
         })
           .catch((e) => {
             const msg = e instanceof Error ? e.message : String(e);
-            warn(`Auditor error: ${msg}`);
+            warn(`Planning error: ${msg}`);
           })
           .finally(() => {
-            auditorPromise = null;
+            planningPromise = null;
           });
+      }
+    }
+
+    // Check projects loop
+    if (
+      config.projects.enabled &&
+      linearIds.initiativeId &&
+      Date.now() - lastProjectsCheckAt >= PROJECTS_INTERVAL_MS
+    ) {
+      lastProjectsCheckAt = Date.now();
+      const projectPromises = await checkProjects({
+        config,
+        projectPath,
+        linearIds,
+        state,
+        shutdownSignal: shutdownController.signal,
+      });
+      for (const p of projectPromises) {
+        const tracked = p.finally(() => running.delete(tracked));
+        running.add(tracked);
       }
     }
 
@@ -370,7 +405,7 @@ while (!shuttingDown) {
 // --- Drain phase ---
 
 const drainablePromises: Promise<unknown>[] = [...running];
-if (auditorPromise) drainablePromises.push(auditorPromise);
+if (planningPromise) drainablePromises.push(planningPromise);
 
 if (drainablePromises.length > 0) {
   info(

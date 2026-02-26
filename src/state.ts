@@ -51,7 +51,7 @@ export interface QueueInfo {
   lastChecked: number;
 }
 
-export interface AuditorStatus {
+export interface PlanningStatus {
   running: boolean;
   lastRunAt?: number;
   lastResult?: "completed" | "skipped" | "failed" | "timed_out";
@@ -64,7 +64,7 @@ export interface AppStateSnapshot {
   agents: AgentState[];
   history: AgentResult[];
   queue: QueueInfo;
-  auditor: AuditorStatus;
+  planning: PlanningStatus;
   startedAt: number;
 }
 
@@ -81,7 +81,7 @@ export class AppState {
     inProgressCount: 0,
     lastChecked: 0,
   };
-  private auditor: AuditorStatus = { running: false };
+  private planning: PlanningStatus = { running: false };
   private paused = false;
   private issueFailureCount = new Map<string, number>();
   private db: Database | null = null;
@@ -190,8 +190,8 @@ export class AppState {
     this.queue = { readyCount, inProgressCount, lastChecked: Date.now() };
   }
 
-  updateAuditor(status: Partial<AuditorStatus>): void {
-    Object.assign(this.auditor, status);
+  updatePlanning(status: Partial<PlanningStatus>): void {
+    Object.assign(this.planning, status);
   }
 
   getAgent(id: string): AgentState | undefined {
@@ -220,8 +220,8 @@ export class AppState {
     return getActivityLogs(this.db, agentRunId);
   }
 
-  getAuditorStatus(): AuditorStatus {
-    return this.auditor;
+  getPlanningStatus(): PlanningStatus {
+    return this.planning;
   }
 
   isPaused(): boolean {
@@ -357,7 +357,7 @@ export class AppState {
       agents: this.getRunningAgents(),
       history: this.history,
       queue: this.queue,
-      auditor: this.auditor,
+      planning: this.planning,
       startedAt: this.startedAt,
     };
   }

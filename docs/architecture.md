@@ -12,17 +12,17 @@ The architecture is built on four principles:
 
 1. **Linear is the source of truth.** All work is represented as Linear issues with well-defined states. Humans interact with the system by triaging issues and reviewing PRs. The system never acts on work that is not tracked in Linear.
 
-2. **Single process orchestration.** One `bun run start` command runs the executor loop, auditor timer, and web dashboard. No external orchestrator needed. The main loop fills parallel agent slots, checks the auditor threshold, and waits for agents to finish.
+2. **Single process orchestration.** One `bun run start` command runs the executor loop, planning timer, and web dashboard. No external orchestrator needed. The main loop fills parallel agent slots, checks the planning threshold, and waits for agents to finish.
 
 3. **Claude Code is the creative executor.** All code generation, codebase analysis, and implementation decisions are made by Claude Code agents running in isolated git worktrees via the Agent SDK. Claude reads prompts, reads code, and writes code. It does not make scheduling or orchestration decisions.
 
-4. **Prompts are the product.** The quality of the system is determined by the prompts in `prompts/`. The executor prompt (`prompts/executor.md`) defines how issues become PRs. The auditor prompt (`prompts/auditor.md`) defines how codebases become issues. Tuning the system means tuning these prompts.
+4. **Prompts are the product.** The quality of the system is determined by the prompts in `prompts/`. The executor prompt (`prompts/executor.md`) defines how issues become PRs. The CTO prompt (`prompts/cto.md`) defines how codebases become issues. Tuning the system means tuning these prompts.
 
 ---
 
 ## System Overview
 
-The system has two loops that run independently within a single process:
+The system has four loops that run independently within a single process:
 
 ```
                     +-----------+
@@ -37,28 +37,42 @@ The system has two loops that run independently within a single process:
           |                                |
           v                                v
    +------+-------+               +-------+------+
-   | Executor Loop |               | Auditor Loop |
+   | Executor Loop |               | Planning Loop|
    +------+-------+               +-------+------+
           |                                |
     pulls Ready issues             scans codebase
-    from Linear                    files Triage issues
-          |                        to Linear
+    from Linear (team-wide)        files Triage issues
+          |                        to Linear projects
           v                                |
    +------+-------+               +-------+------+
-   | Claude Agent   |               | Claude Agent  |
-   | (in worktree) |               | + Agent Team  |
+   | Claude Agent   |               | CTO Agent     |
+   | (in worktree) |               | + PM + Specs  |
    +------+-------+               +-------+------+
           |                                |
-    implements issue               Planner + Verifier
-    runs tests/lint                + Security Reviewer
-    pushes branch                  subagents review
-    opens PR                       each finding
-    updates Linear                        |
-          |                                v
-          v                        files issues to
-   +------+-------+               Linear Triage state
-   |   GitHub PR   |
-   +--------------+
+    implements issue               PM + Scout + Security
+    runs tests/lint                + Quality + Architect
+    pushes branch                  + Issue Planners
+    opens PR                               |
+    updates Linear                         v
+          |                        groups into projects,
+          v                        files to Triage
+   +------+-------+
+   |   GitHub PR   |         +--------+---------+
+   +--------------+         | Projects Loop     |
+                             +--------+---------+
+                                      |
+                               polls initiative
+                               projects for triage
+                                      |
+                                      v
+                             +--------+---------+
+                             | Project Owner    |
+                             | + Tech Planner   |
+                             +------------------+
+                                      |
+                               triages issues,
+                               decomposes into
+                               sub-issues (Ready)
 
    ┌─────────────────────────┐
    │   Web Dashboard (:7890) │
@@ -138,43 +152,37 @@ Ready --> In Progress --> Done      (success)
 
 ---
 
-## The Auditor Loop
+## The Planning Loop
 
-The auditor loop scans the codebase for improvements and files well-planned Linear issues.
+The planning loop scans the codebase for improvements and files well-planned Linear issues using a team-based investigation approach.
 
 ### Flow
 
 ```
- Linear                  Main Loop                Agent SDK              Subagents
- ------                  ---------                ---------              ---------
+ Linear                  Main Loop                Agent SDK              Specialists
+ ------                  ---------                ---------              -----------
 
  count(Ready) < threshold?
     |
     no --> skip (backlog sufficient)
     |
-    yes --> build auditor prompt
-            (includes subagent prompts)
+    yes --> build planning prompt
+            (CTO agent with specialist team)
                    |
                    +---> Agent SDK query()
                                   |
-                                  +---> Phase 1: Discover
-                                  |     Scan codebase across 7 dimensions
+                                  +---> CTO Agent orchestrates investigation
+                                  |     Spawns specialist subagents:
+                                  |       +---> Scout (codebase exploration)
+                                  |       +---> Security Analyst (security review)
+                                  |       +---> Quality Engineer (quality assessment)
+                                  |       +---> Architect (design review)
                                   |
-                                  +---> Phase 2: Deep Planning
-                                  |     For each top finding:
-                                  |       +---> Spawn Agent Team
-                                  |             +---> Planner subagent
-                                  |             +---> Verifier subagent
-                                  |             +---> Security Reviewer subagent
-                                  |             +---> Synthesize results
+                                  +---> CTO synthesizes findings
+                                  |     Spawns Issue Planner subagents
+                                  |     to file well-planned issues
                                   |
-                                  +---> Phase 3: Synthesize and File
-                                  |     File issues to Linear [Triage] state
-                                  |
-                                  +---> Phase 4: Self-Review
-                                              |
-                                              v
-                                  Issues appear in Linear [Triage]
+                                  +---> Issues filed to Linear [Triage] state
                                               |
                                               v
                                   Human reviews and promotes to [Ready]
@@ -182,28 +190,92 @@ The auditor loop scans the codebase for improvements and files well-planned Line
 
 ### Backlog threshold
 
-The auditor checks how many issues are currently in the Ready state. If the count meets or exceeds `auditor.min_ready_threshold` (default: 5), the auditor skips. This prevents flooding Linear with issues when there is already enough work queued.
+The planning loop checks how many issues are currently in the Ready state. If the count meets or exceeds `planning.min_ready_threshold` (default: 5), the planning loop skips. This prevents flooding Linear with issues when there is already enough work queued.
 
-### Agent Teams
+### CTO Agent Team
 
-The auditor uses Claude Code's Agent Teams feature to run three subagents in parallel for each finding:
+The planning loop uses a CTO agent that leads a team of specialists:
 
-**Planner** (`prompts/planner.md`): Takes a raw finding and produces a concrete, step-by-step implementation plan with exact file paths, function names, and machine-verifiable acceptance criteria.
+**Briefing Agent**: Prepares a "State of the Project" summary — git history, Linear state, trends, and previous planning updates from status updates.
 
-**Verifier** (`prompts/verifier.md`): Adversarially reviews the Planner's output. Returns APPROVE, REVISE, or REJECT.
+**Product Manager**: Researches product opportunities, maintains a Product Brief document on the initiative. Brainstorms feature ideas grounded in codebase evidence.
 
-**Security Reviewer** (`prompts/security-reviewer.md`): Assesses security implications. Returns a risk level and any additional security-specific acceptance criteria.
+**Scout**: Explores the codebase to identify areas for improvement.
+
+**Security Analyst**: Assesses security implications and identifies vulnerabilities.
+
+**Quality Engineer**: Evaluates code quality, test coverage, and engineering practices.
+
+**Architect**: Reviews system design and architectural patterns.
+
+**Issue Planner**: Takes synthesized findings and produces concrete, well-planned Linear issues with implementation details and acceptance criteria. Files issues into the correct project (as assigned by the CTO).
+
+The `plugins/planning-skills/` directory provides agent definitions and domain knowledge skills that specialists can leverage.
+
+### Project Grouping
+
+After investigation, the CTO groups findings into Linear projects under the initiative:
+- Searches existing active projects — reuses them where scope matches
+- Creates new projects only for genuinely new themes (capped at 2 per session)
+- Each finding brief includes the target project, so Issue Planners file into the right place
+
+### Initiative Updates
+
+At the end of each planning session, the CTO posts an initiative-level status update summarizing what was investigated, issues filed, projects created, and recommended next focus areas.
 
 ### Source files
 
 | File | Purpose |
 |------|---------|
-| `src/auditor.ts` | Module. `shouldRunAudit()` checks threshold, `runAudit()` runs the auditor agent |
-| `src/lib/prompt.ts` | `buildAuditorPrompt()` assembles auditor + all subagent prompts |
-| `prompts/auditor.md` | Lead auditor agent prompt (4 phases) |
-| `prompts/planner.md` | Planner subagent prompt |
-| `prompts/verifier.md` | Verifier subagent prompt |
-| `prompts/security-reviewer.md` | Security Reviewer subagent prompt |
+| `src/planner.ts` | Module. `shouldRunPlanning()` checks threshold, `runPlanning()` runs the planning agent |
+| `src/lib/prompt.ts` | `buildCTOPrompt()` renders CTO prompt |
+| `prompts/cto.md` | CTO planning agent prompt |
+| `plugins/planning-skills/agents/*.md` | Specialist agent definitions (briefing-agent, product-manager, scout, security-analyst, quality-engineer, architect, issue-planner, project-owner, technical-planner) |
+
+---
+
+## The Projects Loop
+
+The projects loop manages project-level ownership. It polls active projects under the initiative for triage issues and spawns project-owner agents.
+
+### Flow
+
+```
+Initiative
+    |
+    +---> list active projects (skip completed/canceled)
+              |
+              +---> for each project with triage issues:
+                        |
+                        +---> spawn Project Owner agent
+                                    |
+                                    +---> review triage queue (accept/defer)
+                                    +---> spawn Technical Planners for accepted issues
+                                    |         |
+                                    |         +---> decompose into sub-issues (Ready)
+                                    +---> check project health
+                                    +---> complete project if all issues done
+                                    +---> post project status update
+```
+
+### Project Lifecycle
+
+Projects are created by the CTO during planning sessions and follow this lifecycle:
+
+```
+planned --> started --> completed
+                   --> canceled
+```
+
+The project owner completes a project when all its issues are in Done or Canceled state and no triage issues remain.
+
+### Source files
+
+| File | Purpose |
+|------|---------|
+| `src/projects.ts` | Module. `checkProjects()` queries initiative projects and spawns owners |
+| `plugins/planning-skills/agents/project-owner.md` | Project owner agent prompt |
+| `plugins/planning-skills/agents/technical-planner.md` | Technical planner agent prompt |
 
 ---
 
@@ -216,7 +288,7 @@ The dashboard is a Hono web server with htmx-powered live updates. It runs in th
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /` | HTML shell with inline CSS (dark theme, monospace), htmx from CDN |
-| `GET /api/status` | JSON state dump (agents, history, queue, auditor) |
+| `GET /api/status` | JSON state dump (agents, history, queue, planning) |
 | `GET /partials/agents` | Agent cards — htmx polls every 3s |
 | `GET /partials/activity/:id` | Activity feed for an agent, `?verbose=true` for full text |
 | `GET /partials/history` | Completed agents list |
@@ -249,45 +321,56 @@ The dashboard is a Hono web server with htmx-powered live updates. It runs in th
 | File | Purpose |
 |------|---------|
 | `src/server.ts` | Hono app with HTML shell and htmx partial endpoints |
-| `src/state.ts` | `AppState` class — in-memory state for agents, history, queue, auditor |
+| `src/state.ts` | `AppState` class — in-memory state for agents, history, queue, planning |
 
 ---
 
 ## Linear State Machine
 
-The full Linear state machine across both loops:
+The full Linear state machine across all loops:
 
 ```
                      +----------+
-                     |  Triage  | <--- Auditor files new issues here
+                     |  Triage  | <--- Planning files issues here
                      +----+-----+
                           |
-                    human promotes
-                          |
-                          v
-                     +----+-----+
-              +----> |  Ready   | <--- Executor pulls from here
-              |      |  (Todo)  |
-              |      +----+-----+
-              |           |
-              |     executor picks up
-              |           |
-              |           v
-              |   +-------+--------+
-              |   |  In Progress   |
-              |   +-------+--------+
-              |           |
-              |     +-----+------+
-              |     |            |
-              |  success      failure/
-              |     |         timeout
-              |     v            |
-              |  +--+---+   +---+------+
-              |  | Done |   | Blocked  |
-              |  +------+   | (Backlog)|
-              |             +---+------+
-              |                 |
-              +---- human fixes and re-promotes
+              +-----------+-----------+
+              |                       |
+       project owner             human promotes
+       accepts (if projects       (if no projects
+       loop enabled)               loop)
+              |                       |
+              v                       |
+     +--------+--------+             |
+     | Technical Planner|             |
+     | decomposes into  |             |
+     | sub-issues       |             |
+     +--------+--------+             |
+              |                       |
+              v                       v
+         +----+-----+          +-----+----+
+  +----> |  Ready   | <--------+  Ready   | <--- Executor pulls leaf issues
+  |      |  (Todo)  |          |  (Todo)  |
+  |      +----+-----+          +----+-----+
+  |           |                      |
+  |     executor picks up (team-wide, leaf issues only)
+  |           |
+  |           v
+  |   +-------+--------+
+  |   |  In Progress   |
+  |   +-------+--------+
+  |           |
+  |     +-----+------+
+  |     |            |
+  |  success      failure/
+  |     |         timeout
+  |     v            |
+  |  +--+---+   +---+------+
+  |  | Done |   | Blocked  |
+  |  +------+   | (Backlog)|
+  |             +---+------+
+  |                 |
+  +---- human fixes and re-promotes
 ```
 
 ---
@@ -300,7 +383,7 @@ claude-autopilot runs agents with `bypassPermissions` mode and `allowDangerously
 
 **Mitigations**:
 - **Worktree isolation**: Each agent works in its own git worktree, not on the main branch
-- **Human review**: PRs require human review before merge. The auditor files to Triage (not Ready), requiring human promotion
+- **Human review**: PRs require human review before merge. The planning loop files to Triage (not Ready), requiring human promotion
 - **Protected paths**: The `project.protected_paths` config prevents agents from modifying sensitive files (via prompt instructions, not SDK enforcement)
 - **Timeout**: Agents are killed after `executor.timeout_minutes` to prevent runaway execution
 - **Container recommended**: For production use, run in a Docker container or VM to sandbox filesystem and network access
@@ -346,11 +429,13 @@ All configuration lives in `.claude-autopilot.yml` at the root of the target pro
 
 | Section | Purpose |
 |---------|---------|
-| `linear` | Team key, project name, state name mappings |
+| `linear` | Team key, project name, initiative name, state name mappings |
 | `executor` | Parallelism, timeout, auto-approve labels, branch/commit patterns, model selection |
-| `auditor` | Schedule mode, backlog threshold, max issues per run, scan dimensions |
-| `project` | Project name, tech stack, test/lint/build commands, key directories, protected paths |
-| `notifications` | Slack webhook URL, which events trigger notifications |
+| `planning` | Schedule mode, backlog threshold, max issues per run, timeout |
+| `projects` | Projects loop: enabled, poll interval, max active projects, timeout |
+| `github` | Repo override, auto-merge |
+| `project` | Project name |
+| `sandbox` | OS-level sandbox config |
 
 ---
 
@@ -370,19 +455,17 @@ buildPrompt("executor", { ISSUE_ID, TEST_COMMAND, LINT_COMMAND, ... })
 Rendered prompt string --> passed to Agent SDK query()
 ```
 
-### Auditor prompt flow
+### Planning prompt flow
 
 ```
-prompts/auditor.md
-prompts/planner.md       \
-prompts/verifier.md       |--- all appended to one prompt
-prompts/security-reviewer.md /
+prompts/cto.md
+plugins/planning-skills/agents/*.md  --- specialist agent definitions (auto-discovered by plugin)
         |
         v
-buildAuditorPrompt({ LINEAR_TEAM, LINEAR_PROJECT, TRIAGE_STATE, ... })
+buildCTOPrompt({ LINEAR_TEAM, LINEAR_PROJECT, ... })
         |
         v
-Single assembled prompt --> passed to Agent SDK query()
+CTO prompt + plugin path --> passed to Agent SDK query()
 ```
 
 ---
@@ -394,7 +477,8 @@ claude-autopilot/
 ├── src/
 │   ├── main.ts              # Entry point — main loop + dashboard server
 │   ├── executor.ts          # Executor module (executeIssue, fillSlots)
-│   ├── auditor.ts           # Auditor module (shouldRunAudit, runAudit)
+│   ├── planner.ts           # Planning module (shouldRunPlanning, runPlanning)
+│   ├── projects.ts          # Projects loop (checkProjects, project owners)
 │   ├── server.ts            # Hono dashboard (HTML + htmx partials)
 │   ├── state.ts             # AppState class (agents, history, queue)
 │   ├── setup-project.ts     # Project onboarding script
@@ -406,10 +490,15 @@ claude-autopilot/
 │       └── logger.ts        # Colored console logger
 ├── prompts/
 │   ├── executor.md          # Executor agent prompt (6 phases)
-│   ├── auditor.md           # Lead auditor agent prompt (4 phases)
-│   ├── planner.md           # Planner subagent prompt
-│   ├── verifier.md          # Verifier subagent prompt
-│   └── security-reviewer.md # Security Reviewer subagent prompt
+│   ├── cto.md               # CTO planning agent prompt
+│   ├── briefing-agent.md    # Briefing agent prompt
+│   ├── scout.md             # Scout specialist prompt
+│   ├── security-analyst.md  # Security Analyst specialist prompt
+│   ├── quality-engineer.md  # Quality Engineer specialist prompt
+│   ├── architect.md         # Architect specialist prompt
+│   └── issue-planner.md     # Issue Planner subagent prompt
+├── plugins/
+│   └── planning-skills/     # Domain knowledge skills for planning
 ├── templates/
 │   └── CLAUDE.md.template   # Template for target project's CLAUDE.md
 ├── docs/                    # Documentation

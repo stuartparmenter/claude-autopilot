@@ -1,0 +1,5 @@
+{
+  "name": "planning-skills",
+  "version": "1.0.0",
+  "description": "Domain knowledge skills for the planning system's specialist agents. Provides detailed checklists and patterns for security, database, and dependency analysis."
+}

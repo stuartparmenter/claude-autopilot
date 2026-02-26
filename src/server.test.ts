@@ -1,8 +1,34 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AutopilotConfig } from "./lib/config";
 import { DEFAULTS } from "./lib/config";
-import { createApp, escapeHtml, formatDuration } from "./server";
+import { createApp, escapeHtml, formatDuration, safeCompare } from "./server";
 import { AppState } from "./state";
+
+describe("safeCompare", () => {
+  test("returns true for identical strings", () => {
+    expect(safeCompare("secret-token", "secret-token")).toBe(true);
+  });
+
+  test("returns false for different strings of the same length", () => {
+    expect(safeCompare("aaaa", "bbbb")).toBe(false);
+  });
+
+  test("returns false for different strings of different lengths", () => {
+    expect(safeCompare("short", "much-longer-string")).toBe(false);
+  });
+
+  test("returns true for empty strings", () => {
+    expect(safeCompare("", "")).toBe(true);
+  });
+
+  test("returns false for empty vs non-empty", () => {
+    expect(safeCompare("", "notempty")).toBe(false);
+  });
+
+  test("returns false when first arg is longer than second", () => {
+    expect(safeCompare("longer-token-here", "short")).toBe(false);
+  });
+});
 
 describe("formatDuration", () => {
   test("returns seconds only for values under 60", () => {
@@ -140,6 +166,32 @@ describe("auth", () => {
     expect(setCookie).toContain("SameSite=Strict");
   });
 
+  test("with authToken and secureCookie: POST /auth/login sets Secure flag on cookie", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN, secureCookie: true });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).toContain("Secure");
+  });
+
+  test("with authToken and no secureCookie: POST /auth/login does NOT set Secure flag on cookie", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).not.toContain("Secure");
+  });
+
   test("with authToken: POST /auth/login with wrong token returns 401 with error", async () => {
     const state = new AppState();
     const app = createApp(state, { authToken: TOKEN });
@@ -218,7 +270,7 @@ describe("routes", () => {
     expect(json).toHaveProperty("agents");
     expect(json).toHaveProperty("history");
     expect(json).toHaveProperty("queue");
-    expect(json).toHaveProperty("auditor");
+    expect(json).toHaveProperty("planning");
     expect(json).toHaveProperty("startedAt");
   });
 
@@ -280,7 +332,7 @@ describe("routes", () => {
   });
 });
 
-describe("POST /api/audit", () => {
+describe("POST /api/planning", () => {
   let state: AppState;
   let app: ReturnType<typeof createApp>;
 
@@ -289,40 +341,44 @@ describe("POST /api/audit", () => {
     app = createApp(state);
   });
 
-  test("returns 409 when audit is already running", async () => {
-    state.updateAuditor({ running: true });
-    const res = await app.request("/api/audit", { method: "POST" });
+  test("returns 409 when planning is already running", async () => {
+    state.updatePlanning({ running: true });
+    const res = await app.request("/api/planning", { method: "POST" });
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: string };
-    expect(json.error).toBe("Audit already running");
+    expect(json.error).toBe("Planning already running");
   });
 
-  test("triggers audit and returns triggered: true when not running", async () => {
-    const triggerAudit = mock(() => {});
-    const appWithActions = createApp(state, { triggerAudit });
-    const res = await appWithActions.request("/api/audit", { method: "POST" });
+  test("triggers planning and returns triggered: true when not running", async () => {
+    const triggerPlanning = mock(() => {});
+    const appWithActions = createApp(state, { triggerPlanning });
+    const res = await appWithActions.request("/api/planning", {
+      method: "POST",
+    });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { triggered: boolean };
     expect(json.triggered).toBe(true);
-    expect(triggerAudit).toHaveBeenCalledTimes(1);
+    expect(triggerPlanning).toHaveBeenCalledTimes(1);
   });
 
   test("returns triggered: true even without actions configured", async () => {
-    const res = await app.request("/api/audit", { method: "POST" });
+    const res = await app.request("/api/planning", { method: "POST" });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { triggered: boolean };
     expect(json.triggered).toBe(true);
   });
 
-  test("returns 500 with error key when triggerAudit throws", async () => {
-    const triggerAudit = mock(() => {
-      throw new Error("audit error");
+  test("returns 500 with error key when triggerPlanning throws", async () => {
+    const triggerPlanning = mock(() => {
+      throw new Error("planning error");
     });
-    const appWithActions = createApp(state, { triggerAudit });
-    const res = await appWithActions.request("/api/audit", { method: "POST" });
+    const appWithActions = createApp(state, { triggerPlanning });
+    const res = await appWithActions.request("/api/planning", {
+      method: "POST",
+    });
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: string };
-    expect(json.error).toBe("Audit trigger failed: audit error");
+    expect(json.error).toBe("Planning trigger failed: planning error");
   });
 });
 
@@ -641,7 +697,120 @@ describe("dashboard HTML includes budget partial div", () => {
   });
 });
 
-describe("GET /partials/audit-button", () => {
+describe("CSRF protection", () => {
+  const TOKEN = "test-csrf-token";
+
+  test("cookie-only POST to /api/pause returns 403 (missing custom header)", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/pause", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("Forbidden");
+  });
+
+  test("cookie-only POST to /api/planning returns 403", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/planning", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("cookie-only POST to /api/cancel/:agentId returns 403", async () => {
+    const state = new AppState();
+    state.addAgent("csrf-agent", "ENG-1", "Test");
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/cancel/csrf-agent", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("cookie-only POST to /api/retry/:historyId returns 403", async () => {
+    const state = new AppState();
+    state.addAgent("csrf-exec-1", "ENG-1", "Test issue", "linear-uuid-csrf");
+    state.completeAgent("csrf-exec-1", "failed", { error: "timed out" });
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/retry/csrf-exec-1", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("cookie + HX-Request: true allows POST to /api/pause", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/pause", {
+      method: "POST",
+      headers: {
+        Cookie: `autopilot_token=${TOKEN}`,
+        "HX-Request": "true",
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("cookie + X-Requested-With: XMLHttpRequest allows POST to /api/pause", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/pause", {
+      method: "POST",
+      headers: {
+        Cookie: `autopilot_token=${TOKEN}`,
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("Bearer token POST without custom headers is allowed", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/api/pause", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("POST /auth/login is exempt from CSRF check", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+  });
+
+  test("POST /auth/logout is exempt from CSRF check", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/logout", {
+      method: "POST",
+      headers: { Cookie: `autopilot_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(302);
+  });
+
+  test("without authToken: POST /api/pause works without custom headers", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/pause", { method: "POST" });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("GET /partials/planning-button", () => {
   let state: AppState;
   let app: ReturnType<typeof createApp>;
 
@@ -650,17 +819,17 @@ describe("GET /partials/audit-button", () => {
     app = createApp(state);
   });
 
-  test("shows 'Trigger Audit' when auditor is not running", async () => {
-    const res = await app.request("/partials/audit-button");
+  test("shows 'Trigger Planning' when planning is not running", async () => {
+    const res = await app.request("/partials/planning-button");
     const body = await res.text();
-    expect(body).toContain("Trigger Audit");
+    expect(body).toContain("Trigger Planning");
   });
 
-  test("shows 'Auditing...' and disabled when auditor is running", async () => {
-    state.updateAuditor({ running: true });
-    const res = await app.request("/partials/audit-button");
+  test("shows 'Planning...' and disabled when planning is running", async () => {
+    state.updatePlanning({ running: true });
+    const res = await app.request("/partials/planning-button");
     const body = await res.text();
-    expect(body).toContain("Auditing...");
+    expect(body).toContain("Planning...");
     expect(body).toContain("disabled");
   });
 });

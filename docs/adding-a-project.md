@@ -138,7 +138,7 @@ linear:
   team: "ENG"
   project: "my-project"
   states:
-    triage: "Triage"           # Where auditor files new issues (enable this in Linear)
+    triage: "Triage"           # Where planning loop files new issues (enable this in Linear)
     ready: "Todo"              # Where executor picks up issues
     in_progress: "In Progress" # Set by executor while working
     done: "Done"               # Set by executor on success
@@ -154,28 +154,19 @@ executor:
   parallel: 3                           # Max concurrent executor agents
   timeout_minutes: 30                   # Kill executor after this long
   model: "sonnet"                       # Model for executor agents
-  planning_model: "opus"                # Model for auditor/planning
   auto_approve_labels: []               # Labels that skip human PR review (Phase 3)
   branch_pattern: "autopilot/{{id}}"    # Git branch naming pattern
   commit_pattern: "{{id}}: {{title}}"   # Commit message pattern
 ```
 
-### Auditor settings
+### Planning settings
 
 ```yaml
-auditor:
+planning:
   schedule: "when_idle"         # when_idle | daily | manual
-  min_ready_threshold: 5        # Only audit if Ready count < this
-  max_issues_per_run: 10        # Cap on issues filed per audit
-  use_agent_teams: true         # Use Planner/Verifier/Security subagents
-  scan_dimensions:              # What the auditor looks for
-    - test-coverage
-    - error-handling
-    - performance
-    - security
-    - code-quality
-    - dependency-health
-    - documentation
+  min_ready_threshold: 5        # Only plan if Ready count < this
+  max_issues_per_run: 5         # Cap on issues filed per planning run
+  model: "opus"                 # Model for the CTO planning agent
 ```
 
 ### Protected paths
@@ -207,24 +198,15 @@ executor:
   parallel: 3
   timeout_minutes: 30
   model: "sonnet"
-  planning_model: "opus"
   auto_approve_labels: []
   branch_pattern: "autopilot/{{id}}"
   commit_pattern: "{{id}}: {{title}}"
 
-auditor:
+planning:
   schedule: "when_idle"
+  model: "opus"
   min_ready_threshold: 5
-  max_issues_per_run: 10
-  use_agent_teams: true
-  scan_dimensions:
-    - test-coverage
-    - error-handling
-    - performance
-    - security
-    - code-quality
-    - dependency-health
-    - documentation
+  max_issues_per_run: 5
 
 project:
   name: "acme-api"
@@ -248,7 +230,7 @@ notifications:
   notify_on:
     - executor_complete
     - executor_blocked
-    - auditor_complete
+    - planning_complete
     - error
 ```
 
@@ -294,7 +276,7 @@ This will:
 1. Connect to Linear and resolve team/state IDs
 2. Start the web dashboard at http://localhost:7890
 3. Begin polling for Ready issues and filling executor slots
-4. Run the auditor when the backlog drops below threshold
+4. Run the planning loop when the backlog drops below threshold
 
 Open the dashboard in your browser to watch agents work in real time.
 

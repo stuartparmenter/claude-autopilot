@@ -1,8 +1,9 @@
 import {
+  type Initiative,
   type Issue,
   type IssueLabel,
   LinearClient,
-  type Project,
+  ProjectUpdateHealthType,
   type Team,
   type WorkflowState,
 } from "@linear/sdk";
@@ -60,23 +61,6 @@ export async function findTeam(teamKey: string): Promise<Team> {
 }
 
 /**
- * Find a project by name.
- */
-export async function findProject(projectName: string): Promise<Project> {
-  const client = getLinearClient();
-  const projects = await withRetry(
-    () =>
-      client.projects({
-        filter: { name: { eq: projectName } },
-      }),
-    "findProject",
-  );
-  const project = projects.nodes[0];
-  if (!project) throw new Error(`Project '${projectName}' not found in Linear`);
-  return project;
-}
-
-/**
  * Find a workflow state by name within a team.
  */
 export async function findState(
@@ -131,7 +115,33 @@ export async function findOrCreateLabel(
 }
 
 /**
- * Get ready, unblocked issues for a team+project, sorted by priority.
+ * Find an initiative by name, or create one if it doesn't exist.
+ */
+export async function findOrCreateInitiative(
+  name: string,
+): Promise<Initiative> {
+  const client = getLinearClient();
+  const initiatives = await withRetry(
+    () => client.initiatives({ filter: { name: { eq: name } } }),
+    "findOrCreateInitiative",
+  );
+  const existing = initiatives.nodes[0];
+  if (existing) return existing;
+
+  info(`Creating initiative '${name}'...`);
+  const payload = await withRetry(
+    () => client.createInitiative({ name }),
+    "findOrCreateInitiative",
+  );
+  const initiative = await payload.initiative;
+  if (!initiative) throw new Error(`Failed to create initiative '${name}'`);
+  return initiative;
+}
+
+/**
+ * Get ready, unblocked leaf issues across the team, sorted by priority.
+ * Queries by team (not project) so issues in dynamically-created projects
+ * are visible. Skips parent issues that have children.
  */
 export async function getReadyIssues(
   linearIds: LinearIds,
@@ -145,7 +155,6 @@ export async function getReadyIssues(
         filter: {
           team: { id: { eq: linearIds.teamId } },
           state: { id: { eq: linearIds.states.ready } },
-          project: { id: { eq: linearIds.projectId } },
         },
         first: limit,
       }),
@@ -202,7 +211,25 @@ export async function getReadyIssues(
     }
   }
 
-  return unblocked;
+  // Skip parent issues that have children — only leaf issues are work units
+  const leafIssues: Issue[] = [];
+  for (const issue of unblocked) {
+    try {
+      const children = await withRetry(
+        () => issue.children(),
+        "getReadyIssues",
+      );
+      if (children.nodes.length > 0) continue;
+      leafIssues.push(issue);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warn(
+        `Skipping issue ${issue.identifier}: failed to check children — ${msg}`,
+      );
+    }
+  }
+
+  return leafIssues;
 }
 
 // Minimal GraphQL query to count issues — fetches only { id } per node to
@@ -226,7 +253,7 @@ interface CountIssuesResponse {
 const MAX_PAGES = 100;
 
 /**
- * Count issues in a given state for the configured project.
+ * Count issues in a given state across the team.
  * Uses a raw GraphQL query to fetch only { id } per node, reducing payload
  * by ~95% vs the SDK's full Issue fragment.
  */
@@ -238,7 +265,6 @@ export async function countIssuesInState(
   const filter = {
     team: { id: { eq: linearIds.teamId } },
     state: { id: { eq: stateId } },
-    project: { id: { eq: linearIds.projectId } },
   };
 
   let count = 0;
@@ -340,6 +366,36 @@ export async function createIssue(opts: {
 }
 
 /**
+ * Create a project-level status update in Linear.
+ * The Linear MCP plugin only supports initiative-level updates, so we
+ * expose this through the autopilot MCP server.
+ */
+export async function createProjectStatusUpdate(opts: {
+  projectId: string;
+  body: string;
+  health?: "onTrack" | "atRisk" | "offTrack";
+}): Promise<string> {
+  const client = getLinearClient();
+  const healthMap: Record<string, ProjectUpdateHealthType> = {
+    onTrack: ProjectUpdateHealthType.OnTrack,
+    atRisk: ProjectUpdateHealthType.AtRisk,
+    offTrack: ProjectUpdateHealthType.OffTrack,
+  };
+  const payload = await withRetry(
+    () =>
+      client.createProjectUpdate({
+        projectId: opts.projectId,
+        body: opts.body,
+        health: opts.health ? healthMap[opts.health] : undefined,
+      }),
+    "createProjectStatusUpdate",
+  );
+  const update = await payload.projectUpdate;
+  if (!update) throw new Error("Failed to create project status update");
+  return update.id;
+}
+
+/**
  * Validate a Linear issue identifier (e.g., "ENG-123").
  * Throws if the identifier contains path separators, spaces, or other
  * characters that could be dangerous when used in file paths or branch names.
@@ -375,10 +431,7 @@ export async function testConnection(): Promise<boolean> {
 export async function resolveLinearIds(
   config: LinearConfig,
 ): Promise<LinearIds> {
-  const [team, project] = await Promise.all([
-    findTeam(config.team),
-    findProject(config.project),
-  ]);
+  const team = await findTeam(config.team);
 
   const [
     triageState,
@@ -396,11 +449,19 @@ export async function resolveLinearIds(
     findState(team.id, config.states.blocked),
   ]);
 
+  let initiativeId: string | undefined;
+  let initiativeName: string | undefined;
+  if (config.initiative) {
+    const initiative = await findOrCreateInitiative(config.initiative);
+    initiativeId = initiative.id;
+    initiativeName = initiative.name;
+  }
+
   return {
     teamId: team.id,
     teamKey: config.team,
-    projectId: project.id,
-    projectName: config.project,
+    initiativeId,
+    initiativeName,
     states: {
       triage: triageState.id,
       ready: readyState.id,

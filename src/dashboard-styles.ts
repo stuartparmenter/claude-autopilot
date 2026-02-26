@@ -267,7 +267,7 @@ export const DASHBOARD_CSS = `
   .action-btn.danger:hover {
     background: #3f1f1f;
   }
-  .auditor-badge {
+  .planning-badge {
     display: inline-block;
     font-size: 10px;
     padding: 2px 6px;

@@ -87,11 +87,10 @@ describe("loadConfig", () => {
   test("minimal YAML fills in defaults", () => {
     writeFileSync(
       join(tmpDir, ".claude-autopilot.yml"),
-      "linear:\n  team: myteam\n  project: myproject\n",
+      "linear:\n  team: myteam\n",
     );
     const config = loadConfig(tmpDir);
     expect(config.linear.team).toBe("myteam");
-    expect(config.linear.project).toBe("myproject");
     expect(config.executor.parallel).toBe(3);
     expect(config.executor.timeout_minutes).toBe(30);
   });
@@ -104,7 +103,7 @@ describe("loadConfig", () => {
     const config = loadConfig(tmpDir);
     expect(config.executor.parallel).toBe(5);
     expect(config.executor.timeout_minutes).toBe(60);
-    expect(config.auditor.schedule).toBe("when_idle");
+    expect(config.planning.schedule).toBe("when_idle");
   });
 
   test("empty YAML returns defaults", () => {
@@ -125,74 +124,45 @@ describe("loadConfig", () => {
 
   test("loads a valid config without throwing", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: ENG
-  project: my-project
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("throws if project.name contains a newline", () => {
-    const dir = writeConfig(`
-project:
-  name: |
-    foo
-    bar
-linear:
-  team: ENG
-  project: my-project
-`);
-    expect(() => loadConfig(dir)).toThrow(/project\.name/);
-    expect(() => loadConfig(dir)).toThrow(/newline/);
-  });
-
   test("throws if linear.team contains a newline", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: |
     ENG
     EVIL
-  project: my-project
 `);
     expect(() => loadConfig(dir)).toThrow(/linear\.team/);
   });
 
   test("throws if a config string exceeds 200 characters", () => {
-    const longName = "x".repeat(201);
+    const longTeam = "x".repeat(201);
     const dir = writeConfig(`
-project:
-  name: "${longName}"
 linear:
-  team: ENG
-  project: my-project
+  team: "${longTeam}"
 `);
-    expect(() => loadConfig(dir)).toThrow(/project\.name/);
+    expect(() => loadConfig(dir)).toThrow(/linear\.team/);
     expect(() => loadConfig(dir)).toThrow(/200/);
   });
 
   test("accepts values at exactly 200 characters", () => {
-    const exactName = "x".repeat(200);
+    const exactTeam = "x".repeat(200);
     const dir = writeConfig(`
-project:
-  name: "${exactName}"
 linear:
-  team: ENG
-  project: my-project
+  team: "${exactTeam}"
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
   test("accepts legitimate state names", () => {
     const dir = writeConfig(`
-project:
-  name: My Project (v2)
 linear:
   team: ENG
-  project: my-project
   states:
     triage: Triage
     ready: Todo
@@ -206,11 +176,8 @@ linear:
 
   test("throws if a state name contains a newline", () => {
     const dir = writeConfig(`
-project:
-  name: My Project
 linear:
   team: ENG
-  project: my-project
   states:
     ready: |
       Todo
@@ -219,33 +186,27 @@ linear:
     expect(() => loadConfig(dir)).toThrow(/linear\.states\.ready/);
   });
 
-  test("brainstorm config defaults are set", () => {
+  test("planning timeout_minutes defaults to 90", () => {
     writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
     const config = loadConfig(tmpDir);
-    expect(config.auditor.brainstorm_features).toBe(true);
-    expect(config.auditor.brainstorm_dimensions).toEqual([
-      "user-facing-features",
-      "developer-experience",
-      "integrations",
-      "scalability",
-    ]);
-    expect(config.auditor.max_ideas_per_run).toBe(5);
+    expect(config.planning.timeout_minutes).toBe(90);
   });
 
-  test("brainstorm config can be overridden", () => {
+  test("planning max_issues_per_run defaults to 5", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.planning.max_issues_per_run).toBe(5);
+  });
+
+  test("planning config can be overridden", () => {
     const dir = writeConfig(`
-auditor:
-  brainstorm_features: false
-  max_ideas_per_run: 3
-  brainstorm_dimensions:
-    - user-facing-features
+planning:
+  timeout_minutes: 120
+  max_issues_per_run: 3
 `);
     const config = loadConfig(dir);
-    expect(config.auditor.brainstorm_features).toBe(false);
-    expect(config.auditor.max_ideas_per_run).toBe(3);
-    expect(config.auditor.brainstorm_dimensions).toEqual([
-      "user-facing-features",
-    ]);
+    expect(config.planning.timeout_minutes).toBe(120);
+    expect(config.planning.max_issues_per_run).toBe(3);
   });
 
   test("poll_interval_minutes defaults to 5", () => {
@@ -469,73 +430,73 @@ executor:
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("auditor.min_ready_threshold throws below 0", () => {
+  test("planning.min_ready_threshold throws below 0", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   min_ready_threshold: -1
 `);
     expect(() => loadConfig(dir)).toThrow(
-      "auditor.min_ready_threshold must be an integer between 0 and 1000",
+      "planning.min_ready_threshold must be an integer between 0 and 1000",
     );
   });
 
-  test("auditor.min_ready_threshold throws above 1000", () => {
+  test("planning.min_ready_threshold throws above 1000", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   min_ready_threshold: 1001
 `);
     expect(() => loadConfig(dir)).toThrow(
-      "auditor.min_ready_threshold must be an integer between 0 and 1000",
+      "planning.min_ready_threshold must be an integer between 0 and 1000",
     );
   });
 
-  test("auditor.min_ready_threshold accepts boundary value 0", () => {
+  test("planning.min_ready_threshold accepts boundary value 0", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   min_ready_threshold: 0
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("auditor.min_ready_threshold accepts boundary value 1000", () => {
+  test("planning.min_ready_threshold accepts boundary value 1000", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   min_ready_threshold: 1000
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("auditor.max_issues_per_run throws below 1", () => {
+  test("planning.max_issues_per_run throws below 1", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   max_issues_per_run: 0
 `);
     expect(() => loadConfig(dir)).toThrow(
-      "auditor.max_issues_per_run must be an integer between 1 and 50",
+      "planning.max_issues_per_run must be an integer between 1 and 50",
     );
   });
 
-  test("auditor.max_issues_per_run throws above 50", () => {
+  test("planning.max_issues_per_run throws above 50", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   max_issues_per_run: 51
 `);
     expect(() => loadConfig(dir)).toThrow(
-      "auditor.max_issues_per_run must be an integer between 1 and 50",
+      "planning.max_issues_per_run must be an integer between 1 and 50",
     );
   });
 
-  test("auditor.max_issues_per_run accepts boundary value 1", () => {
+  test("planning.max_issues_per_run accepts boundary value 1", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   max_issues_per_run: 1
 `);
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
-  test("auditor.max_issues_per_run accepts boundary value 50", () => {
+  test("planning.max_issues_per_run accepts boundary value 50", () => {
     const dir = writeConfig(`
-auditor:
+planning:
   max_issues_per_run: 50
 `);
     expect(() => loadConfig(dir)).not.toThrow();
@@ -572,5 +533,119 @@ sandbox:
     expect(config.sandbox.extra_allowed_domains).toEqual([
       "custom.example.com",
     ]);
+  });
+
+  test("budget defaults are applied when YAML omits them", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.budget).toEqual({
+      daily_limit_usd: 0,
+      monthly_limit_usd: 0,
+      per_agent_limit_usd: 0,
+      warn_at_percent: 80,
+    });
+  });
+
+  test("budget config can be overridden", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 10
+  monthly_limit_usd: 200
+  per_agent_limit_usd: 0.5
+  warn_at_percent: 90
+`);
+    const config = loadConfig(dir);
+    expect(config.budget.daily_limit_usd).toBe(10);
+    expect(config.budget.monthly_limit_usd).toBe(200);
+    expect(config.budget.per_agent_limit_usd).toBe(0.5);
+    expect(config.budget.warn_at_percent).toBe(90);
+  });
+
+  test("budget partial override preserves other defaults", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 5
+`);
+    const config = loadConfig(dir);
+    expect(config.budget.daily_limit_usd).toBe(5);
+    expect(config.budget.monthly_limit_usd).toBe(0);
+    expect(config.budget.per_agent_limit_usd).toBe(0);
+    expect(config.budget.warn_at_percent).toBe(80);
+  });
+
+  test("budget.warn_at_percent throws above 100", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 101
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.warn_at_percent must be a number between 0 and 100",
+    );
+  });
+
+  test("budget.warn_at_percent throws below 0", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.warn_at_percent must be a number between 0 and 100",
+    );
+  });
+
+  test("budget.warn_at_percent accepts boundary value 0", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("budget.warn_at_percent accepts boundary value 100", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 100
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("budget.daily_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.daily_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget.monthly_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  monthly_limit_usd: -0.01
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.monthly_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget.per_agent_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  per_agent_limit_usd: -5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.per_agent_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget USD fields accept zero (disabled)", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 0
+  monthly_limit_usd: 0
+  per_agent_limit_usd: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
   });
 });

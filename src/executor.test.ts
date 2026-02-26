@@ -74,7 +74,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
-      project: "test-project",
+      initiative: "",
       states: {
         triage: "triage-id",
         ready: "ready-id",
@@ -96,22 +96,23 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
-      planning_model: "opus",
     },
-    auditor: {
+    planning: {
       schedule: "when_idle",
       min_ready_threshold: 5,
       min_interval_minutes: 60,
-      max_issues_per_run: 10,
-      use_agent_teams: false,
-      skip_triage: true,
-      scan_dimensions: [],
-      brainstorm_features: true,
-      brainstorm_dimensions: [],
-      max_ideas_per_run: 5,
+      max_issues_per_run: 5,
+      timeout_minutes: 90,
+      model: "opus",
+    },
+    projects: {
+      enabled: true,
+      poll_interval_minutes: 10,
+      max_active_projects: 5,
+      timeout_minutes: 60,
+      model: "opus",
     },
     github: { repo: "", automerge: false },
-    project: { name: "test-project" },
     persistence: {
       enabled: false,
       db_path: ".claude/autopilot.db",
@@ -136,8 +137,6 @@ function makeLinearIds(): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
-    projectId: "project-id",
-    projectName: "test-project",
     states: {
       triage: "triage-id",
       ready: "ready-id",

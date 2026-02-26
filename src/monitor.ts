@@ -49,7 +49,6 @@ export async function checkOpenPRs(opts: {
         filter: {
           team: { id: { eq: linearIds.teamId } },
           state: { id: { eq: linearIds.states.in_review } },
-          project: { id: { eq: linearIds.projectId } },
         },
         first: 50,
       }),
@@ -143,44 +142,42 @@ export async function checkOpenPRs(opts: {
 
     // Merged PRs are handled by the Linear/GitHub webhook, not here
 
-    if (status.ciStatus === "failure") {
-      fixerAttempts.set(prNumber, attempts + 1);
-      if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
-        const oldestKey = fixerAttempts.keys().next().value;
-        if (oldestKey !== undefined) {
-          fixerAttempts.delete(oldestKey);
-        }
+    const failureType =
+      status.ciStatus === "failure"
+        ? "ci_failure"
+        : status.mergeable === false
+          ? "merge_conflict"
+          : null;
+    if (!failureType) continue;
+
+    fixerAttempts.set(prNumber, attempts + 1);
+    if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
+      const oldestKey = fixerAttempts.keys().next().value;
+      if (oldestKey !== undefined) {
+        fixerAttempts.delete(oldestKey);
       }
-      const promise = fixPR({
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        prNumber,
-        branch: status.branch,
-        failureType: "ci_failure",
-        ...opts,
-      });
-      fixerPromises.push(promise);
-      continue;
     }
 
-    if (status.mergeable === false) {
-      fixerAttempts.set(prNumber, attempts + 1);
-      if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
-        const oldestKey = fixerAttempts.keys().next().value;
-        if (oldestKey !== undefined) {
-          fixerAttempts.delete(oldestKey);
-        }
-      }
-      const promise = fixPR({
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        prNumber,
-        branch: status.branch,
-        failureType: "merge_conflict",
-        ...opts,
-      });
-      fixerPromises.push(promise);
-    }
+    // Register agent in state eagerly so fillSlots sees the correct count
+    const agentId = `fix-${issue.identifier}-${Date.now()}`;
+    info(`Fixing PR #${prNumber} (${issue.identifier}): ${failureType}`);
+    state.addAgent(
+      agentId,
+      issue.identifier,
+      `Fix ${failureType} on ${issue.identifier}`,
+    );
+    activeFixerIssues.add(issue.id);
+
+    const promise = fixPR({
+      agentId,
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      prNumber,
+      branch: status.branch,
+      failureType,
+      ...opts,
+    });
+    fixerPromises.push(promise);
 
     // CI pending or passing+mergeable — skip
   }
@@ -192,6 +189,7 @@ export async function checkOpenPRs(opts: {
  * Spawn a fixer agent to fix a failing PR.
  */
 async function fixPR(opts: {
+  agentId: string;
   issueId: string;
   issueIdentifier: string;
   prNumber: number;
@@ -204,6 +202,7 @@ async function fixPR(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<boolean> {
   const {
+    agentId,
     issueId,
     issueIdentifier,
     prNumber,
@@ -213,25 +212,20 @@ async function fixPR(opts: {
     projectPath,
     state,
   } = opts;
-  const agentId = `fix-${issueIdentifier}-${Date.now()}`;
 
-  info(`Fixing PR #${prNumber} (${issueIdentifier}): ${failureType}`);
-  state.addAgent(
-    agentId,
-    issueIdentifier,
-    `Fix ${failureType} on ${issueIdentifier}`,
+  const prompt = buildPrompt(
+    "fixer",
+    {
+      ISSUE_ID: issueIdentifier,
+      BRANCH: branch,
+      FAILURE_TYPE: failureType,
+      PR_NUMBER: String(prNumber),
+      REPO_NAME: projectPath.split("/").pop() || "unknown",
+      IN_REVIEW_STATE: config.linear.states.in_review,
+      BLOCKED_STATE: config.linear.states.blocked,
+    },
+    projectPath,
   );
-  activeFixerIssues.add(issueId);
-
-  const prompt = buildPrompt("fixer", {
-    ISSUE_ID: issueIdentifier,
-    BRANCH: branch,
-    FAILURE_TYPE: failureType,
-    PR_NUMBER: String(prNumber),
-    PROJECT_NAME: config.project.name,
-    IN_REVIEW_STATE: config.linear.states.in_review,
-    BLOCKED_STATE: config.linear.states.blocked,
-  });
 
   const worktree = `fix-${issueIdentifier}`;
   const timeoutMs = config.executor.fixer_timeout_minutes * 60 * 1000;
@@ -249,6 +243,7 @@ async function fixPR(opts: {
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
       parentSignal: opts.shutdownSignal,
+      onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 

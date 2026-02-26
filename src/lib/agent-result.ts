@@ -12,7 +12,7 @@ export interface AgentResultHandled {
 /**
  * Classifies a ClaudeResult, calls state.completeAgent(), and logs an outcome message.
  * Returns the status and extracted metrics so callers can handle domain-specific actions
- * (e.g. Linear state updates, auditor status updates).
+ * (e.g. Linear state updates, planning status updates).
  */
 export function handleAgentResult(
   result: ClaudeResult,

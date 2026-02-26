@@ -42,14 +42,14 @@ const mockRawRequest = mock(async () => {
   };
 });
 
-import { runAudit, shouldRunAudit } from "./auditor";
+import { runPlanning, shouldRunPlanning } from "./planner";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
 // NOTE: We inject a mock LinearClient via setClientForTesting instead of
 // mocking ./lib/linear as a module, to avoid Bun 1.3.9 mock/restore
 // cross-file interference (same pattern as linear.test.ts and monitor.test.ts).
-// NOTE: We intentionally do NOT mock ./lib/prompt — the real buildAuditorPrompt
+// NOTE: We intentionally do NOT mock ./lib/prompt — the real buildCTOPrompt
 // reads from prompts/ on disk and doesn't leak across test files.
 beforeEach(() => {
   issueNodeCounts = [];
@@ -72,11 +72,11 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeConfig(skipTriage = true): AutopilotConfig {
+function makeConfig(): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
-      project: "test-project",
+      initiative: "",
       states: {
         triage: "triage-id",
         ready: "ready-id",
@@ -96,24 +96,25 @@ function makeConfig(skipTriage = true): AutopilotConfig {
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
-      planning_model: "opus",
       max_retries: 3,
       poll_interval_minutes: 5,
     },
-    auditor: {
+    planning: {
       schedule: "when_idle",
       min_ready_threshold: 5,
       min_interval_minutes: 60,
-      max_issues_per_run: 10,
-      use_agent_teams: false,
-      skip_triage: skipTriage,
-      scan_dimensions: [],
-      brainstorm_features: true,
-      brainstorm_dimensions: [],
-      max_ideas_per_run: 5,
+      max_issues_per_run: 5,
+      timeout_minutes: 90,
+      model: "opus",
+    },
+    projects: {
+      enabled: true,
+      poll_interval_minutes: 10,
+      max_active_projects: 5,
+      timeout_minutes: 60,
+      model: "opus",
     },
     github: { repo: "", automerge: false },
-    project: { name: "test-project" },
     persistence: {
       enabled: true,
       db_path: ".claude/autopilot.db",
@@ -138,8 +139,6 @@ function makeLinearIds(): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
-    projectId: "project-id",
-    projectName: "test-project",
     states: {
       triage: "triage-id",
       ready: "ready-id",
@@ -152,10 +151,10 @@ function makeLinearIds(): LinearIds {
 }
 
 // ---------------------------------------------------------------------------
-// shouldRunAudit — schedule checks
+// shouldRunPlanning — schedule checks
 // ---------------------------------------------------------------------------
 
-describe("shouldRunAudit — schedule checks", () => {
+describe("shouldRunPlanning — schedule checks", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -164,10 +163,10 @@ describe("shouldRunAudit — schedule checks", () => {
 
   test("returns false when schedule === 'manual'", async () => {
     const config = makeConfig();
-    config.auditor.schedule = "manual";
+    config.planning.schedule = "manual";
     mockRawRequest.mockClear();
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config,
       linearIds: makeLinearIds(),
       state,
@@ -180,10 +179,10 @@ describe("shouldRunAudit — schedule checks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// shouldRunAudit — backlog threshold
+// shouldRunPlanning — backlog threshold
 // ---------------------------------------------------------------------------
 
-describe("shouldRunAudit — backlog threshold", () => {
+describe("shouldRunPlanning — backlog threshold", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -194,7 +193,7 @@ describe("shouldRunAudit — backlog threshold", () => {
     // readyCount=3, triageCount=2 → backlog=5, threshold=5 → false
     issueNodeCounts = [3, 2];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config: makeConfig(),
       linearIds: makeLinearIds(),
       state,
@@ -207,7 +206,7 @@ describe("shouldRunAudit — backlog threshold", () => {
     // readyCount=2, triageCount=1 → backlog=3, threshold=5 → true
     issueNodeCounts = [2, 1];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config: makeConfig(),
       linearIds: makeLinearIds(),
       state,
@@ -221,7 +220,7 @@ describe("shouldRunAudit — backlog threshold", () => {
     // issueNodeCounts stays empty — mockRawRequest defaults to 0 nodes per call
 
     const linearIds = makeLinearIds();
-    await shouldRunAudit({
+    await shouldRunPlanning({
       config: makeConfig(),
       linearIds,
       state,
@@ -239,10 +238,10 @@ describe("shouldRunAudit — backlog threshold", () => {
 });
 
 // ---------------------------------------------------------------------------
-// shouldRunAudit — min interval check
+// runPlanning — success path
 // ---------------------------------------------------------------------------
 
-describe("shouldRunAudit — min interval check", () => {
+describe("shouldRunPlanning — min interval check", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -251,11 +250,11 @@ describe("shouldRunAudit — min interval check", () => {
 
   test("returns false when lastRunAt is within the interval", async () => {
     // Set lastRunAt to 30 minutes ago, interval is 60 minutes
-    state.updateAuditor({ lastRunAt: Date.now() - 30 * 60 * 1000 });
+    state.updatePlanning({ lastRunAt: Date.now() - 30 * 60 * 1000 });
     // Backlog is low so threshold check would pass
     issueNodeCounts = [0, 0];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config: makeConfig(),
       linearIds: makeLinearIds(),
       state,
@@ -268,11 +267,11 @@ describe("shouldRunAudit — min interval check", () => {
 
   test("returns true when lastRunAt is older than the interval and backlog is low", async () => {
     // Set lastRunAt to 90 minutes ago, interval is 60 minutes
-    state.updateAuditor({ lastRunAt: Date.now() - 90 * 60 * 1000 });
+    state.updatePlanning({ lastRunAt: Date.now() - 90 * 60 * 1000 });
     // Backlog is low so threshold check passes
     issueNodeCounts = [0, 0];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config: makeConfig(),
       linearIds: makeLinearIds(),
       state,
@@ -285,7 +284,7 @@ describe("shouldRunAudit — min interval check", () => {
     // No lastRunAt set — first run
     issueNodeCounts = [0, 0];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config: makeConfig(),
       linearIds: makeLinearIds(),
       state,
@@ -296,12 +295,12 @@ describe("shouldRunAudit — min interval check", () => {
 
   test("returns false when lastRunAt is within interval even if backlog is below threshold", async () => {
     const config = makeConfig();
-    config.auditor.min_interval_minutes = 120;
+    config.planning.min_interval_minutes = 120;
     // Set lastRunAt to 60 minutes ago — within 120 minute interval
-    state.updateAuditor({ lastRunAt: Date.now() - 60 * 60 * 1000 });
+    state.updatePlanning({ lastRunAt: Date.now() - 60 * 60 * 1000 });
     issueNodeCounts = [0, 0];
 
-    const result = await shouldRunAudit({
+    const result = await shouldRunPlanning({
       config,
       linearIds: makeLinearIds(),
       state,
@@ -312,10 +311,10 @@ describe("shouldRunAudit — min interval check", () => {
 });
 
 // ---------------------------------------------------------------------------
-// runAudit — success path
+// runPlanning — success path
 // ---------------------------------------------------------------------------
 
-describe("runAudit — success path", () => {
+describe("runPlanning — success path", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -333,7 +332,7 @@ describe("runAudit — success path", () => {
   });
 
   test("completes agent as 'completed' in state", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
@@ -344,7 +343,7 @@ describe("runAudit — success path", () => {
   });
 
   test("records cost in completion metadata", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
@@ -354,25 +353,25 @@ describe("runAudit — success path", () => {
     expect(state.getHistory()[0].costUsd).toBe(0.5);
   });
 
-  test("updates auditor status: running=false, lastResult='completed'", async () => {
-    await runAudit({
+  test("updates planning status: running=false, lastResult='completed'", async () => {
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
       state,
     });
 
-    const auditor = state.getAuditorStatus();
-    expect(auditor.running).toBe(false);
-    expect(auditor.lastResult).toBe("completed");
+    const planning = state.getPlanningStatus();
+    expect(planning.running).toBe(false);
+    expect(planning.lastResult).toBe("completed");
   });
 });
 
 // ---------------------------------------------------------------------------
-// runAudit — timeout path
+// runPlanning — timeout path
 // ---------------------------------------------------------------------------
 
-describe("runAudit — timeout path", () => {
+describe("runPlanning — timeout path", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -389,33 +388,33 @@ describe("runAudit — timeout path", () => {
   });
 
   test("sets lastResult to 'timed_out'", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
       state,
     });
 
-    expect(state.getAuditorStatus().lastResult).toBe("timed_out");
+    expect(state.getPlanningStatus().lastResult).toBe("timed_out");
   });
 
   test("sets running to false after timeout", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
       state,
     });
 
-    expect(state.getAuditorStatus().running).toBe(false);
+    expect(state.getPlanningStatus().running).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// runAudit — error path
+// runPlanning — error path
 // ---------------------------------------------------------------------------
 
-describe("runAudit — error path", () => {
+describe("runPlanning — error path", () => {
   let state: AppState;
 
   beforeEach(() => {
@@ -432,77 +431,24 @@ describe("runAudit — error path", () => {
   });
 
   test("sets lastResult to 'failed'", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
       state,
     });
 
-    expect(state.getAuditorStatus().lastResult).toBe("failed");
+    expect(state.getPlanningStatus().lastResult).toBe("failed");
   });
 
   test("sets running to false after error", async () => {
-    await runAudit({
+    await runPlanning({
       config: makeConfig(),
       projectPath: "/project",
       linearIds: makeLinearIds(),
       state,
     });
 
-    expect(state.getAuditorStatus().running).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// runAudit — skip_triage config
-// ---------------------------------------------------------------------------
-
-describe("runAudit — skip_triage config", () => {
-  let state: AppState;
-
-  beforeEach(() => {
-    state = new AppState();
-    mockRunClaude.mockResolvedValue({
-      timedOut: false,
-      inactivityTimedOut: false,
-      error: undefined,
-      costUsd: 0.1,
-      durationMs: 1000,
-      numTurns: 3,
-      result: "",
-    });
-  });
-
-  test("uses ready state name in prompt when skip_triage=true", async () => {
-    mockRunClaude.mockClear();
-
-    await runAudit({
-      config: makeConfig(true),
-      projectPath: "/project",
-      linearIds: makeLinearIds(),
-      state,
-    });
-
-    const calls = mockRunClaude.mock.calls as unknown as Array<
-      [{ prompt: string }]
-    >;
-    expect(calls[0][0].prompt).toContain("ready-id");
-  });
-
-  test("uses triage state name in prompt when skip_triage=false", async () => {
-    mockRunClaude.mockClear();
-
-    await runAudit({
-      config: makeConfig(false),
-      projectPath: "/project",
-      linearIds: makeLinearIds(),
-      state,
-    });
-
-    const calls = mockRunClaude.mock.calls as unknown as Array<
-      [{ prompt: string }]
-    >;
-    expect(calls[0][0].prompt).toContain("triage-id");
+    expect(state.getPlanningStatus().running).toBe(false);
   });
 });
