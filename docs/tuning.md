@@ -1,6 +1,6 @@
 # Tuning
 
-claude-autopilot works out of the box with default settings, but tuning it for your project and workflow can significantly improve executor success rates, planning issue quality, and overall cost efficiency. This guide covers every tuning surface.
+autopilot works out of the box with default settings, but tuning it for your project and workflow can significantly improve executor success rates, planning issue quality, and overall cost efficiency. This guide covers every tuning surface.
 
 ---
 

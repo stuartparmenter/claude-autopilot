@@ -156,7 +156,7 @@ Produce a structured plain-text report. Use clear section headers. Write for a t
 
 ```
 ===========================================================================
-CLAUDE-AUTOPILOT EXPLAIN REPORT
+AUTOPILOT EXPLAIN REPORT
 {{REPO_NAME}} — {{TODAY}}
 ===========================================================================
 

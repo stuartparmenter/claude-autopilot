@@ -10,7 +10,7 @@ export const AUTOPILOT_ROOT = resolve(
 /**
  * Load a prompt template, checking for a project-local override first.
  *
- * If `projectPath` is provided, checks `<projectPath>/.claude-autopilot/prompts/<name>.md`
+ * If `projectPath` is provided, checks `<projectPath>/.autopilot/prompts/<name>.md`
  * before falling back to the bundled `prompts/<name>.md`.
  *
  * If the project-local file contains `{{BASE_PROMPT}}`, that placeholder is
@@ -25,7 +25,7 @@ export function loadPrompt(name: string, projectPath?: string): string {
 
   const overridePath = resolve(
     projectPath,
-    ".claude-autopilot",
+    ".autopilot",
     "prompts",
     `${name}.md`,
   );

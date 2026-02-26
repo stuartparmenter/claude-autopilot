@@ -1,6 +1,6 @@
 # Architecture
 
-claude-autopilot is a self-sustaining AI development loop that turns Linear issues into shipped pull requests, and turns codebases into well-planned Linear issues. It runs as a single process: **Linear** is the source of truth for work, the **Agent SDK** spawns Claude Code agents, and a **Hono dashboard** provides live monitoring.
+autopilot is a self-sustaining AI development loop that turns Linear issues into shipped pull requests, and turns codebases into well-planned Linear issues. It runs as a single process: **Linear** is the source of truth for work, the **Agent SDK** spawns Claude Code agents, and a **Hono dashboard** provides live monitoring.
 
 This document covers the system design, data flow, agent architecture, and scaling path.
 
@@ -10,7 +10,7 @@ This document covers the system design, data flow, agent architecture, and scali
 
 The architecture is built on four principles:
 
-1. **Linear is the source of truth.** All work is represented as Linear issues with well-defined states. Humans interact with the system by triaging issues and reviewing PRs. The system never acts on work that is not tracked in Linear.
+1. **Linear is the source of truth.** All work is represented as Linear issues with well-defined states. The system never acts on work that is not tracked in Linear. With auto-merge and the projects loop enabled, the system operates fully autonomously — humans can optionally review PRs and triage issues for oversight.
 
 2. **Single process orchestration.** One `bun run start` command runs the executor loop, planning timer, and web dashboard. No external orchestrator needed. The main loop fills parallel agent slots, checks the planning threshold, and waits for agents to finish.
 
@@ -25,17 +25,6 @@ The architecture is built on four principles:
 The system has four loops that run independently within a single process:
 
 ```
-                    +-----------+
-                    |   Human   |
-                    +-----+-----+
-                          |
-                   reviews Triage,
-                   promotes to Ready,
-                   reviews PRs
-                          |
-          +---------------+----------------+
-          |                                |
-          v                                v
    +------+-------+               +-------+------+
    | Executor Loop |               | Planning Loop|
    +------+-------+               +-------+------+
@@ -52,15 +41,15 @@ The system has four loops that run independently within a single process:
     implements issue               PM + Scout + Security
     runs tests/lint                + Quality + Architect
     pushes branch                  + Issue Planners
-    opens PR                               |
+    opens PR (+ auto-merge)                |
     updates Linear                         v
           |                        groups into projects,
           v                        files to Triage
    +------+-------+
    |   GitHub PR   |         +--------+---------+
-   +--------------+         | Projects Loop     |
-                             +--------+---------+
-                                      |
+   |  (auto-merge  |         | Projects Loop     |
+   |  after CI)    |         +--------+---------+
+   +--------------+                   |
                                polls initiative
                                projects for triage
                                       |
@@ -73,6 +62,15 @@ The system has four loops that run independently within a single process:
                                triages issues,
                                decomposes into
                                sub-issues (Ready)
+
+   +--------+---------+
+   | Monitor Loop      |
+   +--------+---------+
+          |
+    watches In Review PRs
+    fixes CI failures +
+    merge conflicts,
+    responds to reviews
 
    ┌─────────────────────────┐
    │   Web Dashboard (:7890) │
@@ -185,7 +183,7 @@ The planning loop scans the codebase for improvements and files well-planned Lin
                                   +---> Issues filed to Linear [Triage] state
                                               |
                                               v
-                                  Human reviews and promotes to [Ready]
+                                  Project owners triage and promote to [Ready]
 ```
 
 ### Backlog threshold
@@ -299,7 +297,7 @@ The dashboard is a Hono web server with htmx-powered live updates. It runs in th
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ claude-autopilot          Uptime: 2h 15m    [3] │
+│ autopilot          Uptime: 2h 15m    [3] │
 ├──────────┬──────────────────────────────────────┤
 │ AGENTS   │                                      │
 │ ┌──────┐ │  ENG-42 — Add validation             │
@@ -336,9 +334,9 @@ The full Linear state machine across all loops:
                           |
               +-----------+-----------+
               |                       |
-       project owner             human promotes
-       accepts (if projects       (if no projects
-       loop enabled)               loop)
+       project owner             (or manual
+       accepts & spawns           promotion)
+       technical planner
               |                       |
               v                       |
      +--------+--------+             |
@@ -360,33 +358,35 @@ The full Linear state machine across all loops:
   |   |  In Progress   |
   |   +-------+--------+
   |           |
-  |     +-----+------+
-  |     |            |
-  |  success      failure/
-  |     |         timeout
-  |     v            |
+  |     +-----+------+-----+
+  |     |            |      |
+  |  success      failure/  CI passes
+  |     |         timeout   + auto-merge
+  |     v            |      |
   |  +--+---+   +---+------+
-  |  | Done |   | Blocked  |
+  |  | Done | <-+ Blocked  |
   |  +------+   | (Backlog)|
   |             +---+------+
   |                 |
-  +---- human fixes and re-promotes
+  +---- project owner reviews backlog
 ```
 
 ---
 
 ## Security Model
 
-claude-autopilot runs agents with `bypassPermissions` mode and `allowDangerouslySkipPermissions: true`. This means agents can read/write any file and execute any shell command within the working directory without prompts.
+autopilot runs agents with `bypassPermissions` mode and `allowDangerouslySkipPermissions: true`. This means agents can read/write any file and execute any shell command within the working directory without prompts.
 
 **Why**: Autonomous operation requires headless execution. Permission prompts would block the loop.
 
 **Mitigations**:
 - **Worktree isolation**: Each agent works in its own git worktree, not on the main branch
-- **Human review**: PRs require human review before merge. The planning loop files to Triage (not Ready), requiring human promotion
+- **Branch protection**: With auto-merge enabled, GitHub branch protection rules and required CI checks gate all merges. This is your primary safety net in autonomous mode
+- **Project-owner triage**: The projects loop triages planning issues through project-owner agents before they reach Ready. Human review is optional but supported
 - **Protected paths**: The `project.protected_paths` config prevents agents from modifying sensitive files (via prompt instructions, not SDK enforcement)
 - **Timeout**: Agents are killed after `executor.timeout_minutes` to prevent runaway execution
-- **Container recommended**: For production use, run in a Docker container or VM to sandbox filesystem and network access
+- **OS-level sandbox**: Enabled by default via bubblewrap (Linux) or the Agent SDK sandbox (macOS). Restricts filesystem access to the worktree and optionally limits network
+- **Container recommended**: For production use, run in a Docker container or VM for defense in depth
 
 The Agent SDK loads project settings (`settingSources: ['project']`) so the target project's `.claude/settings.json` and `CLAUDE.md` are respected. The `systemPrompt` uses the `claude_code` preset to get the full Claude Code system prompt including CLAUDE.md support.
 
@@ -395,35 +395,39 @@ The Agent SDK loads project settings (`settingSources: ['project']`) so the targ
 ## Data Flow
 
 ```
-Human creates issues in Linear
-          |
-          v
 bun run start <project-path>
           |
           v
 Main loop queries Linear --> fills agent slots (up to parallel limit)
           |
-          v
-Each agent: Agent SDK query() in worktree
+          +--> Planning loop scans codebase --> files issues to Triage
+          |         |
+          |         v
+          |    Project owners triage --> decompose into Ready sub-issues
           |
-          v
-Agent implements --> pushes branch autopilot/ISSUE-ID --> opens PR
+          +--> Executor agents pick up Ready issues
+          |         |
+          |         v
+          |    Implement --> test --> push branch --> open PR (+ auto-merge)
+          |         |
+          |         v
+          |    Update Linear (In Review, or Blocked on failure)
           |
-          v
-Agent updates Linear issue (Done or Blocked)
+          +--> Monitor watches In Review PRs
+          |         |
+          |         +--> CI failure / conflict --> spawn fixer agent
+          |         +--> Review feedback --> spawn review-responder agent
+          |         +--> CI passes --> auto-merge --> Done
           |
           v
 Dashboard shows live activity at http://localhost:7890
-          |
-          v
-Human reviews PR in GitHub, reviews issue updates in Linear
 ```
 
 ---
 
 ## Configuration
 
-All configuration lives in `.claude-autopilot.yml` at the root of the target project. The config is loaded by `src/lib/config.ts` and deep-merged with defaults.
+All configuration lives in `.autopilot.yml` at the root of the target project. The config is loaded by `src/lib/config.ts` and deep-merged with defaults.
 
 ### Config sections
 
@@ -473,7 +477,7 @@ CTO prompt + plugin path --> passed to Agent SDK query()
 ## Repository Structure
 
 ```
-claude-autopilot/
+autopilot/
 ├── src/
 │   ├── main.ts              # Entry point — main loop + dashboard server
 │   ├── executor.ts          # Executor module (executeIssue, fillSlots)

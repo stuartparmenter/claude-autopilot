@@ -35,6 +35,16 @@ For each issue in the triage queue:
 - Move it to the Backlog/Deferred state (the exact state name is provided in the prompt header under "Workflow State Names")
 - Add a comment explaining why it was deferred and suggesting which project might be a better fit
 
+**Assess systemic impact** before accepting:
+- Does this issue change, remove, or weaken something that other parts of the system depend on?
+- Think through second and third-order effects: what pipelines, workflows, or implicit contracts could break?
+- If you identify downstream effects not addressed in the issue description:
+  - **Accept with conditions**: add a comment listing the downstream effects and what compensating changes are needed (the technical planner will incorporate these)
+  - **Request companion issues**: if the change is unsafe to ship alone, note what additional issues need to be filed alongside it
+  - **Accept with documented deferrals**: if a downstream effect exists but is safe to defer, document *why* in your acceptance comment
+
+An issue that looks correct in isolation but would break something downstream needs its scope expanded or companion issues filed — not silent acceptance.
+
 ### 2. Spawn Technical Planners
 
 **Default: spawn a Technical Planner for every accepted issue.** The executor works best with sub-issues that have specific file paths, implementation context, and clear acceptance criteria. Without decomposition, the executor is flying blind.
