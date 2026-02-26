@@ -243,6 +243,66 @@ describe("shouldRunPlanning — backlog threshold", () => {
     expect(calledStateIds).toContain("ready-id");
     expect(calledStateIds).toContain("triage-id");
   });
+
+  test("forwards config labels filter to countIssuesInState", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    config.linear.labels = ["autopilot", "backend"];
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledFilters = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (
+          call[1] as {
+            filter: { labels?: { some: { name: { in: string[] } } } };
+          }
+        )?.filter?.labels,
+    );
+    // Both ready and triage calls should include the labels filter
+    expect(calledFilters[0]).toEqual({
+      some: { name: { in: ["autopilot", "backend"] } },
+    });
+    expect(calledFilters[1]).toEqual({
+      some: { name: { in: ["autopilot", "backend"] } },
+    });
+  });
+
+  test("forwards config projects filter to countIssuesInState", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    config.linear.projects = ["Alpha"];
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledProjects = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (
+          call[1] as {
+            filter: { project?: { name: { in: string[] } } };
+          }
+        )?.filter?.project,
+    );
+    expect(calledProjects[0]).toEqual({ name: { in: ["Alpha"] } });
+    expect(calledProjects[1]).toEqual({ name: { in: ["Alpha"] } });
+  });
+
+  test("omits label/project filters when config has empty arrays", async () => {
+    mockRawRequest.mockClear();
+    const config = makeConfig();
+    // labels and projects default to [] in makeConfig()
+
+    await shouldRunPlanning({ config, linearIds: makeLinearIds(), state });
+
+    const calledFilters = mockRawRequest.mock.calls.map(
+      (call: unknown[]) =>
+        (call[1] as { filter: Record<string, unknown> })?.filter,
+    );
+    for (const f of calledFilters) {
+      expect(f).not.toHaveProperty("labels");
+      expect(f).not.toHaveProperty("project");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

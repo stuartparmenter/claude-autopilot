@@ -31,9 +31,13 @@ export async function shouldRunPlanning(opts: {
     }
   }
 
+  const filters = {
+    labels: config.linear.labels,
+    projects: config.linear.projects,
+  };
   const [readyCount, triageCount] = await Promise.all([
-    countIssuesInState(linearIds, linearIds.states.ready),
-    countIssuesInState(linearIds, linearIds.states.triage),
+    countIssuesInState(linearIds, linearIds.states.ready, filters),
+    countIssuesInState(linearIds, linearIds.states.triage, filters),
   ]);
   const backlogCount = readyCount + triageCount;
 

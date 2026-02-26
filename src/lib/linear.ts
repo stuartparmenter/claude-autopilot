@@ -334,11 +334,18 @@ const MAX_PAGES = 100;
 export async function countIssuesInState(
   linearIds: LinearIds,
   stateId: string,
+  filters?: { labels?: string[]; projects?: string[] },
 ): Promise<number> {
   const client = getLinearClient();
   const filter = {
     team: { id: { eq: linearIds.teamId } },
     state: { id: { eq: stateId } },
+    ...(filters?.labels?.length
+      ? { labels: { some: { name: { in: filters.labels } } } }
+      : {}),
+    ...(filters?.projects?.length
+      ? { project: { name: { in: filters.projects } } }
+      : {}),
   };
 
   let count = 0;

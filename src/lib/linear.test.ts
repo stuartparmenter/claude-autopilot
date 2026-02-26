@@ -822,6 +822,55 @@ describe("countIssuesInState", () => {
     );
     expect(hasWarning).toBe(true);
   });
+
+  test("includes labels filter in GraphQL request when labels provided", async () => {
+    rawResponses = [makeRawResponse(3, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      labels: ["backend", "frontend"],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).toHaveProperty("labels", {
+      some: { name: { in: ["backend", "frontend"] } },
+    });
+  });
+
+  test("includes project filter in GraphQL request when projects provided", async () => {
+    rawResponses = [makeRawResponse(2, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      projects: ["Alpha", "Beta"],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).toHaveProperty("project", {
+      name: { in: ["Alpha", "Beta"] },
+    });
+  });
+
+  test("omits label/project filters when arrays are empty", async () => {
+    rawResponses = [makeRawResponse(1, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id", {
+      labels: [],
+      projects: [],
+    });
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).not.toHaveProperty("labels");
+    expect(calledFilter.filter).not.toHaveProperty("project");
+  });
+
+  test("omits label/project filters when no filters argument provided", async () => {
+    rawResponses = [makeRawResponse(1, false, null)];
+    await countIssuesInState(TEST_IDS, "state-id");
+    const calledFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: Record<string, unknown>;
+    };
+    expect(calledFilter.filter).not.toHaveProperty("labels");
+    expect(calledFilter.filter).not.toHaveProperty("project");
+  });
 });
 
 // ---------------------------------------------------------------------------
