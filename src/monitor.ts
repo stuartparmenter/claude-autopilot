@@ -76,42 +76,46 @@ export async function checkOpenPRs(opts: {
 
   info(`Monitoring ${issues.length} issue(s) in review...`);
 
-  // First pass: collect PR numbers from all issues (for pruning stale entries)
+  // First pass: collect PR numbers from all issues (for pruning stale entries).
+  // Fetch attachments in parallel — each issue's lookup is independent.
   interface IssueData {
     issue: (typeof issues)[number];
     prNumber: number;
   }
 
-  const allIssueData: IssueData[] = [];
-  for (const issue of issues) {
-    let attachments: Awaited<ReturnType<(typeof issue)["attachments"]>>;
-    try {
-      attachments = await withRetry(
-        () => issue.attachments(),
-        `attachments:${issue.identifier}`,
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      warn(`Failed to get attachments for ${issue.identifier}: ${msg}`);
-      continue;
-    }
-    const ghAttachment = attachments.nodes.find(
-      (a) => a.sourceType === "github",
-    );
-    if (!ghAttachment?.url) {
-      continue; // No PR linked yet — executor may still be pushing
-    }
+  const allIssueData: IssueData[] = (
+    await Promise.all(
+      issues.map(async (issue) => {
+        let attachments: Awaited<ReturnType<(typeof issue)["attachments"]>>;
+        try {
+          attachments = await withRetry(
+            () => issue.attachments(),
+            `attachments:${issue.identifier}`,
+          );
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          warn(`Failed to get attachments for ${issue.identifier}: ${msg}`);
+          return null;
+        }
+        const ghAttachment = attachments.nodes.find(
+          (a) => a.sourceType === "github",
+        );
+        if (!ghAttachment?.url) {
+          return null; // No PR linked yet — executor may still be pushing
+        }
 
-    const prMatch = ghAttachment.url.match(/\/pull\/(\d+)/);
-    if (!prMatch) {
-      warn(
-        `Could not parse PR number from attachment URL: ${ghAttachment.url}`,
-      );
-      continue;
-    }
-    const prNumber = Number.parseInt(prMatch[1], 10);
-    allIssueData.push({ issue, prNumber });
-  }
+        const prMatch = ghAttachment.url.match(/\/pull\/(\d+)/);
+        if (!prMatch) {
+          warn(
+            `Could not parse PR number from attachment URL: ${ghAttachment.url}`,
+          );
+          return null;
+        }
+        const prNumber = Number.parseInt(prMatch[1], 10);
+        return { issue, prNumber };
+      }),
+    )
+  ).filter((item): item is IssueData => item !== null);
 
   // Prune fixer attempt entries for PRs no longer in "In Review"
   const activePrNumbers = new Set(allIssueData.map((d) => d.prNumber));
