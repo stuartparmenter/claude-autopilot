@@ -1,3 +1,9 @@
+import {
+  CircuitOpenError,
+  defaultRegistry,
+  inferService,
+  type ServiceName,
+} from "./circuit-breaker";
 import { warn } from "./logger";
 
 export interface RetryOptions {
@@ -5,6 +11,8 @@ export interface RetryOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   shouldRetry?: (err: unknown) => boolean;
+  /** Explicitly identify the service for circuit-breaker tracking. Auto-inferred from label if omitted. */
+  service?: ServiceName;
 }
 
 /**
@@ -84,11 +92,28 @@ export async function withRetry<T>(
   const baseDelayMs = opts.baseDelayMs ?? 500;
   const maxDelayMs = opts.maxDelayMs ?? 10_000;
   const shouldRetry = opts.shouldRetry ?? isTransientError;
+  const service = opts.service ?? inferService(label);
+
+  // Fail fast if the circuit breaker for this service is open
+  if (defaultRegistry.isOpen(service)) {
+    throw new CircuitOpenError(service, label);
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fn();
+      const result = await fn();
+      // Notify the circuit breaker of success (closes a half-open circuit)
+      defaultRegistry.recordSuccess(service);
+      return result;
     } catch (err) {
+      // Don't count circuit-open errors as service failures
+      if (err instanceof CircuitOpenError) throw err;
+
+      // Record transient failures for circuit-breaker tracking
+      if (isTransientError(err)) {
+        defaultRegistry.recordFailure(service);
+      }
+
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
