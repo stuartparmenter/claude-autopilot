@@ -74,9 +74,11 @@ For each sub-issue, use `save_issue` with:
 - First sub-issue has no blockers
 - Each subsequent sub-issue is blocked by the previous one(s) it depends on
 
-### 5. Leave the Parent As-Is
+### 5. Finalize the Parent
 
-Do NOT change the parent issue's state. The executor skips parent issues that have children — sub-issues are the work units. The parent serves as a tracking container.
+After all sub-issues are created, move the parent issue to the Ready state. The executor skips parent issues that have children — sub-issues are the work units. The parent serves as a tracking container, and marking it Ready keeps it out of Triage (preventing re-triage on the next cycle).
+
+IMPORTANT: Only move the parent AFTER all sub-issues exist. Moving it before creates a race condition where the executor picks up the childless parent.
 
 Add a comment to the parent issue listing the sub-issues you created and the rationale for the decomposition.
 
@@ -110,4 +112,4 @@ Add a comment to the parent issue listing the sub-issues you created and the rat
 2. **Incremental and testable.** Each sub-issue should leave the codebase in a valid, testable state.
 3. **Implementation context is critical.** The executor agent has no memory of your investigation. Everything it needs must be in the sub-issue description.
 4. **Don't over-decompose.** A straightforward issue might only need 2 sub-issues. Don't create busywork.
-5. **Mark sub-issues with the Ready state, NOT the parent.** The executor skips parents with children.
+5. **Create all sub-issues first, then move the parent to Ready.** The executor skips parents with children — moving the parent last avoids the race condition.
