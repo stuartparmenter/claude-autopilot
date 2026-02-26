@@ -156,6 +156,7 @@ if (config.persistence.enabled) {
 
 const app = createApp(state, {
   authToken: dashboardToken,
+  secureCookie: !isLocalhost,
   config,
   triggerAudit: () => {
     runAudit({

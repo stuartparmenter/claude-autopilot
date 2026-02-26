@@ -166,6 +166,32 @@ describe("auth", () => {
     expect(setCookie).toContain("SameSite=Strict");
   });
 
+  test("with authToken and secureCookie: POST /auth/login sets Secure flag on cookie", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN, secureCookie: true });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).toContain("Secure");
+  });
+
+  test("with authToken and no secureCookie: POST /auth/login does NOT set Secure flag on cookie", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: TOKEN });
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `token=${encodeURIComponent(TOKEN)}`,
+    });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).not.toContain("Secure");
+  });
+
   test("with authToken: POST /auth/login with wrong token returns 401 with error", async () => {
     const state = new AppState();
     const app = createApp(state, { authToken: TOKEN });
