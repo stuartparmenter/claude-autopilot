@@ -12,11 +12,15 @@ import type { AppState } from "./state";
 // Track project IDs currently being managed to prevent duplicate owners
 const activeProjectIds = new Set<string>();
 
+// Track when each project last had its backlog reviewed to prevent tight loops
+const lastBacklogReviewAt = new Map<string, number>();
+
 /**
  * Reset the active project IDs set. Used in tests to prevent state leakage.
  */
 export function resetActiveProjectIds(): void {
   activeProjectIds.clear();
+  lastBacklogReviewAt.clear();
 }
 
 /**
@@ -91,15 +95,39 @@ export async function checkProjects(opts: {
       "checkProjects",
     );
 
-    if (triageIssues.nodes.length === 0) continue;
+    const hasTriage = triageIssues.nodes.length > 0;
 
-    info(
-      `Project "${project.name}" has ${triageIssues.nodes.length} triage issue(s), spawning owner`,
-    );
+    // Check if backlog review cooldown has elapsed
+    const backlogIntervalMs =
+      config.projects.backlog_review_interval_minutes * 60 * 1000;
+    const lastReview = lastBacklogReviewAt.get(project.id) ?? 0;
+    const backlogCooldownElapsed = Date.now() - lastReview >= backlogIntervalMs;
 
-    const triageList = triageIssues.nodes
-      .map((i) => `- ${i.identifier}: ${sanitizePromptValue(i.title)}`)
-      .join("\n");
+    // Count backlog issues only if cooldown has elapsed and no triage issues
+    let hasBacklog = false;
+    if (!hasTriage && backlogCooldownElapsed) {
+      const backlogIssues = await withRetry(
+        () =>
+          project.issues({
+            filter: { state: { id: { eq: linearIds.states.blocked } } },
+          }),
+        "checkProjects",
+      );
+      hasBacklog = backlogIssues.nodes.length > 0;
+    }
+
+    if (!hasTriage && !hasBacklog) continue;
+
+    const reason = hasTriage
+      ? `${triageIssues.nodes.length} triage issue(s)`
+      : "backlog review (cooldown elapsed)";
+    info(`Project "${project.name}" has ${reason}, spawning owner`);
+
+    const triageList = hasTriage
+      ? triageIssues.nodes
+          .map((i) => `- ${i.identifier}: ${sanitizePromptValue(i.title)}`)
+          .join("\n")
+      : "No new triage issues.";
 
     // Register agent eagerly so getRunningCount() is accurate for slot checks
     const agentId = `project-owner-${project.name}-${Date.now()}`;
@@ -109,13 +137,21 @@ export async function checkProjects(opts: {
       `Owning ${project.name}`,
     );
 
+    const includeBacklogReview = hasTriage ? backlogCooldownElapsed : true;
+
     promises.push(
       runProjectOwner({
         agentId,
         projectName: project.name,
         projectId: project.id,
         triageList,
+        includeBacklogReview,
         ...opts,
+      }).then((result) => {
+        if (includeBacklogReview) {
+          lastBacklogReviewAt.set(project.id, Date.now());
+        }
+        return result;
       }),
     );
   }
@@ -128,6 +164,7 @@ async function runProjectOwner(opts: {
   projectName: string;
   projectId: string;
   triageList: string;
+  includeBacklogReview: boolean;
   config: AutopilotConfig;
   projectPath: string;
   linearIds: LinearIds;
@@ -139,6 +176,7 @@ async function runProjectOwner(opts: {
     projectName,
     projectId,
     triageList,
+    includeBacklogReview,
     config,
     linearIds,
     state,
@@ -156,7 +194,12 @@ async function runProjectOwner(opts: {
       TRIAGE_STATE: config.linear.states.triage,
     },
     opts.projectPath,
-    { TRIAGE_LIST: triageList },
+    {
+      TRIAGE_LIST: triageList,
+      BACKLOG_REVIEW: includeBacklogReview
+        ? `After triaging, review the project's backlog. Use the Linear MCP to list issues in the "${config.linear.states.blocked}" state for this project. For each backlog issue, check if the conditions for deferral have changed (e.g., blocking issues are now Done, circumstances have evolved). If an issue is ready to be reconsidered, move it to the "${config.linear.states.triage}" state so it gets full triage on the next run. Leave issues that are still appropriately deferred.`
+        : "Skip backlog review this run (cooldown not elapsed).",
+    },
   );
 
   const plugins: SdkPluginConfig[] = [

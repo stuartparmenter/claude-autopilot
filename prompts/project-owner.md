@@ -18,4 +18,10 @@ IMPORTANT: When calling save_status_update or save_project, always use the Proje
 
 {{TRIAGE_LIST}}
 
-Review each triage issue, accept or defer, spawn technical planners for accepted issues that need decomposition, assess project health, and post a status update.
+## Backlog Review
+
+{{BACKLOG_REVIEW}}
+
+## Instructions
+
+Review each triage issue, accept or defer, spawn technical planners for accepted issues that need decomposition. Then review the backlog as instructed above. Finally, assess project health and post a status update.

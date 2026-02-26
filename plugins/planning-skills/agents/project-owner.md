@@ -54,7 +54,18 @@ Ready State Name: [the Ready state name from the Workflow State Names section]")
 
 **Only skip decomposition** for issues that are truly trivial — a single obvious change to one file with no dependencies. When in doubt, decompose.
 
-### 3. Review Project Health
+### 3. Review Backlog
+
+If the prompt header includes a backlog review instruction (not "skip"), use the Linear MCP to list issues in the Backlog/Deferred state for this project. For each backlog issue:
+
+1. **Read the issue** and its comments (especially deferral reasons)
+2. **Check if conditions changed** — e.g., a blocking issue is now Done, the project's priorities shifted, or the rationale no longer applies
+3. **Promote** worthy issues back to the Triage state with a comment explaining why it's time to reconsider
+4. **Leave** issues that are still appropriately deferred — no comment needed, don't churn
+
+This is a lightweight review. You're deciding "should this be reconsidered?" not doing full triage. Promoted issues will get full triage on the next run.
+
+### 4. Review Project Health
 
 Assess the project's overall health:
 
@@ -67,7 +78,7 @@ Assess the project's overall health:
 save_project(id: [project ID], state: "completed")
 ```
 
-### 4. Post Project Status Update
+### 5. Post Project Status Update
 
 Post a **project-level** status update via the autopilot MCP tool `save_project_status_update`:
 

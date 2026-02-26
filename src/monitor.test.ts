@@ -183,6 +183,7 @@ function makeConfig(
     projects: {
       enabled: true,
       poll_interval_minutes: 10,
+      backlog_review_interval_minutes: 240,
       max_active_projects: 5,
       timeout_minutes: 60,
       model: "opus",
