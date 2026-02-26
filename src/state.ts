@@ -188,7 +188,11 @@ export class AppState {
       insertAgentRun(this.db, result);
       insertActivityLogs(this.db, result.id, agent.activities);
       if (rawMessages && rawMessages.length > 0) {
-        insertConversationLog(this.db, result.id, JSON.stringify(rawMessages));
+        insertConversationLog(
+          this.db,
+          result.id,
+          sanitizeMessage(JSON.stringify(rawMessages)),
+        );
       }
     }
 
