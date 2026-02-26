@@ -13,8 +13,9 @@ import { resolve } from "node:path";
 import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
+import { openDb } from "./lib/db";
 import { detectRepo } from "./lib/github";
-import { resolveLinearIds } from "./lib/linear";
+import { configureLinearAuth, resolveLinearIds } from "./lib/linear";
 import { fatal, header, info, ok, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 
@@ -69,6 +70,22 @@ if (!process.env.GITHUB_TOKEN) {
     "GITHUB_TOKEN environment variable is not set.\n" +
       "The GitHub MCP inside the agent may fail without it.\n" +
       "Set: export GITHUB_TOKEN=ghp_...",
+  );
+}
+
+// --- Configure Linear auth (if persistence is available) ---
+
+if (config.persistence.enabled) {
+  const dbPath = resolve(projectPath, config.persistence.db_path);
+  const db = openDb(dbPath);
+  configureLinearAuth(
+    db,
+    config.linear.oauth
+      ? {
+          clientId: config.linear.oauth.client_id,
+          clientSecret: config.linear.oauth.client_secret,
+        }
+      : undefined,
   );
 }
 

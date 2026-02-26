@@ -186,7 +186,7 @@ export function buildOAuthUrl(clientId: string, redirectUri: string): string {
 
 // --- DB helpers ---
 
-interface OAuthTokenRow {
+interface LinearOAuthTokenRow {
   access_token: string;
   refresh_token: string | null;
   expires_at: number;
@@ -195,7 +195,7 @@ interface OAuthTokenRow {
 function getStoredToken(db: Database): OAuthToken | null {
   try {
     const row = db
-      .query<OAuthTokenRow, []>(
+      .query<LinearOAuthTokenRow, []>(
         `SELECT access_token, refresh_token, expires_at FROM linear_oauth_tokens WHERE id = 1`,
       )
       .get();
@@ -242,4 +242,57 @@ export function resetLinearAuth(): void {
   _refreshToken = null;
   _refreshing = false;
   _dbRef = null;
+}
+
+// ---------------------------------------------------------------------------
+// Low-level refresh used by linear-auth.ts (ENG-107)
+// ---------------------------------------------------------------------------
+
+export interface LinearOAuthRefreshResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+  scope: string;
+}
+
+/**
+ * Exchange a refresh token for a new access token using Linear's OAuth endpoint.
+ * Throws on HTTP error or unexpected response shape.
+ * Used by ensureFreshToken() in linear-auth.ts for proactive refresh.
+ */
+export async function refreshAccessToken(opts: {
+  refreshToken: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<LinearOAuthRefreshResponse> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: opts.refreshToken,
+    client_id: opts.clientId,
+    client_secret: opts.clientSecret,
+  });
+
+  const response = await fetch("https://api.linear.app/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `Linear OAuth token refresh failed: HTTP ${response.status} — ${text}`,
+    );
+  }
+
+  const data = (await response.json()) as LinearOAuthRefreshResponse;
+
+  if (!data.access_token || !data.refresh_token) {
+    throw new Error(
+      "Linear OAuth token refresh returned unexpected response shape",
+    );
+  }
+
+  return data;
 }

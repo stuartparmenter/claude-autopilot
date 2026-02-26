@@ -18,7 +18,12 @@ import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb, pruneActivityLogs } from "./lib/db";
 import { interruptibleSleep, isFatalError } from "./lib/errors";
 import { detectRepo } from "./lib/github";
-import { getTriageIssues, resolveLinearIds, updateIssue } from "./lib/linear";
+import {
+  configureLinearAuth,
+  getTriageIssues,
+  resolveLinearIds,
+  updateIssue,
+} from "./lib/linear";
 import { getCurrentLinearToken, initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sanitizeMessage } from "./lib/sanitize";
@@ -169,6 +174,18 @@ ok(
 // --- Init state and server ---
 
 const state = new AppState(config.executor.parallel);
+
+// Configure ENG-107's async client with OAuth auto-refresh support.
+// Must happen before resolveLinearIds() which calls getLinearClientAsync().
+configureLinearAuth(
+  authDb,
+  config.linear.oauth
+    ? {
+        clientId: config.linear.oauth.client_id,
+        clientSecret: config.linear.oauth.client_secret,
+      }
+    : undefined,
+);
 
 if (config.persistence.enabled) {
   // Reuse the already-opened authDb (same file) for persistence
