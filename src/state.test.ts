@@ -339,6 +339,23 @@ describe("AppState — issueFailureCount eviction cap", () => {
   });
 });
 
+describe("AppState — getMaxParallel", () => {
+  test("returns DEFAULTS.executor.parallel when constructed with no argument", () => {
+    const state = new AppState();
+    expect(state.getMaxParallel()).toBe(DEFAULTS.executor.parallel);
+  });
+
+  test("returns the value passed to the constructor", () => {
+    const state = new AppState(7);
+    expect(state.getMaxParallel()).toBe(7);
+  });
+
+  test("returns 1 when constructed with 1", () => {
+    const state = new AppState(1);
+    expect(state.getMaxParallel()).toBe(1);
+  });
+});
+
 describe("AppState — toJSON", () => {
   let state: AppState;
 

@@ -1,7 +1,7 @@
 import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { getPRStatus } from "./lib/github";
+import { getPRReviewInfo, getPRStatus } from "./lib/github";
 import { getLinearClient } from "./lib/linear";
 import { info, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
@@ -10,6 +10,18 @@ import type { AppState } from "./state";
 
 // Track issue IDs with active fixers to prevent duplicates
 const activeFixerIssues = new Set<string>();
+
+// Track "issueId:reviewId" pairs that have already triggered a review responder.
+// Kept across calls so the same review never spawns two responders; a new
+// review (different ID) on the same issue will pass through correctly.
+const handledReviewIds = new Set<string>();
+
+/**
+ * Reset the handled review IDs set. Used in tests to prevent state leakage.
+ */
+export function resetHandledReviewIds(): void {
+  handledReviewIds.clear();
+}
 
 // Track fixer attempt counts per PR number to enforce max_fixer_attempts
 const fixerAttempts = new Map<number, number>();
@@ -30,7 +42,7 @@ export async function checkOpenPRs(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<Array<Promise<boolean>>> {
   const { owner, repo, config, linearIds, state } = opts;
-  const maxSlots = config.executor.parallel;
+  const maxSlots = state.getMaxParallel();
 
   const budgetCheck = state.checkBudget(config);
   if (!budgetCheck.ok) {
@@ -151,41 +163,150 @@ export async function checkOpenPRs(opts: {
         : status.mergeable === false
           ? "merge_conflict"
           : null;
-    if (!failureType) continue;
 
-    fixerAttempts.set(prNumber, attempts + 1);
-    if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
-      const oldestKey = fixerAttempts.keys().next().value;
-      if (oldestKey !== undefined) {
-        fixerAttempts.delete(oldestKey);
+    if (failureType) {
+      fixerAttempts.set(prNumber, attempts + 1);
+      if (fixerAttempts.size > MAX_FIXER_ATTEMPT_ENTRIES) {
+        const oldestKey = fixerAttempts.keys().next().value;
+        if (oldestKey !== undefined) {
+          fixerAttempts.delete(oldestKey);
+        }
+      }
+
+      // Register agent in state eagerly so fillSlots sees the correct count
+      const agentId = `fix-${issue.identifier}-${Date.now()}`;
+      info(`Fixing PR #${prNumber} (${issue.identifier}): ${failureType}`);
+      state.addAgent(
+        agentId,
+        issue.identifier,
+        `Fix ${failureType} on ${issue.identifier}`,
+      );
+      activeFixerIssues.add(issue.id);
+
+      const promise = fixPR({
+        agentId,
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        prNumber,
+        branch: status.branch,
+        failureType,
+        ...opts,
+      });
+      fixerPromises.push(promise);
+      continue;
+    }
+
+    // Review responder: only when CI passing (not pending, not failing) and
+    // no merge conflict. This runs after the fixer checks so CI failures and
+    // merge conflicts always take priority.
+    if (config.monitor.respond_to_reviews && status.ciStatus === "success") {
+      let reviewInfo: Awaited<ReturnType<typeof getPRReviewInfo>>;
+      try {
+        reviewInfo = await getPRReviewInfo(owner, repo, prNumber);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warn(`Failed to get review info for PR #${prNumber}: ${msg}`);
+        continue;
+      }
+
+      if (
+        reviewInfo.hasChangesRequested &&
+        reviewInfo.latestChangesRequestedReviewId !== null
+      ) {
+        const dedupKey = `${issue.id}:${reviewInfo.latestChangesRequestedReviewId}`;
+        if (!handledReviewIds.has(dedupKey)) {
+          handledReviewIds.add(dedupKey);
+          const promise = respondToReview({
+            issueId: issue.id,
+            issueIdentifier: issue.identifier,
+            prNumber,
+            branch: status.branch,
+            reviewComments: reviewInfo.reviewComments,
+            reviewSummaries: reviewInfo.reviewSummaries,
+            ...opts,
+          });
+          fixerPromises.push(promise);
+        }
       }
     }
 
-    // Register agent in state eagerly so fillSlots sees the correct count
-    const agentId = `fix-${issue.identifier}-${Date.now()}`;
-    info(`Fixing PR #${prNumber} (${issue.identifier}): ${failureType}`);
-    state.addAgent(
-      agentId,
-      issue.identifier,
-      `Fix ${failureType} on ${issue.identifier}`,
-    );
-    activeFixerIssues.add(issue.id);
-
-    const promise = fixPR({
-      agentId,
-      issueId: issue.id,
-      issueIdentifier: issue.identifier,
-      prNumber,
-      branch: status.branch,
-      failureType,
-      ...opts,
-    });
-    fixerPromises.push(promise);
-
-    // CI pending or passing+mergeable — skip
+    // CI pending or passing+mergeable with no review action — skip
   }
 
   return fixerPromises;
+}
+
+/**
+ * Spawn a review-responder agent to address PR review feedback.
+ */
+async function respondToReview(opts: {
+  issueId: string;
+  issueIdentifier: string;
+  prNumber: number;
+  branch: string;
+  reviewComments: string;
+  reviewSummaries: string;
+  config: AutopilotConfig;
+  projectPath: string;
+  linearIds: LinearIds;
+  state: AppState;
+  shutdownSignal?: AbortSignal;
+}): Promise<boolean> {
+  const {
+    issueIdentifier,
+    prNumber,
+    branch,
+    reviewComments,
+    reviewSummaries,
+    config,
+    projectPath,
+    state,
+  } = opts;
+  const agentId = `review-${issueIdentifier}-${Date.now()}`;
+
+  info(`Responding to review on PR #${prNumber} (${issueIdentifier})`);
+  state.addAgent(
+    agentId,
+    issueIdentifier,
+    `Respond to review on ${issueIdentifier}`,
+  );
+
+  const prompt = buildPrompt("review-responder", {
+    ISSUE_ID: issueIdentifier,
+    BRANCH: branch,
+    PR_NUMBER: String(prNumber),
+    PROJECT_NAME: projectPath.split("/").pop() || "unknown",
+    REVIEW_COMMENTS: reviewComments,
+    REVIEW_SUMMARIES: reviewSummaries,
+    IN_REVIEW_STATE: config.linear.states.in_review,
+    BLOCKED_STATE: config.linear.states.blocked,
+  });
+
+  const worktree = `review-${issueIdentifier}`;
+  const timeoutMs = config.monitor.review_responder_timeout_minutes * 60 * 1000;
+
+  const result = await runClaude({
+    prompt,
+    cwd: projectPath,
+    label: `review-${issueIdentifier}`,
+    worktree,
+    worktreeBranch: branch,
+    timeoutMs,
+    inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
+    model: config.executor.model,
+    sandbox: config.sandbox,
+    mcpServers: buildMcpServers(),
+    parentSignal: opts.shutdownSignal,
+    onActivity: (entry) => state.addActivity(agentId, entry),
+  });
+
+  const { status } = handleAgentResult(
+    result,
+    state,
+    agentId,
+    `Review responder for ${issueIdentifier}`,
+  );
+  return status === "completed";
 }
 
 /**

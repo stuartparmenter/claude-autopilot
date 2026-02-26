@@ -1,61 +1,43 @@
 #!/usr/bin/env bun
 
 /**
- * explain.ts - Preview what autopilot would do for a project
+ * explain.ts — Read-only planning preview for a target project.
  *
  * Usage: bun run explain <project-path>
  *
- * Runs the planning system in read-only mode and produces a human-readable
- * preview report. No Linear issues are created, no git worktrees are used,
- * and no executor agents are spawned.
+ * Connects to Linear (read-only), investigates the codebase with the explain
+ * prompt, and prints a structured report to stdout without filing any issues.
  */
 
 import { resolve } from "node:path";
 import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
-import { runClaude } from "./lib/claude";
-import {
-  type AutopilotConfig,
-  loadConfig,
-  resolveProjectPath,
-} from "./lib/config";
-import { error, fatal, header, info, ok, warn } from "./lib/logger";
+import { buildMcpServers, runClaude } from "./lib/claude";
+import { loadConfig, resolveProjectPath } from "./lib/config";
+import { detectRepo } from "./lib/github";
+import { resolveLinearIds } from "./lib/linear";
+import { fatal, header, info, ok, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 
 // --- Parse args ---
 
-const projectPathArg = process.argv[2];
-
-if (!projectPathArg) {
+const projectArg = process.argv[2];
+if (!projectArg) {
   console.log("Usage: bun run explain <project-path>");
   console.log();
-  console.log("Preview what autopilot would do for a project.");
-  console.log(
-    "Runs read-only investigation — no issues created, no worktrees, no executor agents.",
-  );
-  console.log();
-  console.log("Requires:");
-  console.log("  LINEAR_API_KEY      Linear API key");
-  console.log(
-    "  ANTHROPIC_API_KEY   Anthropic API key (or CLAUDE_CODE_USE_BEDROCK/VERTEX)",
-  );
-  console.log("  GITHUB_TOKEN        GitHub token (optional but recommended)");
+  console.log("Run a read-only planning preview for the given project.");
+  console.log("Connects to Linear (read-only), investigates the codebase,");
+  console.log("and prints a structured report without filing any issues.");
   process.exit(1);
 }
 
-// --- Validate project path ---
+header("claude-autopilot explain");
 
-const projectPath = resolveProjectPath(projectPathArg);
+const projectPath = resolveProjectPath(projectArg);
+info(`Project: ${projectPath}`);
 
-// --- Load config ---
+const config = loadConfig(projectPath);
 
-let config: AutopilotConfig;
-try {
-  config = loadConfig(projectPath);
-} catch (e) {
-  fatal(e instanceof Error ? e.message : String(e));
-}
-
-// --- Check credentials ---
+// --- Check environment variables ---
 
 if (!process.env.LINEAR_API_KEY) {
   fatal(
@@ -78,41 +60,57 @@ if (
   );
 }
 
-if (!process.env.GITHUB_TOKEN) {
-  warn(
-    "GITHUB_TOKEN is not set — GitHub context will be limited.\n" +
-      "Set: export GITHUB_TOKEN=ghp_...",
-  );
-}
-
 if (!config.linear.team) {
   fatal("linear.team is not set in .claude-autopilot.yml");
 }
 
-// --- Run ---
+if (!process.env.GITHUB_TOKEN) {
+  warn(
+    "GITHUB_TOKEN environment variable is not set.\n" +
+      "The GitHub MCP inside the agent may fail without it.\n" +
+      "Set: export GITHUB_TOKEN=ghp_...",
+  );
+}
 
-header("claude-autopilot explain");
+// --- Detect GitHub repo ---
 
-info(`Project: ${projectPath}`);
-info(`Linear team: ${config.linear.team}`);
-console.log();
-info("Running read-only codebase investigation...");
-info("No Linear issues will be created.");
-info("No git worktrees will be used.");
-console.log();
+const { owner: ghOwner, repo: ghRepo } = detectRepo(
+  projectPath,
+  config.github.repo || undefined,
+);
+ok(`GitHub repo: ${ghOwner}/${ghRepo}`);
 
-const repoName = projectPath.split("/").pop() || "unknown";
+// --- Connect to Linear ---
+
+info("Connecting to Linear...");
+const linearIds = await resolveLinearIds(config.linear);
+ok(
+  `Connected — team ${config.linear.team}` +
+    (linearIds.initiativeName
+      ? `, initiative ${linearIds.initiativeName}`
+      : ""),
+);
+
+// --- Graceful shutdown ---
+
+const controller = new AbortController();
+process.on("SIGINT", () => controller.abort());
+process.on("SIGTERM", () => controller.abort());
+
+// --- Build and run explain agent ---
 
 const vars = {
-  REPO_NAME: repoName,
   LINEAR_TEAM: config.linear.team,
-  INITIATIVE_NAME: config.linear.initiative || "Not configured",
+  MAX_ISSUES_PER_RUN: String(config.planning.max_issues_per_run),
+  REPO_NAME: projectPath.split("/").pop() || "unknown",
+  INITIATIVE_NAME: linearIds.initiativeName || "Not configured",
+  INITIATIVE_ID: linearIds.initiativeId || "",
+  TRIAGE_STATE: config.linear.states.triage,
   READY_STATE: config.linear.states.ready,
   TODAY: new Date().toISOString().slice(0, 10),
 };
 
 const prompt = buildPrompt("explain", vars, projectPath);
-
 const plugins: SdkPluginConfig[] = [
   {
     type: "local",
@@ -120,54 +118,37 @@ const plugins: SdkPluginConfig[] = [
   },
 ];
 
-// Read-only MCP servers: Linear + GitHub only (no autopilot write tools)
-const mcpServers: Record<string, unknown> = {
-  linear: {
-    type: "http",
-    url: "https://mcp.linear.app/mcp",
-    headers: { Authorization: `Bearer ${process.env.LINEAR_API_KEY}` },
-  },
-  ...(process.env.GITHUB_TOKEN && {
-    github: {
-      type: "http",
-      url: "https://api.githubcopilot.com/mcp/",
-      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
-    },
-  }),
-};
+info("Starting explain agent...");
 
 const result = await runClaude({
   prompt,
   cwd: projectPath,
   label: "explain",
-  timeoutMs: 30 * 60 * 1000,
-  inactivityMs: 10 * 60 * 1000,
+  timeoutMs: config.planning.timeout_minutes * 60 * 1000,
+  inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
   model: config.planning.model,
   sandbox: config.sandbox,
-  mcpServers,
+  mcpServers: buildMcpServers(),
   plugins,
+  parentSignal: controller.signal,
 });
 
-console.log();
+// --- Output result ---
 
-if (result.timedOut) {
-  warn("Explain agent timed out — partial results may follow.");
-}
-
-if (result.error && !result.timedOut) {
-  error(`Explain agent failed: ${result.error}`);
+if (result.timedOut || result.error) {
+  warn(result.error || "Agent timed out without producing a result");
   process.exit(1);
 }
 
-if (result.result) {
-  console.log(result.result);
-  console.log();
-}
+console.log();
+console.log(result.result);
+console.log();
 
-if (result.costUsd) {
-  info(`Cost: $${result.costUsd.toFixed(4)}`);
-}
-
-ok(
-  "Explain complete. No Linear issues were created. No git worktrees were used.",
+info(
+  `Completed` +
+    (result.durationMs ? ` in ${Math.round(result.durationMs / 1000)}s` : "") +
+    (result.costUsd ? ` ($${result.costUsd.toFixed(4)})` : "") +
+    (result.numTurns ? `, ${result.numTurns} turns` : ""),
 );
+
+process.exit(0);

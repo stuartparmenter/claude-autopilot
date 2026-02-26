@@ -8,6 +8,7 @@ import {
   findTeam,
   getLinearClient,
   getReadyIssues,
+  getTriageIssues,
   createIssue as linearCreateIssue,
   updateIssue as linearUpdateIssue,
   resetClient,
@@ -502,6 +503,73 @@ describe("getReadyIssues", () => {
 
     expect(result).toHaveLength(1);
     expect((result[0] as { id: string }).id).toBe("good-issue");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getTriageIssues
+// ---------------------------------------------------------------------------
+
+describe("getTriageIssues", () => {
+  beforeEach(() => {
+    mockIssuesNodes = [];
+    mockIssuesForReady.mockClear();
+    setClientForTesting(makeStandardClient());
+  });
+
+  test("returns empty array when no triage issues exist", async () => {
+    const result = await getTriageIssues(TEST_IDS);
+    expect(result).toEqual([]);
+  });
+
+  test("passes correct filter and limit to API", async () => {
+    await getTriageIssues(TEST_IDS, 25);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.triage } },
+      },
+      first: 25,
+    });
+  });
+
+  test("default limit is 50", async () => {
+    await getTriageIssues(TEST_IDS);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith(
+      expect.objectContaining({ first: 50 }),
+    );
+  });
+
+  test("sorts issues by priority ascending (lower number = higher priority)", async () => {
+    mockIssuesNodes = [
+      makeIssue({ id: "c", priority: 3 }),
+      makeIssue({ id: "a", priority: 1 }),
+      makeIssue({ id: "b", priority: 2 }),
+    ];
+
+    const result = await getTriageIssues(TEST_IDS);
+
+    expect(result.map((i: unknown) => (i as { id: string }).id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  test("treats undefined priority as 4 (lowest) when sorting", async () => {
+    mockIssuesNodes = [
+      makeIssue({ id: "no-pri", priority: undefined }),
+      makeIssue({ id: "high", priority: 1 }),
+    ];
+
+    const result = await getTriageIssues(TEST_IDS);
+
+    expect(result.map((i: unknown) => (i as { id: string }).id)).toEqual([
+      "high",
+      "no-pri",
+    ]);
   });
 });
 

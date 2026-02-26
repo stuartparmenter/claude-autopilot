@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   type AgentDefinition,
   createSdkMcpServer,
@@ -307,6 +309,7 @@ export async function runClaude(opts: {
   };
 
   let worktreeName: string | undefined;
+  let agentTmpDir: string | undefined;
   let inactivityTimedOut = false;
   let loopCompleted = false;
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -338,6 +341,16 @@ export async function runClaude(opts: {
 
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
+      // Create a dedicated temp directory for this agent.
+      // CLAUDE_CODE_TMPDIR tells Claude Code where to put internal temp files
+      // (it appends /claude/ to this path). TMPDIR covers git, bun, etc.
+      agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
+      queryOpts.env = {
+        ...process.env,
+        TMPDIR: agentTmpDir,
+        CLAUDE_CODE_TMPDIR: agentTmpDir,
+      };
+
       const sandbox: Record<string, unknown> = {
         enabled: true,
         autoAllowBashIfSandboxed: opts.sandbox.auto_allow_bash ?? true,
@@ -563,6 +576,14 @@ export async function runClaude(opts: {
     if (hardKillTimer) clearTimeout(hardKillTimer);
     if (inactivityInterval) clearInterval(inactivityInterval);
     if (timer) clearTimeout(timer);
+
+    if (agentTmpDir) {
+      try {
+        rmSync(agentTmpDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
 
     if (worktreeName) {
       try {

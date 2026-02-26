@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { AutopilotConfig } from "./lib/config";
+import { type AutopilotConfig, DEFAULTS } from "./lib/config";
 import type { AnalyticsResult } from "./lib/db";
 import {
   getActivityLogs,
@@ -86,7 +86,12 @@ export class AppState {
   private issueFailureCount = new Map<string, number>();
   private db: Database | null = null;
   private spendLog: Array<{ timestampMs: number; costUsd: number }> = [];
+  private maxParallel: number;
   readonly startedAt = Date.now();
+
+  constructor(maxParallel = DEFAULTS.executor.parallel) {
+    this.maxParallel = maxParallel;
+  }
 
   setDb(db: Database): void {
     this.db = db;
@@ -204,6 +209,10 @@ export class AppState {
 
   getRunningCount(): number {
     return this.agents.size;
+  }
+
+  getMaxParallel(): number {
+    return this.maxParallel;
   }
 
   getHistory(): AgentResult[] {

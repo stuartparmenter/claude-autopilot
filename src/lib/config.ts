@@ -55,6 +55,11 @@ export interface PlanningConfig {
   model: string;
 }
 
+export interface MonitorConfig {
+  respond_to_reviews: boolean;
+  review_responder_timeout_minutes: number;
+}
+
 export interface GithubConfig {
   repo: string; // "owner/repo" override — empty = auto-detect from git remote
   automerge: boolean; // Enable auto-merge on PRs created by the executor
@@ -93,6 +98,7 @@ export interface AutopilotConfig {
   executor: ExecutorConfig;
   planning: PlanningConfig;
   projects: ProjectsConfig;
+  monitor: MonitorConfig;
   github: GithubConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
@@ -132,6 +138,10 @@ export const DEFAULTS: AutopilotConfig = {
     max_issues_per_run: 5,
     timeout_minutes: 90,
     model: "opus",
+  },
+  monitor: {
+    respond_to_reviews: false,
+    review_responder_timeout_minutes: 20,
   },
   github: {
     repo: "",

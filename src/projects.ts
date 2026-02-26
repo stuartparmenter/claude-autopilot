@@ -5,7 +5,7 @@ import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getLinearClient } from "./lib/linear";
 import { info, warn } from "./lib/logger";
-import { AUTOPILOT_ROOT } from "./lib/prompt";
+import { AUTOPILOT_ROOT, buildPrompt, sanitizePromptValue } from "./lib/prompt";
 import { withRetry } from "./lib/retry";
 import type { AppState } from "./state";
 
@@ -49,7 +49,7 @@ export async function checkProjects(opts: {
 
   // Determine how many project owners we can spawn
   const running = state.getRunningCount();
-  const available = config.executor.parallel - running;
+  const available = state.getMaxParallel() - running;
   const maxOwners = Math.min(
     activeProjects.length,
     config.projects.max_active_projects,
@@ -77,7 +77,7 @@ export async function checkProjects(opts: {
     );
 
     const triageList = triageIssues.nodes
-      .map((i) => `- ${i.identifier}: ${i.title}`)
+      .map((i) => `- ${i.identifier}: ${sanitizePromptValue(i.title)}`)
       .join("\n");
 
     // Register agent eagerly so getRunningCount() is accurate for slot checks
@@ -123,27 +123,20 @@ async function runProjectOwner(opts: {
     state,
   } = opts;
 
-  const prompt = `You are the project owner for "${projectName}".
-
-Project Name: ${projectName}
-Project ID: ${projectId}
-Linear Team: ${config.linear.team}
-Initiative: ${linearIds.initiativeName || "N/A"}
-
-## Workflow State Names
-
-Use these exact state names when moving issues:
-- **Ready state**: "${config.linear.states.ready}" (accepted issues go here)
-- **Backlog/Deferred state**: "${config.linear.states.blocked}" (deferred issues go here)
-- **Triage state**: "${config.linear.states.triage}" (current state of incoming issues)
-
-IMPORTANT: When calling save_status_update or save_project, always use the Project ID ("${projectId}"), NOT the project name. The project name may collide with the initiative name.
-
-## Triage Queue
-
-${triageList}
-
-Review each triage issue, accept or defer, spawn technical planners for accepted issues that need decomposition, assess project health, and post a status update.`;
+  const prompt = buildPrompt(
+    "project-owner",
+    {
+      PROJECT_NAME: projectName,
+      PROJECT_ID: projectId,
+      LINEAR_TEAM: config.linear.team,
+      INITIATIVE_NAME: linearIds.initiativeName || "N/A",
+      READY_STATE: config.linear.states.ready,
+      BLOCKED_STATE: config.linear.states.blocked,
+      TRIAGE_STATE: config.linear.states.triage,
+    },
+    opts.projectPath,
+    { TRIAGE_LIST: triageList },
+  );
 
   const plugins: SdkPluginConfig[] = [
     {

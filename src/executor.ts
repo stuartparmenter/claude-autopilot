@@ -125,7 +125,7 @@ export async function fillSlots(opts: {
   if (opts.shutdownSignal?.aborted) return [];
 
   const { config, projectPath, linearIds, state } = opts;
-  const maxSlots = config.executor.parallel;
+  const maxSlots = state.getMaxParallel();
   const running = state.getRunningCount();
   const available = maxSlots - running;
 
