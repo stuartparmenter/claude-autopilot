@@ -303,3 +303,27 @@ describe("checkProjects — project selection", () => {
     await Promise.all(result);
   });
 });
+
+describe("checkProjects — project owner crash recovery", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockRejectedValue(new Error("crash"));
+  });
+
+  test("records failed history entry when runClaude rejects", async () => {
+    mockProjects = [
+      makeProject("Auth Hardening", "started", [
+        { id: "i1", identifier: "ENG-1", title: "Fix auth" },
+      ]),
+    ];
+
+    const promises = await checkProjects(makeOpts(state));
+    await Promise.all(promises);
+
+    const history = state.getHistory();
+    expect(history.length).toBeGreaterThan(0);
+    expect(history[0].status).toBe("failed");
+  });
+});

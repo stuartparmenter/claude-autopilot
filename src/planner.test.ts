@@ -456,3 +456,29 @@ describe("runPlanning — error path", () => {
     expect(state.getPlanningStatus().running).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// runPlanning — crash path (runClaude rejects)
+// ---------------------------------------------------------------------------
+
+describe("runPlanning — crash path (runClaude rejects)", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockRejectedValue(new Error("boom"));
+  });
+
+  test("sets running=false, lastResult='failed', and records failed history when runClaude rejects", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(state.getPlanningStatus().running).toBe(false);
+    expect(state.getPlanningStatus().lastResult).toBe("failed");
+    expect(state.getHistory()[0].status).toBe("failed");
+  });
+});

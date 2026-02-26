@@ -329,6 +329,45 @@ describe("executeIssue — timeout path", () => {
   });
 });
 
+describe("executeIssue — inactivity timeout path", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: true,
+      inactivityTimedOut: true,
+      error: "Inactivity timeout",
+      costUsd: undefined,
+      durationMs: 1800000,
+      numTurns: 10,
+      result: "",
+    });
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("moves issue to ready state on inactivity timeout (not blocked)", async () => {
+    mockUpdateIssue.mockClear();
+
+    await executeIssue({
+      issue: makeIssue(),
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const readyCall = mockUpdateIssue.mock.calls.find(
+      (call) => call[1]?.stateId === "ready-id",
+    );
+    expect(readyCall).toBeDefined();
+    const blockedCall = mockUpdateIssue.mock.calls.find(
+      (call) => call[1]?.stateId === "blocked-id",
+    );
+    expect(blockedCall).toBeUndefined();
+  });
+});
+
 describe("executeIssue — token sanitization in Linear comment", () => {
   let state: AppState;
 
