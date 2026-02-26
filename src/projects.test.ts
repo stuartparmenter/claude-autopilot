@@ -44,7 +44,7 @@ const mockInitiative = mock(() =>
   }),
 );
 
-import { checkProjects } from "./projects";
+import { checkProjects, resetActiveProjectIds } from "./projects";
 
 beforeEach(() => {
   mockProjects = [];
@@ -61,6 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore();
   resetLinearClient();
+  resetActiveProjectIds();
 });
 
 // ---------------------------------------------------------------------------
@@ -304,6 +305,71 @@ describe("checkProjects — project selection", () => {
     // Only 1 slot available
     expect(result.length).toBeLessThanOrEqual(1);
     await Promise.all(result);
+  });
+});
+
+describe("checkProjects — safety guards", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockClear();
+  });
+
+  test("does not spawn a second owner for an already-active project", async () => {
+    mockProjects = [
+      makeProject("Dedup-Test", "started", [
+        { id: "i1", identifier: "ENG-1", title: "Issue 1" },
+      ]),
+    ];
+
+    // Return a promise that stays pending so the first owner keeps running
+    let resolveFirstRun!: (value: ClaudeResult) => void;
+    const hangingPromise = new Promise<ClaudeResult>((resolve) => {
+      resolveFirstRun = resolve;
+    });
+    mockRunClaude.mockImplementation(() => hangingPromise);
+
+    // First call — spawns an owner; activeProjectIds now contains the project ID
+    const firstResult = await checkProjects(makeOpts(state));
+    expect(firstResult).toHaveLength(1);
+
+    // Second call while the first owner is still running — must be skipped
+    const secondResult = await checkProjects(makeOpts(state));
+    expect(secondResult).toHaveLength(0);
+
+    // runClaude was only invoked once across both checkProjects calls
+    expect(mockRunClaude).toHaveBeenCalledTimes(1);
+
+    // Resolve the hanging promise so the finally block cleans up
+    resolveFirstRun({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: undefined,
+      costUsd: 0.1,
+      durationMs: 1000,
+      numTurns: 1,
+      result: "",
+    });
+    await Promise.all(firstResult);
+  });
+
+  test("returns empty and auto-pauses when budget is exhausted", async () => {
+    mockProjects = [
+      makeProject("Budget-Test", "started", [
+        { id: "i1", identifier: "ENG-1", title: "Issue 1" },
+      ]),
+    ];
+
+    // Exceed the daily budget limit
+    state.addSpend(100);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 50;
+
+    const result = await checkProjects(makeOpts(state, config));
+    expect(result).toHaveLength(0);
+    expect(state.isPaused()).toBe(true);
+    expect(mockRunClaude).not.toHaveBeenCalled();
   });
 });
 

@@ -9,6 +9,16 @@ import { AUTOPILOT_ROOT, buildPrompt, sanitizePromptValue } from "./lib/prompt";
 import { withRetry } from "./lib/retry";
 import type { AppState } from "./state";
 
+// Track project IDs currently being managed to prevent duplicate owners
+const activeProjectIds = new Set<string>();
+
+/**
+ * Reset the active project IDs set. Used in tests to prevent state leakage.
+ */
+export function resetActiveProjectIds(): void {
+  activeProjectIds.clear();
+}
+
 /**
  * Check active projects under the initiative for triage issues,
  * and spawn project-owner agents for qualifying projects.
@@ -24,6 +34,15 @@ export async function checkProjects(opts: {
 
   if (!config.projects.enabled) return [];
   if (!linearIds.initiativeId) return [];
+
+  const budgetCheck = state.checkBudget(config);
+  if (!budgetCheck.ok) {
+    warn(`Budget limit reached: ${budgetCheck.reason}`);
+    if (!state.isPaused()) {
+      state.togglePause();
+    }
+    return [];
+  }
 
   const client = getLinearClient();
 
@@ -61,6 +80,8 @@ export async function checkProjects(opts: {
   const promises: Array<Promise<boolean>> = [];
 
   for (const project of activeProjects.slice(0, maxOwners)) {
+    if (activeProjectIds.has(project.id)) continue;
+
     // Count triage issues for this project
     const triageIssues = await withRetry(
       () =>
@@ -145,6 +166,7 @@ async function runProjectOwner(opts: {
     },
   ];
 
+  activeProjectIds.add(projectId);
   try {
     const result = await runClaude({
       prompt,
@@ -174,5 +196,7 @@ async function runProjectOwner(opts: {
     warn(`Project owner for "${projectName}" crashed: ${msg}`);
     state.completeAgent(agentId, "failed", { error: msg });
     return false;
+  } finally {
+    activeProjectIds.delete(projectId);
   }
 }
