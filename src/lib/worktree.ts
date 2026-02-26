@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { info, warn } from "./logger";
 
@@ -175,4 +175,44 @@ export async function removeWorktree(
       warn(`Failed to delete branch '${branch}': ${brErr}`);
     }
   }
+}
+
+/**
+ * Sweep stale worktrees under `<projectPath>/.claude/worktrees/`.
+ * Removes any worktree whose name is not in `activeWorktreeNames`.
+ * Best-effort — failures on individual worktrees are logged but do not
+ * prevent cleanup of the remaining ones or crash the process.
+ *
+ * @param activeWorktreeNames - Set of worktree names currently in use by
+ *   running agents. Pass an empty set on startup (all found worktrees are
+ *   stale by definition when no agents have been spawned yet).
+ */
+export async function sweepWorktrees(
+  projectPath: string,
+  activeWorktreeNames: Set<string> = new Set(),
+): Promise<void> {
+  const worktreesDir = resolve(projectPath, ".claude", "worktrees");
+  let entries: string[];
+  try {
+    entries = readdirSync(worktreesDir) as string[];
+  } catch {
+    // Directory does not exist yet — nothing to sweep
+    return;
+  }
+
+  const stale = entries.filter((name) => !activeWorktreeNames.has(name));
+  if (stale.length > 0) {
+    info(`Sweeping ${stale.length} stale worktree(s): ${stale.join(", ")}`);
+  }
+
+  for (const name of stale) {
+    try {
+      await removeWorktree(projectPath, name);
+    } catch (e) {
+      warn(`Sweep: failed to remove worktree '${name}': ${e}`);
+    }
+  }
+
+  // Prune stale git references for any worktrees deleted externally
+  gitPrune(projectPath);
 }

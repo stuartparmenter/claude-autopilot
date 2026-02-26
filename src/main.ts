@@ -17,6 +17,7 @@ import { detectRepo } from "./lib/github";
 import { getTriageIssues, resolveLinearIds, updateIssue } from "./lib/linear";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sanitizeMessage } from "./lib/sanitize";
+import { sweepWorktrees } from "./lib/worktree";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
@@ -272,6 +273,10 @@ let planningPromise: Promise<void> | null = null;
 let lastProjectsCheckAt = 0;
 
 let consecutiveFailures = 0;
+
+// Sweep stale worktrees left behind by previous crashed runs.
+// No agents are running yet, so every worktree found is stale.
+await sweepWorktrees(projectPath, new Set());
 
 info("Starting main loop (Ctrl+C to stop)...");
 console.log();
