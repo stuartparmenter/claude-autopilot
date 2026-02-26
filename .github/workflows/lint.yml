@@ -20,7 +20,5 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Lint
-        run: bun run check
+      - name: Typecheck & Lint
+        run: bun run --parallel typecheck check
