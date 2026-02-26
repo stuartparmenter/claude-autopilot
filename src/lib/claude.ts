@@ -202,16 +202,28 @@ export async function runClaude(opts: {
       },
     );
 
+    // Inject executor plugin: fixes sandbox TMPDIR issues via SessionStart hook.
+    // Must be injected before sandbox config so it's present for all sandboxed agents.
+    const executorPlugin: SdkPluginConfig = {
+      type: "local",
+      path: resolve(AUTOPILOT_ROOT, "plugins/executor"),
+    };
+    const basePlugins = (queryOpts.plugins ?? []) as SdkPluginConfig[];
+    queryOpts.plugins = [...basePlugins, executorPlugin];
+
     // Sandbox isolation: restrict agent filesystem and optionally network access
     if (opts.sandbox?.enabled) {
       // Create a dedicated temp directory for this agent.
       // CLAUDE_CODE_TMPDIR tells Claude Code where to put internal temp files
       // (it appends /claude/ to this path). TMPDIR covers git, bun, etc.
+      // AUTOPILOT_TMPDIR survives sandbox TMPDIR override — the executor plugin's
+      // SessionStart hook reads it and writes the correct TMPDIR to CLAUDE_ENV_FILE.
       agentTmpDir = mkdtempSync(join(tmpdir(), "claude-agent-"));
       queryOpts.env = {
         ...process.env,
         TMPDIR: agentTmpDir,
         CLAUDE_CODE_TMPDIR: agentTmpDir,
+        AUTOPILOT_TMPDIR: agentTmpDir,
       };
       queryOpts.sandbox = buildSandboxConfig(opts.cwd, opts.sandbox);
 
@@ -222,8 +234,10 @@ export async function runClaude(opts: {
         type: "local",
         path: resolve(AUTOPILOT_ROOT, "plugins/sandbox-guard"),
       };
-      const existing = (queryOpts.plugins ?? []) as SdkPluginConfig[];
-      queryOpts.plugins = [...existing, sandboxGuard];
+      queryOpts.plugins = [
+        ...(queryOpts.plugins as SdkPluginConfig[]),
+        sandboxGuard,
+      ];
     }
 
     // Self-managed worktrees: create before spawning, clean up in finally

@@ -1,0 +1,17 @@
+{
+  "description": "Fix TMPDIR for git operations in sandbox mode",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/fix-tmpdir.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
