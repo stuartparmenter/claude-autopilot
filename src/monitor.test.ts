@@ -1019,6 +1019,151 @@ describe("checkOpenPRs — fixer timeout and attempt budget", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Ownership filtering tests
+// ---------------------------------------------------------------------------
+
+describe("checkOpenPRs — ownership filtering", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: undefined,
+      costUsd: 0.05,
+      durationMs: 500,
+      numTurns: 2,
+      result: "",
+    });
+    mockIssuesQuery.mockResolvedValue({ nodes: [] });
+    // CI failure so fixers would be spawned when not filtered out
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/human-pr", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+  });
+
+  test("passes label filter to Linear query when labels are configured", async () => {
+    const config = makeConfig();
+    config.linear.labels = ["autopilot:managed"];
+
+    mockIssuesQuery.mockClear();
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(mockIssuesQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          labels: { some: { name: { in: ["autopilot:managed"] } } },
+        }),
+      }),
+    );
+  });
+
+  test("passes project filter to Linear query when projects are configured", async () => {
+    const config = makeConfig();
+    config.linear.projects = ["My Project"];
+
+    mockIssuesQuery.mockClear();
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(mockIssuesQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          project: { name: { in: ["My Project"] } },
+        }),
+      }),
+    );
+  });
+
+  test("does not include label/project filter in query when arrays are empty", async () => {
+    const config = makeConfig(); // labels: [], projects: []
+
+    mockIssuesQuery.mockClear();
+    await checkOpenPRs(makeOpts(state, config));
+
+    const filterArg = (
+      mockIssuesQuery.mock.calls as unknown as Array<
+        [{ filter: Record<string, unknown> }]
+      >
+    )[0][0].filter;
+    expect(filterArg).not.toHaveProperty("labels");
+    expect(filterArg).not.toHaveProperty("project");
+  });
+
+  test("skips PR when labels configured and branch does not match autopilot pattern", async () => {
+    const config = makeConfig();
+    config.linear.labels = ["autopilot:managed"];
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/human-pr", sha: "abc123" },
+    };
+
+    const issue = makeIssue("human-pr", "https://github.com/o/r/pull/300");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    // Branch doesn't start with worktree- → skipped with warning
+    expect(result).toHaveLength(0);
+  });
+
+  test("processes PR when labels configured and branch matches autopilot pattern", async () => {
+    const config = makeConfig();
+    config.linear.labels = ["autopilot:managed"];
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "worktree-ENG-123", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+
+    const issue = makeIssue("autopilot-pr", "https://github.com/o/r/pull/301");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    // Branch starts with worktree- → processed normally
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+  });
+
+  test("backward compatibility: no labels/projects configured, all branches allowed", async () => {
+    const config = makeConfig(); // labels: [], projects: []
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/some-pr", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+
+    const issue = makeIssue("any-pr", "https://github.com/o/r/pull/302");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    // No ownership filter configured → fixer still spawned regardless of branch
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+  });
+});
+
 // Restore the real claude module after all tests in this file so the mock
 // doesn't leak into subsequent test files. mock.restore() does NOT undo
 // mock.module() calls in Bun 1.3.9, so we must do this explicitly.
