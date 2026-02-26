@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildPrompt, loadPrompt, renderPrompt } from "./prompt";
+import {
+  buildPrompt,
+  loadPrompt,
+  renderPrompt,
+  sanitizePromptValue,
+} from "./prompt";
 
 describe("renderPrompt", () => {
   test("substitutes a single variable", () => {
@@ -205,6 +210,121 @@ describe("loadPrompt project-local overrides", () => {
     // No projectPath → bundled is used
     expect(bundled).not.toBe("Should not be used");
     expect(bundled.length).toBeGreaterThan(0);
+  });
+});
+
+describe("sanitizePromptValue", () => {
+  test("collapses newlines to spaces", () => {
+    expect(sanitizePromptValue("foo\nbar")).toBe("foo bar");
+  });
+
+  test("collapses CRLF to spaces", () => {
+    expect(sanitizePromptValue("foo\r\nbar")).toBe("foo bar");
+  });
+
+  test("strips leading heading markers", () => {
+    expect(sanitizePromptValue("## Heading")).toBe("Heading");
+  });
+
+  test("trims whitespace", () => {
+    expect(sanitizePromptValue("  value  ")).toBe("value");
+  });
+
+  test("does not alter normal values", () => {
+    expect(sanitizePromptValue("My Project (v2)")).toBe("My Project (v2)");
+  });
+});
+
+describe("renderPrompt with rawVars", () => {
+  test("rawVars are substituted without sanitization", () => {
+    const template = "Header\n{{RAW}}\nFooter";
+    const result = renderPrompt(template, {}, { RAW: "line1\nline2\nline3" });
+    expect(result).toBe("Header\nline1\nline2\nline3\nFooter");
+  });
+
+  test("rawVars preserve multi-line structure", () => {
+    const list = "- ENG-1: Issue one\n- ENG-2: Issue two";
+    const result = renderPrompt("Queue:\n{{LIST}}", {}, { LIST: list });
+    expect(result).toContain("- ENG-1: Issue one\n- ENG-2: Issue two");
+  });
+
+  test("vars are sanitized while rawVars are not", () => {
+    const result = renderPrompt(
+      "{{TITLE}}\n{{LIST}}",
+      { TITLE: "## Injected\nfoo" },
+      { LIST: "line1\nline2" },
+    );
+    expect(result).toBe("Injected foo\nline1\nline2");
+  });
+
+  test("rawVars default to empty object when omitted", () => {
+    expect(renderPrompt("{{A}}", { A: "hello" })).toBe("hello");
+  });
+});
+
+describe("loadPrompt — project-owner prompt", () => {
+  test("loads the project-owner prompt and it is non-empty", () => {
+    const prompt = loadPrompt("project-owner");
+    expect(prompt.length).toBeGreaterThan(0);
+  });
+
+  test("project-owner prompt contains expected placeholders", () => {
+    const prompt = loadPrompt("project-owner");
+    expect(prompt).toContain("{{PROJECT_NAME}}");
+    expect(prompt).toContain("{{PROJECT_ID}}");
+    expect(prompt).toContain("{{LINEAR_TEAM}}");
+    expect(prompt).toContain("{{INITIATIVE_NAME}}");
+    expect(prompt).toContain("{{READY_STATE}}");
+    expect(prompt).toContain("{{BLOCKED_STATE}}");
+    expect(prompt).toContain("{{TRIAGE_STATE}}");
+    expect(prompt).toContain("{{TRIAGE_LIST}}");
+  });
+});
+
+describe("buildPrompt — project-owner prompt", () => {
+  test("substitutes all variables", () => {
+    const result = buildPrompt(
+      "project-owner",
+      {
+        PROJECT_NAME: "My Project",
+        PROJECT_ID: "proj-123",
+        LINEAR_TEAM: "ENG",
+        INITIATIVE_NAME: "Test Initiative",
+        READY_STATE: "Ready",
+        BLOCKED_STATE: "Blocked",
+        TRIAGE_STATE: "Triage",
+      },
+      undefined,
+      { TRIAGE_LIST: "- ENG-1: Fix bug\n- ENG-2: Add feature" },
+    );
+    expect(result).toContain("My Project");
+    expect(result).toContain("proj-123");
+    expect(result).toContain("ENG");
+    expect(result).toContain("Test Initiative");
+    expect(result).toContain("Ready");
+    expect(result).toContain("Blocked");
+    expect(result).toContain("Triage");
+    expect(result).not.toContain("{{PROJECT_NAME}}");
+    expect(result).not.toContain("{{TRIAGE_LIST}}");
+  });
+
+  test("TRIAGE_LIST preserves multi-line formatting", () => {
+    const list = "- ENG-1: Fix auth\n- ENG-2: Add tests";
+    const result = buildPrompt(
+      "project-owner",
+      {
+        PROJECT_NAME: "P",
+        PROJECT_ID: "id",
+        LINEAR_TEAM: "ENG",
+        INITIATIVE_NAME: "I",
+        READY_STATE: "R",
+        BLOCKED_STATE: "B",
+        TRIAGE_STATE: "T",
+      },
+      undefined,
+      { TRIAGE_LIST: list },
+    );
+    expect(result).toContain("- ENG-1: Fix auth\n- ENG-2: Add tests");
   });
 });
 

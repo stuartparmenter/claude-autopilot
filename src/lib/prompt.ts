@@ -42,7 +42,7 @@ export function loadPrompt(name: string, projectPath?: string): string {
  * Collapses newlines to spaces and strips leading markdown heading markers
  * to prevent prompt injection via multiline config values.
  */
-function sanitizePromptValue(value: string): string {
+export function sanitizePromptValue(value: string): string {
   return value
     .replace(/[\r\n]+/g, " ")
     .replace(/^\s*#+\s*/, "")
@@ -51,15 +51,20 @@ function sanitizePromptValue(value: string): string {
 
 /**
  * Substitute {{VARIABLE}} placeholders in a template string.
- * Values are sanitized before substitution to prevent prompt injection.
+ * Values in `vars` are sanitized before substitution to prevent prompt injection.
+ * Values in `rawVars` are substituted as-is (use only for pre-sanitized multi-line content).
  */
 export function renderPrompt(
   template: string,
   vars: Record<string, string>,
+  rawVars: Record<string, string> = {},
 ): string {
   let result = template;
   for (const [key, value] of Object.entries(vars)) {
     result = result.replaceAll(`{{${key}}}`, sanitizePromptValue(value));
+  }
+  for (const [key, value] of Object.entries(rawVars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
   }
   return result;
 }
@@ -69,11 +74,14 @@ export function renderPrompt(
  *
  * If `projectPath` is provided, checks for a project-local override before
  * loading the bundled template. See `loadPrompt` for override details.
+ *
+ * Values in `rawVars` are substituted as-is (use only for pre-sanitized multi-line content).
  */
 export function buildPrompt(
   name: string,
   vars: Record<string, string>,
   projectPath?: string,
+  rawVars: Record<string, string> = {},
 ): string {
-  return renderPrompt(loadPrompt(name, projectPath), vars);
+  return renderPrompt(loadPrompt(name, projectPath), vars, rawVars);
 }
