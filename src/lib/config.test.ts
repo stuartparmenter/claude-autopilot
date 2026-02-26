@@ -573,4 +573,118 @@ sandbox:
       "custom.example.com",
     ]);
   });
+
+  test("budget defaults are applied when YAML omits them", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.budget).toEqual({
+      daily_limit_usd: 0,
+      monthly_limit_usd: 0,
+      per_agent_limit_usd: 0,
+      warn_at_percent: 80,
+    });
+  });
+
+  test("budget config can be overridden", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 10
+  monthly_limit_usd: 200
+  per_agent_limit_usd: 0.5
+  warn_at_percent: 90
+`);
+    const config = loadConfig(dir);
+    expect(config.budget.daily_limit_usd).toBe(10);
+    expect(config.budget.monthly_limit_usd).toBe(200);
+    expect(config.budget.per_agent_limit_usd).toBe(0.5);
+    expect(config.budget.warn_at_percent).toBe(90);
+  });
+
+  test("budget partial override preserves other defaults", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 5
+`);
+    const config = loadConfig(dir);
+    expect(config.budget.daily_limit_usd).toBe(5);
+    expect(config.budget.monthly_limit_usd).toBe(0);
+    expect(config.budget.per_agent_limit_usd).toBe(0);
+    expect(config.budget.warn_at_percent).toBe(80);
+  });
+
+  test("budget.warn_at_percent throws above 100", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 101
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.warn_at_percent must be a number between 0 and 100",
+    );
+  });
+
+  test("budget.warn_at_percent throws below 0", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.warn_at_percent must be a number between 0 and 100",
+    );
+  });
+
+  test("budget.warn_at_percent accepts boundary value 0", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("budget.warn_at_percent accepts boundary value 100", () => {
+    const dir = writeConfig(`
+budget:
+  warn_at_percent: 100
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("budget.daily_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.daily_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget.monthly_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  monthly_limit_usd: -0.01
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.monthly_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget.per_agent_limit_usd throws if negative", () => {
+    const dir = writeConfig(`
+budget:
+  per_agent_limit_usd: -5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "budget.per_agent_limit_usd must be a non-negative number",
+    );
+  });
+
+  test("budget USD fields accept zero (disabled)", () => {
+    const dir = writeConfig(`
+budget:
+  daily_limit_usd: 0
+  monthly_limit_usd: 0
+  per_agent_limit_usd: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
 });
