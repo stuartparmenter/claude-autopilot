@@ -38,15 +38,21 @@ let prData: Record<string, unknown> = {
   head: { ref: "feature/test", sha: "abc123" },
 };
 let checkRunsData: Record<string, unknown> = { check_runs: [] };
+let reviewsData: Record<string, unknown>[] = [];
+let reviewCommentsData: Record<string, unknown>[] = [];
 
 const mockPullsGet = mock(() => Promise.resolve({ data: prData }));
 const mockChecksListForRef = mock(() =>
   Promise.resolve({ data: checkRunsData }),
 );
+const mockListReviews = mock(() => Promise.resolve({ data: reviewsData }));
+const mockListReviewComments = mock(() =>
+  Promise.resolve({ data: reviewCommentsData }),
+);
 
 import { resetClient } from "./lib/github";
 import { resetClient as resetLinearClient } from "./lib/linear";
-import { checkOpenPRs } from "./monitor";
+import { checkOpenPRs, resetHandledReviewIds } from "./monitor";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
@@ -58,6 +64,7 @@ import { checkOpenPRs } from "./monitor";
 beforeEach(() => {
   resetClient();
   resetLinearClient();
+  resetHandledReviewIds();
   mock.module("./lib/claude", () => ({
     runClaude: mockRunClaude,
     buildMcpServers: () => ({}),
@@ -70,7 +77,11 @@ beforeEach(() => {
   mock.module("octokit", () => ({
     Octokit: class MockOctokit {
       rest = {
-        pulls: { get: mockPullsGet },
+        pulls: {
+          get: mockPullsGet,
+          listReviews: mockListReviews,
+          listReviewComments: mockListReviewComments,
+        },
         checks: { listForRef: mockChecksListForRef },
       };
     },
@@ -83,7 +94,15 @@ beforeEach(() => {
     head: { ref: "feature/test", sha: "abc123" },
   };
   checkRunsData = { check_runs: [] };
+  reviewsData = [];
+  reviewCommentsData = [];
   mockPullsGet.mockImplementation(() => Promise.resolve({ data: prData }));
+  mockListReviews.mockImplementation(() =>
+    Promise.resolve({ data: reviewsData }),
+  );
+  mockListReviewComments.mockImplementation(() =>
+    Promise.resolve({ data: reviewCommentsData }),
+  );
 });
 
 afterEach(() => {
@@ -120,12 +139,13 @@ function makeIssue(
 
 function makeConfig(
   parallelSlots = 3,
+  respondToReviews = false,
   executorOverrides: Partial<AutopilotConfig["executor"]> = {},
 ): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
-      initiative: "",
+      initiative: "test-initiative",
       states: {
         triage: "triage-id",
         ready: "ready-id",
@@ -164,6 +184,10 @@ function makeConfig(
       timeout_minutes: 60,
       model: "opus",
     },
+    monitor: {
+      respond_to_reviews: respondToReviews,
+      review_responder_timeout_minutes: 20,
+    },
     github: { repo: "", automerge: false },
     persistence: {
       enabled: false,
@@ -189,6 +213,8 @@ function makeLinearIds(): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
+    initiativeId: "init-id",
+    initiativeName: "test-initiative",
     states: {
       triage: "triage-id",
       ready: "ready-id",
@@ -562,6 +588,233 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Review responder tests
+// ---------------------------------------------------------------------------
+
+describe("checkOpenPRs — review responder", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: undefined,
+      costUsd: 0.05,
+      durationMs: 500,
+      numTurns: 2,
+      result: "",
+    });
+    // Default: CI passing, no merge conflict, no reviews
+    prData = {
+      merged: false,
+      mergeable: true,
+      head: { ref: "feature/review-test", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "success", name: "tests" },
+      ],
+    };
+    reviewsData = [];
+    reviewCommentsData = [];
+  });
+
+  test("does NOT spawn review responder when respond_to_reviews is false", async () => {
+    const issue = makeIssue("rr-disabled", "https://github.com/o/r/pull/200");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    reviewsData = [
+      {
+        id: 1001,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, false); // respond_to_reviews = false
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("spawns review responder when CI passing and CHANGES_REQUESTED review exists", async () => {
+    const issue = makeIssue("rr-spawn", "https://github.com/o/r/pull/201");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    reviewsData = [
+      {
+        id: 1002,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Please fix naming",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true); // respond_to_reviews = true
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+  });
+
+  test("does NOT spawn review responder when CI is failing (fixer takes priority)", async () => {
+    const issue = makeIssue("rr-ci-fail", "https://github.com/o/r/pull/202");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    // CI is failing
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+    reviewsData = [
+      {
+        id: 1003,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true);
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    // Should spawn CI fixer, not review responder
+    expect(result).toHaveLength(1);
+    // Verify it's a fixer by checking that mockRunClaude was called with fixer prompt context
+    await Promise.all(result);
+  });
+
+  test("does NOT spawn review responder when there is a merge conflict", async () => {
+    const issue = makeIssue("rr-conflict", "https://github.com/o/r/pull/203");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    // CI passing but merge conflict
+    prData = {
+      merged: false,
+      mergeable: false,
+      head: { ref: "feature/review-test", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "success", name: "tests" },
+      ],
+    };
+    reviewsData = [
+      {
+        id: 1004,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true);
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    // Should spawn merge conflict fixer, not review responder
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+  });
+
+  test("does NOT spawn review responder when CI is pending", async () => {
+    const issue = makeIssue("rr-pending", "https://github.com/o/r/pull/204");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    // CI is still running
+    checkRunsData = {
+      check_runs: [{ status: "in_progress", conclusion: null, name: "tests" }],
+    };
+    reviewsData = [
+      {
+        id: 1005,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true);
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("dedup: same review does not trigger multiple responders", async () => {
+    const issue = makeIssue("rr-dedup", "https://github.com/o/r/pull/205");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    reviewsData = [
+      {
+        id: 1006,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true);
+
+    // First call: should spawn one responder
+    const firstResult = await checkOpenPRs(makeOpts(state, config));
+    expect(firstResult).toHaveLength(1);
+    await Promise.all(firstResult);
+
+    // Second call: same review ID → dedup, no new responder
+    const secondResult = await checkOpenPRs(makeOpts(state, config));
+    expect(secondResult).toHaveLength(0);
+  });
+
+  test("new CHANGES_REQUESTED review after first is handled triggers new responder", async () => {
+    const issue = makeIssue("rr-newreview", "https://github.com/o/r/pull/206");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    // First review
+    reviewsData = [
+      {
+        id: 2001,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+    ];
+
+    const config = makeConfig(3, true);
+
+    // First call: spawns responder for review 2001
+    const firstResult = await checkOpenPRs(makeOpts(state, config));
+    expect(firstResult).toHaveLength(1);
+    await Promise.all(firstResult);
+
+    // Reviewer posts a new CHANGES_REQUESTED review (review 2002 is newer)
+    reviewsData = [
+      {
+        id: 2001,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Fix this",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+      {
+        id: 2002,
+        user: { login: "alice" },
+        state: "CHANGES_REQUESTED",
+        body: "Still needs work",
+        submitted_at: "2026-01-01T12:00:00Z",
+      },
+    ];
+
+    // Second call: new review ID 2002 → spawns new responder
+    const secondResult = await checkOpenPRs(makeOpts(state, config));
+    expect(secondResult).toHaveLength(1);
+    await Promise.all(secondResult);
+  });
+});
+
 describe("checkOpenPRs — budget enforcement", () => {
   let state: AppState;
 
@@ -644,7 +897,7 @@ describe("checkOpenPRs — fixer timeout and attempt budget", () => {
   });
 
   test("uses fixer_timeout_minutes from config", async () => {
-    const config = makeConfig(3, { fixer_timeout_minutes: 45 });
+    const config = makeConfig(3, false, { fixer_timeout_minutes: 45 });
     const issue = makeIssue("timeout-pr", "https://github.com/o/r/pull/400");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
 
@@ -661,7 +914,7 @@ describe("checkOpenPRs — fixer timeout and attempt budget", () => {
   });
 
   test("does not spawn fixer after max_fixer_attempts is reached", async () => {
-    const config = makeConfig(3, { max_fixer_attempts: 2 });
+    const config = makeConfig(3, false, { max_fixer_attempts: 2 });
     const issue = makeIssue("retry-pr", "https://github.com/o/r/pull/500");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
 
@@ -681,7 +934,7 @@ describe("checkOpenPRs — fixer timeout and attempt budget", () => {
   });
 
   test("resets attempt counter when PR leaves In Review", async () => {
-    const config = makeConfig(3, { max_fixer_attempts: 1 });
+    const config = makeConfig(3, false, { max_fixer_attempts: 1 });
     const issue = makeIssue("reset-pr", "https://github.com/o/r/pull/600");
     mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
 

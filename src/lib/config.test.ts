@@ -568,6 +568,30 @@ sandbox:
     ]);
   });
 
+  test("monitor defaults are applied when YAML omits them", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.monitor.respond_to_reviews).toBe(false);
+    expect(config.monitor.review_responder_timeout_minutes).toBe(20);
+  });
+
+  test("monitor config can be overridden", () => {
+    const dir = writeConfig(`
+monitor:
+  respond_to_reviews: true
+  review_responder_timeout_minutes: 30
+`);
+    const config = loadConfig(dir);
+    expect(config.monitor.respond_to_reviews).toBe(true);
+    expect(config.monitor.review_responder_timeout_minutes).toBe(30);
+  });
+
+  test("empty YAML returns monitor.respond_to_reviews === false", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.monitor.respond_to_reviews).toBe(false);
+  });
+
   test("budget defaults are applied when YAML omits them", () => {
     writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
     const config = loadConfig(tmpDir);

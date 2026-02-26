@@ -109,6 +109,10 @@ function makeConfig(): AutopilotConfig {
       timeout_minutes: 60,
       model: "opus",
     },
+    monitor: {
+      respond_to_reviews: false,
+      review_responder_timeout_minutes: 20,
+    },
     github: { repo: "", automerge: false },
     persistence: {
       enabled: false,
