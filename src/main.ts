@@ -8,7 +8,7 @@
 
 import { resolve } from "node:path";
 import { RatelimitedLinearError } from "@linear/sdk";
-import { fillSlots } from "./executor";
+import { fillSlots, recoverStaleIssues } from "./executor";
 import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb, pruneActivityLogs } from "./lib/db";
@@ -299,6 +299,9 @@ while (!shuttingDown) {
       const tracked = p.finally(() => running.delete(tracked));
       running.add(tracked);
     }
+
+    // Recover stale In Progress issues before filling slots
+    await recoverStaleIssues({ config, linearIds, state });
 
     // Fill executor slots
     const newPromises = await fillSlots({

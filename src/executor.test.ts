@@ -45,8 +45,14 @@ const mockGetReadyIssues = mock(
   ): Promise<Array<{ id: string; identifier: string; title: string }>> =>
     Promise.resolve([]),
 );
+const mockGetInProgressIssues = mock(
+  (
+    _linearIds: LinearIds,
+  ): Promise<Array<{ id: string; identifier: string; updatedAt: Date }>> =>
+    Promise.resolve([]),
+);
 
-import { executeIssue, fillSlots } from "./executor";
+import { executeIssue, fillSlots, recoverStaleIssues } from "./executor";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
@@ -60,6 +66,7 @@ beforeEach(() => {
   mock.module("./lib/linear", () => ({
     updateIssue: mockUpdateIssue,
     getReadyIssues: mockGetReadyIssues,
+    getInProgressIssues: mockGetInProgressIssues,
     validateIdentifier: () => {},
   }));
 });
@@ -92,6 +99,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,
+      stale_timeout_minutes: 15,
       auto_approve_labels: [],
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",
@@ -326,6 +334,45 @@ describe("executeIssue — timeout path", () => {
     });
 
     expect(state.getHistory()[0].status).toBe("timed_out");
+  });
+});
+
+describe("executeIssue — inactivity timeout path", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: true,
+      inactivityTimedOut: true,
+      error: "Inactivity timeout",
+      costUsd: undefined,
+      durationMs: 1800000,
+      numTurns: 10,
+      result: "",
+    });
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("moves issue to ready state on inactivity timeout (not blocked)", async () => {
+    mockUpdateIssue.mockClear();
+
+    await executeIssue({
+      issue: makeIssue(),
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const readyCall = mockUpdateIssue.mock.calls.find(
+      (call) => call[1]?.stateId === "ready-id",
+    );
+    expect(readyCall).toBeDefined();
+    const blockedCall = mockUpdateIssue.mock.calls.find(
+      (call) => call[1]?.stateId === "blocked-id",
+    );
+    expect(blockedCall).toBeUndefined();
   });
 });
 
@@ -649,11 +696,151 @@ describe("fillSlots", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// recoverStaleIssues
+// ---------------------------------------------------------------------------
+
+describe("recoverStaleIssues", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockUpdateIssue.mockClear();
+    mockUpdateIssue.mockResolvedValue(undefined);
+    mockGetInProgressIssues.mockClear();
+    mockGetInProgressIssues.mockResolvedValue([]);
+  });
+
+  function staleIssue(id: string, identifier: string, ageMs = 20 * 60 * 1000) {
+    return {
+      id,
+      identifier,
+      updatedAt: new Date(Date.now() - ageMs),
+    };
+  }
+
+  test("returns 0 when there are no In Progress issues", async () => {
+    mockGetInProgressIssues.mockResolvedValue([]);
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+    expect(count).toBe(0);
+  });
+
+  test("recovers a stale issue with no running agent", async () => {
+    mockGetInProgressIssues.mockResolvedValue([
+      staleIssue("issue-stale-1", "ENG-stale-1"),
+    ]);
+
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(count).toBe(1);
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-stale-1", {
+      stateId: "ready-id",
+      comment: expect.stringContaining("stale"),
+    });
+  });
+
+  test("does NOT recover an issue that has a matching running agent", async () => {
+    const activeIssue = staleIssue("issue-active-1", "ENG-active-1");
+    state.addAgent("agent-1", "ENG-active-1", "Active Issue", "issue-active-1");
+    mockGetInProgressIssues.mockResolvedValue([activeIssue]);
+
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("does NOT recover an issue recently updated (within timeout)", async () => {
+    // updatedAt is only 5 minutes ago, timeout is 15 minutes
+    const recentIssue = staleIssue(
+      "issue-recent-1",
+      "ENG-recent-1",
+      5 * 60 * 1000,
+    );
+    mockGetInProgressIssues.mockResolvedValue([recentIssue]);
+
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("calls updateIssue with ready stateId and a comment", async () => {
+    mockGetInProgressIssues.mockResolvedValue([staleIssue("issue-x", "ENG-x")]);
+    mockUpdateIssue.mockClear();
+
+    await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(mockUpdateIssue).toHaveBeenCalledTimes(1);
+    const call = mockUpdateIssue.mock.calls[0];
+    expect(call[0]).toBe("issue-x");
+    expect(call[1].stateId).toBe("ready-id");
+    expect(call[1].comment).toBeTruthy();
+  });
+
+  test("recovers multiple stale issues and returns correct count", async () => {
+    mockGetInProgressIssues.mockResolvedValue([
+      staleIssue("issue-a", "ENG-a"),
+      staleIssue("issue-b", "ENG-b"),
+    ]);
+
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(count).toBe(2);
+  });
+
+  test("skips active issues and recovers only stale orphans", async () => {
+    state.addAgent("agent-y", "ENG-y", "Active Y", "issue-y");
+    mockGetInProgressIssues.mockResolvedValue([
+      staleIssue("issue-y", "ENG-y"), // active — should be skipped
+      staleIssue("issue-z", "ENG-z"), // orphaned — should be recovered
+    ]);
+
+    const count = await recoverStaleIssues({
+      config: makeConfig(),
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(count).toBe(1);
+    expect(mockUpdateIssue).toHaveBeenCalledWith(
+      "issue-z",
+      expect.objectContaining({ stateId: "ready-id" }),
+    );
+  });
+});
+
 // Restore the real linear module after all executor tests complete.
 // mock.restore() in afterEach does not undo mock.module() in Bun 1.3.9,
 // which causes cross-file interference with subsequent test files (e.g.
 // src/lib/linear.test.ts). Calling mock.module() here with the real
 // implementations (captured before any mocking) fixes the leakage.
 afterAll(() => {
-  mock.module("./lib/linear", () => _realLinearSnapshot);
+  mock.module("./lib/linear", () => ({
+    ..._realLinearSnapshot,
+  }));
 });

@@ -535,6 +535,67 @@ planning:
     expect(() => loadConfig(dir)).not.toThrow();
   });
 
+  test("executor.stale_timeout_minutes defaults to 15", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.executor.stale_timeout_minutes).toBe(15);
+  });
+
+  test("executor.stale_timeout_minutes can be overridden", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 30
+`);
+    const config = loadConfig(dir);
+    expect(config.executor.stale_timeout_minutes).toBe(30);
+  });
+
+  test("executor.stale_timeout_minutes throws below 5", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 4
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.stale_timeout_minutes must be an integer between 5 and 120",
+    );
+  });
+
+  test("executor.stale_timeout_minutes throws above 120", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 121
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.stale_timeout_minutes must be an integer between 5 and 120",
+    );
+  });
+
+  test("executor.stale_timeout_minutes throws for non-integer value", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 10.5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.stale_timeout_minutes must be an integer between 5 and 120",
+    );
+  });
+
+  test("executor.stale_timeout_minutes accepts boundary value 5", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 5
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.stale_timeout_minutes accepts boundary value 120", () => {
+    const dir = writeConfig(`
+executor:
+  stale_timeout_minutes: 120
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
   test("all default values pass validation", () => {
     writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
     expect(() => loadConfig(tmpDir)).not.toThrow();

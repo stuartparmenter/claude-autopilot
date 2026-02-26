@@ -94,6 +94,7 @@ function makeConfig(): AutopilotConfig {
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
+      stale_timeout_minutes: 15,
     },
     planning: {
       schedule: "when_idle",
@@ -367,5 +368,29 @@ describe("checkProjects — safety guards", () => {
     expect(result).toHaveLength(0);
     expect(state.isPaused()).toBe(true);
     expect(mockRunClaude).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkProjects — project owner crash recovery", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockRejectedValue(new Error("crash"));
+  });
+
+  test("records failed history entry when runClaude rejects", async () => {
+    mockProjects = [
+      makeProject("Auth Hardening", "started", [
+        { id: "i1", identifier: "ENG-1", title: "Fix auth" },
+      ]),
+    ];
+
+    const promises = await checkProjects(makeOpts(state));
+    await Promise.all(promises);
+
+    const history = state.getHistory();
+    expect(history.length).toBeGreaterThan(0);
+    expect(history[0].status).toBe("failed");
   });
 });

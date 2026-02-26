@@ -271,6 +271,29 @@ export async function getTriageIssues(
   );
 }
 
+/**
+ * Get all In Progress issues for the team.
+ * Used by recoverStaleIssues() to find orphaned issues.
+ */
+export async function getInProgressIssues(
+  linearIds: LinearIds,
+  limit: number = 50,
+): Promise<Issue[]> {
+  const client = getLinearClient();
+  const result = await withRetry(
+    () =>
+      client.issues({
+        filter: {
+          team: { id: { eq: linearIds.teamId } },
+          state: { id: { eq: linearIds.states.in_progress } },
+        },
+        first: limit,
+      }),
+    "getInProgressIssues",
+  );
+  return [...result.nodes];
+}
+
 const MAX_PAGES = 100;
 
 /**

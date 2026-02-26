@@ -40,6 +40,7 @@ export interface ExecutorConfig {
   max_retries: number;
   inactivity_timeout_minutes: number;
   poll_interval_minutes: number;
+  stale_timeout_minutes: number;
   auto_approve_labels: string[];
   branch_pattern: string;
   commit_pattern: string;
@@ -126,6 +127,7 @@ export const DEFAULTS: AutopilotConfig = {
     max_retries: 3,
     inactivity_timeout_minutes: 10,
     poll_interval_minutes: 5,
+    stale_timeout_minutes: 15,
     auto_approve_labels: [],
     branch_pattern: "autopilot/{{id}}",
     commit_pattern: "{{id}}: {{title}}",
@@ -400,6 +402,18 @@ export function loadConfig(projectPath: string): AutopilotConfig {
   ) {
     throw new Error(
       "Config validation error: executor.max_fixer_attempts must be an integer between 1 and 10",
+    );
+  }
+
+  if (
+    typeof config.executor.stale_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.stale_timeout_minutes) ||
+    !Number.isInteger(config.executor.stale_timeout_minutes) ||
+    config.executor.stale_timeout_minutes < 5 ||
+    config.executor.stale_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.stale_timeout_minutes must be an integer between 5 and 120",
     );
   }
 

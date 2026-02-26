@@ -163,6 +163,7 @@ function makeConfig(
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,
+      stale_timeout_minutes: 15,
       auto_approve_labels: [],
       branch_pattern: "autopilot/{{id}}",
       commit_pattern: "{{id}}: {{title}}",
