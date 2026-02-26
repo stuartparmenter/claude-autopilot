@@ -133,7 +133,10 @@ export async function recoverStaleIssues(opts: {
 }): Promise<number> {
   const { config, linearIds, state } = opts;
 
-  const inProgressIssues = await getInProgressIssues(linearIds);
+  const inProgressIssues = await getInProgressIssues(linearIds, 50, {
+    labels: config.linear.labels,
+    projects: config.linear.projects,
+  });
   if (inProgressIssues.length === 0) return 0;
 
   const activeIds = new Set(
