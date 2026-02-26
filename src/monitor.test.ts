@@ -173,6 +173,7 @@ function makeConfig(
     auditor: {
       schedule: "when_idle",
       min_ready_threshold: 5,
+      min_interval_minutes: 60,
       max_issues_per_run: 10,
       use_agent_teams: false,
       skip_triage: true,
@@ -187,12 +188,22 @@ function makeConfig(
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
-    persistence: { enabled: false, db_path: ".claude/autopilot.db" },
+    persistence: {
+      enabled: false,
+      db_path: ".claude/autopilot.db",
+      retention_days: 30,
+    },
     sandbox: {
       enabled: true,
       auto_allow_bash: true,
       network_restricted: false,
       extra_allowed_domains: [],
+    },
+    budget: {
+      daily_limit_usd: 0,
+      monthly_limit_usd: 0,
+      per_agent_limit_usd: 0,
+      warn_at_percent: 80,
     },
   };
 }
@@ -775,6 +786,60 @@ describe("checkOpenPRs — review responder", () => {
     const secondResult = await checkOpenPRs(makeOpts(state, config));
     expect(secondResult).toHaveLength(1);
     await Promise.all(secondResult);
+  });
+});
+
+describe("checkOpenPRs — budget enforcement", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockIssuesQuery.mockResolvedValue({ nodes: [] });
+  });
+
+  test("returns empty array when budget is exhausted", async () => {
+    state.addSpend(10); // $10 spent
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5; // $5 limit — exhausted
+
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("auto-pauses when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    expect(state.isPaused()).toBe(false);
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(state.isPaused()).toBe(true);
+  });
+
+  test("does not query Linear when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    mockIssuesQuery.mockClear();
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(mockIssuesQuery).not.toHaveBeenCalled();
+  });
+
+  test("does not double-pause when already paused and budget is exhausted", async () => {
+    state.addSpend(10);
+    state.togglePause(); // already paused
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(state.isPaused()).toBe(true);
   });
 });
 

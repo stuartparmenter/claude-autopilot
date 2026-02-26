@@ -44,6 +44,15 @@ export async function checkOpenPRs(opts: {
   const { owner, repo, config, linearIds, state } = opts;
   const maxSlots = config.executor.parallel;
 
+  const budgetCheck = state.checkBudget(config);
+  if (!budgetCheck.ok) {
+    warn(`Budget limit reached: ${budgetCheck.reason}`);
+    if (!state.isPaused()) {
+      state.togglePause();
+    }
+    return [];
+  }
+
   // Query Linear for issues in "In Review" state
   const client = getLinearClient();
   const result = await withRetry(

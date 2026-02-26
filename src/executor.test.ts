@@ -1,7 +1,21 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import type { ClaudeResult } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
+import * as _realLinear from "./lib/linear";
 import { AppState } from "./state";
+
+// Snapshot of real linear module exports, captured before any mock.module()
+// calls. Used in afterAll to restore the module for subsequent test files,
+// because mock.restore() does not undo mock.module() in Bun 1.3.9.
+const _realLinearSnapshot = { ..._realLinear };
 
 // ---------------------------------------------------------------------------
 // Mock functions — created once, re-wired per test via beforeEach
@@ -87,6 +101,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     auditor: {
       schedule: "when_idle",
       min_ready_threshold: 5,
+      min_interval_minutes: 60,
       max_issues_per_run: 10,
       use_agent_teams: false,
       skip_triage: true,
@@ -101,12 +116,22 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
-    persistence: { enabled: false, db_path: ".claude/autopilot.db" },
+    persistence: {
+      enabled: false,
+      db_path: ".claude/autopilot.db",
+      retention_days: 30,
+    },
     sandbox: {
       enabled: true,
       auto_allow_bash: true,
       network_restricted: false,
       extra_allowed_domains: [],
+    },
+    budget: {
+      daily_limit_usd: 0,
+      monthly_limit_usd: 0,
+      per_agent_limit_usd: 0,
+      warn_at_percent: 80,
     },
   };
 }
@@ -501,6 +526,72 @@ describe("fillSlots", () => {
     expect(calledWith[1]).toBeGreaterThanOrEqual(3);
   });
 
+  test("returns empty array when budget is exhausted", async () => {
+    state.addSpend(10); // $10 spent
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5; // $5 limit — exhausted
+
+    const promises = await fillSlots({
+      config,
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(promises).toHaveLength(0);
+  });
+
+  test("auto-pauses when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    expect(state.isPaused()).toBe(false);
+
+    await fillSlots({
+      config,
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(state.isPaused()).toBe(true);
+  });
+
+  test("does not double-pause when already paused and budget is exhausted", async () => {
+    state.addSpend(10);
+    state.togglePause(); // already paused
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    await fillSlots({
+      config,
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    // togglePause flips the flag — calling it again would un-pause. It should NOT be called.
+    expect(state.isPaused()).toBe(true);
+  });
+
+  test("does not query Linear when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    mockGetReadyIssues.mockClear();
+
+    await fillSlots({
+      config,
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    expect(mockGetReadyIssues).not.toHaveBeenCalled();
+  });
+
   test("filters out issues already being executed", async () => {
     const activeIssue = makeIssue();
     const freshIssue = makeIssue();
@@ -557,4 +648,13 @@ describe("fillSlots", () => {
 
     await Promise.allSettled([...promises.map((p) => p), execPromise]);
   });
+});
+
+// Restore the real linear module after all executor tests complete.
+// mock.restore() in afterEach does not undo mock.module() in Bun 1.3.9,
+// which causes cross-file interference with subsequent test files (e.g.
+// src/lib/linear.test.ts). Calling mock.module() here with the real
+// implementations (captured before any mocking) fixes the leakage.
+afterAll(() => {
+  mock.module("./lib/linear", () => _realLinearSnapshot);
 });

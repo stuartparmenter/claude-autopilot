@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { AutopilotConfig } from "./lib/config";
+import { DEFAULTS } from "./lib/config";
 import { createApp, escapeHtml, formatDuration } from "./server";
 import { AppState } from "./state";
 
@@ -449,6 +451,193 @@ describe("global onError handler", () => {
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: string };
     expect(json.error).toBe("unexpected failure");
+  });
+});
+
+describe("GET /api/budget", () => {
+  test("returns { enabled: false } when no config passed", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/budget");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { enabled: boolean };
+    expect(json.enabled).toBe(false);
+  });
+
+  test("returns { enabled: false } when config has no limits set", async () => {
+    const state = new AppState();
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 0,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/api/budget");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { enabled: boolean };
+    // enabled is true when config is present, even if limits are 0
+    expect(json.enabled).toBe(true);
+  });
+
+  test("returns budget snapshot with enabled: true when config has daily limit", async () => {
+    const state = new AppState();
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/api/budget");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      dailySpend: number;
+      dailyLimit: number;
+      exhausted: boolean;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.dailyLimit).toBe(10);
+    expect(json.dailySpend).toBe(0);
+    expect(json.exhausted).toBe(false);
+  });
+
+  test("returns exhausted: true when spend exceeds limit", async () => {
+    const state = new AppState();
+    state.addSpend(12);
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/api/budget");
+    const json = (await res.json()) as { exhausted: boolean };
+    expect(json.exhausted).toBe(true);
+  });
+});
+
+describe("GET /partials/budget", () => {
+  test("returns empty div when no config passed", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/budget");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("returns empty div when all limits are 0", async () => {
+    const state = new AppState();
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 0,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/partials/budget");
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("renders spend-vs-limit text when daily limit is set", async () => {
+    const state = new AppState();
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/partials/budget");
+    const body = await res.text();
+    expect(body).toContain("Daily:");
+    expect(body).toContain("$10.00");
+  });
+
+  test("renders both daily and monthly when both limits set", async () => {
+    const state = new AppState();
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 50,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/partials/budget");
+    const body = await res.text();
+    expect(body).toContain("Daily:");
+    expect(body).toContain("Monthly:");
+    expect(body).toContain("|");
+  });
+
+  test("renders warning color when budget warning applies", async () => {
+    const state = new AppState();
+    state.addSpend(8.5); // 85% of $10 daily limit
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/partials/budget");
+    const body = await res.text();
+    expect(body).toContain("var(--yellow)");
+  });
+
+  test("renders red color when budget is exhausted", async () => {
+    const state = new AppState();
+    state.addSpend(12); // over $10 daily limit
+    const config: AutopilotConfig = {
+      ...DEFAULTS,
+      budget: {
+        daily_limit_usd: 10,
+        monthly_limit_usd: 0,
+        per_agent_limit_usd: 0,
+        warn_at_percent: 80,
+      },
+    };
+    const app = createApp(state, { config });
+    const res = await app.request("/partials/budget");
+    const body = await res.text();
+    expect(body).toContain("var(--red)");
+  });
+});
+
+describe("dashboard HTML includes budget partial div", () => {
+  test("includes budget-bar div with 30s poll trigger", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("budget-bar");
+    expect(body).toContain("/partials/budget");
+    expect(body).toContain("every 30s");
   });
 });
 

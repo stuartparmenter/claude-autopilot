@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AgentResult } from "../state";
+import type { ActivityEntry, AgentResult } from "../state";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_runs (
@@ -18,6 +18,15 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   linear_issue_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_run_id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_agent_run_id ON activity_logs(agent_run_id);
 `;
 
 export interface AnalyticsResult {
@@ -46,6 +55,14 @@ interface AnalyticsRow {
   success_count: number;
   total_cost_usd: number | null;
   avg_duration_ms: number | null;
+}
+
+interface ActivityLogRow {
+  agent_run_id: string;
+  timestamp: number;
+  type: "tool_use" | "text" | "result" | "error" | "status";
+  summary: string;
+  detail: string | null;
 }
 
 export function openDb(dbFilePath: string): Database {
@@ -133,4 +150,55 @@ export function getAnalytics(db: Database): AnalyticsResult {
     totalCostUsd: row?.total_cost_usd ?? 0,
     avgDurationMs: row?.avg_duration_ms ?? 0,
   };
+}
+
+export function insertActivityLogs(
+  db: Database,
+  agentRunId: string,
+  activities: ActivityEntry[],
+): void {
+  if (activities.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO activity_logs (agent_run_id, timestamp, type, summary, detail) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const insertMany = db.transaction((rows: ActivityEntry[]) => {
+    for (const row of rows) {
+      stmt.run(
+        agentRunId,
+        row.timestamp,
+        row.type,
+        row.summary,
+        row.detail ?? null,
+      );
+    }
+  });
+  insertMany(activities);
+}
+
+export function getActivityLogs(
+  db: Database,
+  agentRunId: string,
+): ActivityEntry[] {
+  const rows = db
+    .query<ActivityLogRow, [string]>(
+      `SELECT agent_run_id, timestamp, type, summary, detail
+       FROM activity_logs
+       WHERE agent_run_id = ?
+       ORDER BY timestamp ASC`,
+    )
+    .all(agentRunId);
+  return rows.map((row) => ({
+    timestamp: row.timestamp,
+    type: row.type,
+    summary: row.summary,
+    detail: row.detail ?? undefined,
+  }));
+}
+
+export function pruneActivityLogs(db: Database, retentionDays: number): number {
+  const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const result = db.run(`DELETE FROM activity_logs WHERE timestamp < ?`, [
+    cutoffMs,
+  ]);
+  return result.changes;
 }

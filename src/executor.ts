@@ -2,7 +2,7 @@ import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getReadyIssues, updateIssue, validateIdentifier } from "./lib/linear";
-import { info } from "./lib/logger";
+import { info, warn } from "./lib/logger";
 import { buildPrompt } from "./lib/prompt";
 import { sanitizeMessage } from "./lib/sanitize";
 import type { AppState } from "./state";
@@ -122,6 +122,15 @@ export async function fillSlots(opts: {
   const available = maxSlots - running;
 
   if (available <= 0) {
+    return [];
+  }
+
+  const budgetCheck = state.checkBudget(config);
+  if (!budgetCheck.ok) {
+    warn(`Budget limit reached: ${budgetCheck.reason}`);
+    if (!state.isPaused()) {
+      state.togglePause();
+    }
     return [];
   }
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { DEFAULTS } from "./lib/config";
 import type { ActivityEntry } from "./state";
 import { AppState } from "./state";
 
@@ -367,5 +368,140 @@ describe("AppState — toJSON", () => {
   test("snapshot reflects paused state", () => {
     state.togglePause();
     expect(state.toJSON().paused).toBe(true);
+  });
+});
+
+describe("AppState — spend tracking", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+  });
+
+  // Helper: create a budget config with specific limits
+  function makeBudgetConfig(
+    overrides: Partial<(typeof DEFAULTS)["budget"]> = {},
+  ) {
+    return { ...DEFAULTS, budget: { ...DEFAULTS.budget, ...overrides } };
+  }
+
+  test("addSpend accumulates spend across multiple calls", () => {
+    state.addSpend(1.5);
+    state.addSpend(2.0);
+    state.addSpend(0.5);
+    expect(state.getDailySpend()).toBeCloseTo(4.0);
+  });
+
+  test("getDailySpend returns sum of entries within the last 24h", () => {
+    state.addSpend(3.0);
+    state.addSpend(1.0);
+    expect(state.getDailySpend()).toBeCloseTo(4.0);
+  });
+
+  test("getDailySpend excludes entries older than 24h", () => {
+    // Inject an old entry directly into the private spendLog
+    (state as any).spendLog.push({
+      timestampMs: Date.now() - 25 * 60 * 60 * 1000,
+      costUsd: 100,
+    });
+    state.addSpend(5.0);
+    expect(state.getDailySpend()).toBeCloseTo(5.0);
+  });
+
+  test("getMonthlySpend returns sum of entries in current UTC calendar month", () => {
+    state.addSpend(10.0);
+    state.addSpend(5.0);
+    expect(state.getMonthlySpend()).toBeCloseTo(15.0);
+  });
+
+  test("getMonthlySpend excludes entries from a previous month", () => {
+    // Inject an entry from ~35 days ago (safely in a previous calendar month)
+    (state as any).spendLog.push({
+      timestampMs: Date.now() - 35 * 24 * 60 * 60 * 1000,
+      costUsd: 200,
+    });
+    state.addSpend(7.0);
+    expect(state.getMonthlySpend()).toBeCloseTo(7.0);
+  });
+
+  test("checkBudget returns ok:true when all limits are 0 (disabled)", () => {
+    state.addSpend(999);
+    const result = state.checkBudget(makeBudgetConfig());
+    expect(result).toEqual({ ok: true });
+  });
+
+  test("checkBudget returns ok:false when daily limit is met", () => {
+    state.addSpend(5.0);
+    const result = state.checkBudget(makeBudgetConfig({ daily_limit_usd: 5 }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("Daily budget");
+  });
+
+  test("checkBudget returns ok:false when daily limit is exceeded", () => {
+    state.addSpend(10.0);
+    const result = state.checkBudget(makeBudgetConfig({ daily_limit_usd: 5 }));
+    expect(result.ok).toBe(false);
+  });
+
+  test("checkBudget returns ok:true when spend is below daily limit", () => {
+    state.addSpend(3.0);
+    const result = state.checkBudget(makeBudgetConfig({ daily_limit_usd: 10 }));
+    expect(result.ok).toBe(true);
+  });
+
+  test("checkBudget returns ok:false when monthly limit is met", () => {
+    state.addSpend(50.0);
+    const result = state.checkBudget(
+      makeBudgetConfig({ monthly_limit_usd: 50 }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("Monthly budget");
+  });
+
+  test("checkBudget returns ok:false when monthly limit is exceeded", () => {
+    state.addSpend(100.0);
+    const result = state.checkBudget(
+      makeBudgetConfig({ monthly_limit_usd: 50 }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test("checkBudget returns ok:true when spend is below monthly limit", () => {
+    state.addSpend(20.0);
+    const result = state.checkBudget(
+      makeBudgetConfig({ monthly_limit_usd: 100 }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("completeAgent calls addSpend when costUsd > 0", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed", { costUsd: 2.5 });
+    expect(state.getDailySpend()).toBeCloseTo(2.5);
+  });
+
+  test("completeAgent does not call addSpend when costUsd is 0", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed", { costUsd: 0 });
+    expect(state.getDailySpend()).toBe(0);
+  });
+
+  test("completeAgent does not call addSpend when costUsd is undefined", () => {
+    state.addAgent("a1", "ISSUE-1", "Test");
+    state.completeAgent("a1", "completed", {});
+    expect(state.getDailySpend()).toBe(0);
+  });
+
+  test("addSpend evicts entries older than 32 days", () => {
+    // Inject a very old entry
+    (state as any).spendLog.push({
+      timestampMs: Date.now() - 33 * 24 * 60 * 60 * 1000,
+      costUsd: 500,
+    });
+    // Adding a new entry triggers eviction
+    state.addSpend(1.0);
+    // The old entry should be gone — monthly and daily should only see the new entry
+    expect(state.getDailySpend()).toBeCloseTo(1.0);
+    expect((state as any).spendLog).toHaveLength(1);
   });
 });

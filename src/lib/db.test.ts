@@ -1,7 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AgentResult } from "../state";
-import { getAnalytics, getRecentRuns, insertAgentRun, openDb } from "./db";
+import type { ActivityEntry, AgentResult } from "../state";
+import {
+  getActivityLogs,
+  getAnalytics,
+  getRecentRuns,
+  insertActivityLogs,
+  insertAgentRun,
+  openDb,
+  pruneActivityLogs,
+} from "./db";
 
 let db: Database;
 
@@ -294,5 +302,111 @@ describe("getAnalytics", () => {
     }
     const result = getAnalytics(db);
     expect(result.totalRuns).toBe(5);
+  });
+});
+
+describe("insertActivityLogs and getActivityLogs", () => {
+  function makeActivity(overrides?: Partial<ActivityEntry>): ActivityEntry {
+    return {
+      timestamp: Date.now(),
+      type: "tool_use",
+      summary: "Test: doing something",
+      ...overrides,
+    };
+  }
+
+  test("insertActivityLogs with empty array is a no-op", () => {
+    expect(() => insertActivityLogs(db, "run-1", [])).not.toThrow();
+    expect(getActivityLogs(db, "run-1")).toEqual([]);
+  });
+
+  test("inserts and retrieves activity logs in timestamp order", () => {
+    const activities: ActivityEntry[] = [
+      makeActivity({ timestamp: 3000, type: "text", summary: "Third" }),
+      makeActivity({ timestamp: 1000, type: "tool_use", summary: "First" }),
+      makeActivity({ timestamp: 2000, type: "result", summary: "Second" }),
+    ];
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(3);
+    expect(logs[0].summary).toBe("First");
+    expect(logs[1].summary).toBe("Second");
+    expect(logs[2].summary).toBe("Third");
+  });
+
+  test("retrieves all five entries inserted", () => {
+    const activities: ActivityEntry[] = Array.from({ length: 5 }, (_, i) =>
+      makeActivity({ timestamp: i * 1000, summary: `Entry ${i}` }),
+    );
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(5);
+  });
+
+  test("returns empty array for unknown agentRunId", () => {
+    expect(getActivityLogs(db, "nonexistent")).toEqual([]);
+  });
+
+  test("stores and retrieves detail field", () => {
+    const activity = makeActivity({ detail: "some detail text" });
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBe("some detail text");
+  });
+
+  test("detail is undefined when not set", () => {
+    const activity = makeActivity();
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBeUndefined();
+  });
+
+  test("isolates logs by agentRunId", () => {
+    insertActivityLogs(db, "run-1", [makeActivity({ summary: "Run 1 entry" })]);
+    insertActivityLogs(db, "run-2", [makeActivity({ summary: "Run 2 entry" })]);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
+    expect(getActivityLogs(db, "run-1")[0].summary).toBe("Run 1 entry");
+    expect(getActivityLogs(db, "run-2")).toHaveLength(1);
+  });
+});
+
+describe("pruneActivityLogs", () => {
+  test("deletes entries older than retention window", () => {
+    const now = Date.now();
+    const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-old", [
+      { timestamp: thirtyOneDaysAgo, type: "text", summary: "Old entry" },
+    ]);
+    insertActivityLogs(db, "run-new", [
+      { timestamp: now, type: "text", summary: "New entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(1);
+    expect(getActivityLogs(db, "run-old")).toHaveLength(0);
+    expect(getActivityLogs(db, "run-new")).toHaveLength(1);
+  });
+
+  test("returns 0 when no entries are old enough to prune", () => {
+    const now = Date.now();
+    insertActivityLogs(db, "run-1", [
+      { timestamp: now, type: "text", summary: "Recent entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+  });
+
+  test("returns 0 on empty table", () => {
+    expect(pruneActivityLogs(db, 30)).toBe(0);
+  });
+
+  test("preserves entries within the retention window", () => {
+    const now = Date.now();
+    const twentyNineDaysAgo = now - 29 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-1", [
+      { timestamp: twentyNineDaysAgo, type: "text", summary: "Within window" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
   });
 });

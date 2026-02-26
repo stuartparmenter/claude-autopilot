@@ -1,6 +1,13 @@
 import type { Database } from "bun:sqlite";
+import type { AutopilotConfig } from "./lib/config";
 import type { AnalyticsResult } from "./lib/db";
-import { getAnalytics, getRecentRuns, insertAgentRun } from "./lib/db";
+import {
+  getActivityLogs,
+  getAnalytics,
+  getRecentRuns,
+  insertActivityLogs,
+  insertAgentRun,
+} from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
 export interface ActivityEntry {
@@ -78,6 +85,7 @@ export class AppState {
   private paused = false;
   private issueFailureCount = new Map<string, number>();
   private db: Database | null = null;
+  private spendLog: Array<{ timestampMs: number; costUsd: number }> = [];
   readonly startedAt = Date.now();
 
   setDb(db: Database): void {
@@ -149,6 +157,11 @@ export class AppState {
 
     if (this.db) {
       insertAgentRun(this.db, result);
+      insertActivityLogs(this.db, result.id, agent.activities);
+    }
+
+    if (meta?.costUsd && meta.costUsd > 0) {
+      this.addSpend(meta.costUsd);
     }
 
     this.history.unshift(result);
@@ -202,6 +215,11 @@ export class AppState {
     return getAnalytics(this.db);
   }
 
+  getActivityLogsForRun(agentRunId: string): ActivityEntry[] {
+    if (!this.db) return [];
+    return getActivityLogs(this.db, agentRunId);
+  }
+
   getAuditorStatus(): AuditorStatus {
     return this.auditor;
   }
@@ -233,6 +251,104 @@ export class AppState {
 
   clearIssueFailures(issueId: string): void {
     this.issueFailureCount.delete(issueId);
+  }
+
+  addSpend(costUsd: number): void {
+    this.spendLog.push({ timestampMs: Date.now(), costUsd });
+    // Evict entries older than 32 days to prevent unbounded growth
+    const cutoff = Date.now() - 32 * 24 * 60 * 60 * 1000;
+    this.spendLog = this.spendLog.filter((e) => e.timestampMs >= cutoff);
+  }
+
+  getDailySpend(): number {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return this.spendLog
+      .filter((e) => e.timestampMs >= cutoff)
+      .reduce((sum, e) => sum + e.costUsd, 0);
+  }
+
+  getMonthlySpend(): number {
+    const now = new Date();
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    return this.spendLog
+      .filter((e) => e.timestampMs >= monthStart)
+      .reduce((sum, e) => sum + e.costUsd, 0);
+  }
+
+  checkBudget(config: AutopilotConfig): { ok: boolean; reason?: string } {
+    const { daily_limit_usd, monthly_limit_usd } = config.budget;
+    if (daily_limit_usd > 0) {
+      const daily = this.getDailySpend();
+      if (daily >= daily_limit_usd) {
+        return {
+          ok: false,
+          reason: `Daily budget $${daily.toFixed(2)} of $${daily_limit_usd.toFixed(2)} exhausted`,
+        };
+      }
+    }
+    if (monthly_limit_usd > 0) {
+      const monthly = this.getMonthlySpend();
+      if (monthly >= monthly_limit_usd) {
+        return {
+          ok: false,
+          reason: `Monthly budget $${monthly.toFixed(2)} of $${monthly_limit_usd.toFixed(2)} exhausted`,
+        };
+      }
+    }
+    return { ok: true };
+  }
+
+  getBudgetWarning(config: AutopilotConfig): string | null {
+    const { daily_limit_usd, monthly_limit_usd, warn_at_percent } =
+      config.budget;
+    const threshold = warn_at_percent / 100;
+    if (daily_limit_usd > 0) {
+      const daily = this.getDailySpend();
+      if (daily >= daily_limit_usd * threshold && daily < daily_limit_usd) {
+        return `Daily spend $${daily.toFixed(2)} is ${Math.round((daily / daily_limit_usd) * 100)}% of $${daily_limit_usd.toFixed(2)} limit`;
+      }
+    }
+    if (monthly_limit_usd > 0) {
+      const monthly = this.getMonthlySpend();
+      if (
+        monthly >= monthly_limit_usd * threshold &&
+        monthly < monthly_limit_usd
+      ) {
+        return `Monthly spend $${monthly.toFixed(2)} is ${Math.round((monthly / monthly_limit_usd) * 100)}% of $${monthly_limit_usd.toFixed(2)} limit`;
+      }
+    }
+    return null;
+  }
+
+  getBudgetSnapshot(config: AutopilotConfig): {
+    dailySpend: number;
+    monthlySpend: number;
+    dailyLimit: number;
+    monthlyLimit: number;
+    perAgentLimit: number;
+    warnAtPercent: number;
+    warning: string | null;
+    exhausted: boolean;
+    reason?: string;
+  } {
+    const {
+      daily_limit_usd,
+      monthly_limit_usd,
+      per_agent_limit_usd,
+      warn_at_percent,
+    } = config.budget;
+    const budgetCheck = this.checkBudget(config);
+    return {
+      dailySpend: this.getDailySpend(),
+      monthlySpend: this.getMonthlySpend(),
+      dailyLimit: daily_limit_usd,
+      monthlyLimit: monthly_limit_usd,
+      perAgentLimit: per_agent_limit_usd,
+      warnAtPercent: warn_at_percent,
+      warning: this.getBudgetWarning(config),
+      exhausted: !budgetCheck.ok,
+      ...(budgetCheck.reason ? { reason: budgetCheck.reason } : {}),
+    };
   }
 
   toJSON(): AppStateSnapshot {

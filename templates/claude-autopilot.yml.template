@@ -36,6 +36,7 @@ executor:
 auditor:
   schedule: "when_idle"         # "when_idle" | "daily" | "manual"
   min_ready_threshold: 5        # Only audit when fewer than N issues are in Ready
+  # min_interval_minutes: 60    # Minimum minutes between auditor runs (0-1440, default: 60)
   max_issues_per_run: 10        # Cap on issues filed per audit run
 
 # ─── GitHub ───────────────────────────────────────────────────────────────────
