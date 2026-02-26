@@ -425,6 +425,25 @@ while (!shuttingDown) {
       }
     }
 
+    // Auto-promote orphaned Triage issues in label-first mode
+    if (!linearIds.initiativeId) {
+      const filters = {
+        labels: config.linear.labels,
+        projects: config.linear.projects,
+      };
+      const triageOrphans = await getTriageIssues(linearIds, 50, filters);
+      for (const issue of triageOrphans) {
+        info(
+          `Label-first auto-promotion: moving ${issue.identifier} from Triage to Ready`,
+        );
+        await updateIssue(issue.id, {
+          stateId: linearIds.states.ready,
+          comment:
+            "Auto-promoted from Triage to Ready (label-first mode — no project owner to triage).",
+        });
+      }
+    }
+
     // Reset failure counter after a successful iteration
     consecutiveFailures = 0;
 
