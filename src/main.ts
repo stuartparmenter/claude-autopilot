@@ -8,7 +8,11 @@
 
 import { resolve } from "node:path";
 import { RatelimitedLinearError } from "@linear/sdk";
-import { fillSlots, recoverStaleIssues } from "./executor";
+import {
+  fillSlots,
+  recoverAgentsOnShutdown,
+  recoverStaleIssues,
+} from "./executor";
 import { closeAllAgents } from "./lib/claude";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { openDb, pruneActivityLogs } from "./lib/db";
@@ -22,7 +26,7 @@ import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
 import { createApp } from "./server";
-import { AppState } from "./state";
+import { type AgentState, AppState } from "./state";
 
 // --- Parse args ---
 
@@ -228,6 +232,7 @@ console.log();
 
 const shutdownController = new AbortController();
 let shuttingDown = false;
+let agentsAtShutdown: AgentState[] = [];
 
 function shutdown() {
   if (shuttingDown) {
@@ -235,6 +240,9 @@ function shutdown() {
     process.exit(1);
   }
   shuttingDown = true;
+  // Capture running agents synchronously before killing subprocesses,
+  // so the drain phase can move their Linear issues back to Ready.
+  agentsAtShutdown = state.getRunningAgents();
   console.log();
   info("Shutting down — killing agent subprocesses...");
   // close() is synchronous: sends SIGTERM immediately, escalates to SIGKILL
@@ -463,6 +471,14 @@ if (drainablePromises.length > 0) {
     Promise.all([Promise.allSettled(drainablePromises), Bun.sleep(6_000)]),
     Bun.sleep(60_000),
   ]);
+}
+
+// --- Recover In Progress issues on shutdown ---
+
+const issueCount = agentsAtShutdown.filter((a) => a.linearIssueId).length;
+if (issueCount > 0) {
+  info(`Recovering ${issueCount} In Progress issue(s) back to Ready...`);
+  await recoverAgentsOnShutdown(agentsAtShutdown, linearIds.states.ready);
 }
 
 server.stop();

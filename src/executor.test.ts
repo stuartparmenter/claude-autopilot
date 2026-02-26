@@ -52,7 +52,12 @@ const mockGetInProgressIssues = mock(
     Promise.resolve([]),
 );
 
-import { executeIssue, fillSlots, recoverStaleIssues } from "./executor";
+import {
+  executeIssue,
+  fillSlots,
+  recoverAgentsOnShutdown,
+  recoverStaleIssues,
+} from "./executor";
 
 // Wire module mocks before each test and restore afterwards to prevent
 // leaking into other test files in Bun's single-process test runner.
@@ -857,6 +862,74 @@ describe("recoverStaleIssues", () => {
       "issue-z",
       expect.objectContaining({ stateId: "ready-id" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recoverAgentsOnShutdown
+// ---------------------------------------------------------------------------
+
+describe("recoverAgentsOnShutdown", () => {
+  beforeEach(() => {
+    mockUpdateIssue.mockClear();
+    mockUpdateIssue.mockResolvedValue(undefined);
+  });
+
+  test("returns 0 and makes no API calls when agents list is empty", async () => {
+    const count = await recoverAgentsOnShutdown([], "ready-id");
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("returns 0 and makes no API calls when no agents have linearIssueId", async () => {
+    const agents = [{ linearIssueId: undefined }, { linearIssueId: undefined }];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(0);
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  test("calls updateIssue for each agent with a linearIssueId", async () => {
+    const agents = [{ linearIssueId: "issue-1" }, { linearIssueId: "issue-2" }];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(2);
+    expect(mockUpdateIssue).toHaveBeenCalledTimes(2);
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-1", {
+      stateId: "ready-id",
+      comment: expect.stringContaining("SIGINT/SIGTERM"),
+    });
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-2", {
+      stateId: "ready-id",
+      comment: expect.stringContaining("SIGINT/SIGTERM"),
+    });
+  });
+
+  test("skips agents without linearIssueId and recovers those with one", async () => {
+    const agents = [
+      { linearIssueId: "issue-a" },
+      { linearIssueId: undefined },
+      { linearIssueId: "issue-b" },
+    ];
+    const count = await recoverAgentsOnShutdown(agents, "ready-id");
+    expect(count).toBe(2);
+    expect(mockUpdateIssue).toHaveBeenCalledTimes(2);
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-a", expect.anything());
+    expect(mockUpdateIssue).toHaveBeenCalledWith("issue-b", expect.anything());
+  });
+
+  test("uses the provided readyStateId", async () => {
+    const agents = [{ linearIssueId: "issue-x" }];
+    await recoverAgentsOnShutdown(agents, "custom-ready-state");
+    expect(mockUpdateIssue).toHaveBeenCalledWith(
+      "issue-x",
+      expect.objectContaining({ stateId: "custom-ready-state" }),
+    );
+  });
+
+  test("posts a comment explaining the recovery", async () => {
+    const agents = [{ linearIssueId: "issue-y" }];
+    await recoverAgentsOnShutdown(agents, "ready-id");
+    const call = mockUpdateIssue.mock.calls[0];
+    expect(call[1].comment).toContain("Ready for re-execution");
   });
 });
 
