@@ -35,6 +35,8 @@ export interface LinearIds {
 export interface ExecutorConfig {
   parallel: number;
   timeout_minutes: number;
+  fixer_timeout_minutes: number;
+  max_fixer_attempts: number;
   max_retries: number;
   inactivity_timeout_minutes: number;
   poll_interval_minutes: number;
@@ -48,6 +50,7 @@ export interface ExecutorConfig {
 export interface AuditorConfig {
   schedule: "when_idle" | "daily" | "manual";
   min_ready_threshold: number;
+  min_interval_minutes: number;
   max_issues_per_run: number;
   use_agent_teams: boolean;
   skip_triage: boolean;
@@ -76,6 +79,14 @@ export interface SandboxConfig {
 export interface PersistenceConfig {
   enabled: boolean;
   db_path: string;
+  retention_days: number;
+}
+
+export interface BudgetConfig {
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  per_agent_limit_usd: number;
+  warn_at_percent: number;
 }
 
 export interface AutopilotConfig {
@@ -86,6 +97,7 @@ export interface AutopilotConfig {
   project: ProjectConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
+  budget: BudgetConfig;
 }
 
 export const DEFAULTS: AutopilotConfig = {
@@ -104,6 +116,8 @@ export const DEFAULTS: AutopilotConfig = {
   executor: {
     parallel: 3,
     timeout_minutes: 30,
+    fixer_timeout_minutes: 20,
+    max_fixer_attempts: 3,
     max_retries: 3,
     inactivity_timeout_minutes: 10,
     poll_interval_minutes: 5,
@@ -116,6 +130,7 @@ export const DEFAULTS: AutopilotConfig = {
   auditor: {
     schedule: "when_idle",
     min_ready_threshold: 5,
+    min_interval_minutes: 60,
     max_issues_per_run: 10,
     use_agent_teams: true,
     skip_triage: true,
@@ -147,12 +162,19 @@ export const DEFAULTS: AutopilotConfig = {
   persistence: {
     enabled: true,
     db_path: ".claude/autopilot.db",
+    retention_days: 30,
   },
   sandbox: {
     enabled: true,
     auto_allow_bash: true,
     network_restricted: false,
     extra_allowed_domains: [],
+  },
+  budget: {
+    daily_limit_usd: 0,
+    monthly_limit_usd: 0,
+    per_agent_limit_usd: 0,
+    warn_at_percent: 80,
   },
 };
 
@@ -237,6 +259,133 @@ export function loadConfig(projectPath: string): AutopilotConfig {
     throw new Error(
       "Config validation error: executor.poll_interval_minutes must be a number between 0.5 and 60",
     );
+  }
+
+  if (
+    typeof config.executor.parallel !== "number" ||
+    Number.isNaN(config.executor.parallel) ||
+    !Number.isInteger(config.executor.parallel) ||
+    config.executor.parallel < 1 ||
+    config.executor.parallel > 50
+  ) {
+    throw new Error(
+      "Config validation error: executor.parallel must be an integer between 1 and 50",
+    );
+  }
+
+  if (
+    typeof config.executor.timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.timeout_minutes) ||
+    config.executor.timeout_minutes < 1 ||
+    config.executor.timeout_minutes > 480
+  ) {
+    throw new Error(
+      "Config validation error: executor.timeout_minutes must be a number between 1 and 480",
+    );
+  }
+
+  if (
+    typeof config.executor.max_retries !== "number" ||
+    Number.isNaN(config.executor.max_retries) ||
+    !Number.isInteger(config.executor.max_retries) ||
+    config.executor.max_retries < 0 ||
+    config.executor.max_retries > 20
+  ) {
+    throw new Error(
+      "Config validation error: executor.max_retries must be an integer between 0 and 20",
+    );
+  }
+
+  if (
+    typeof config.executor.inactivity_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.inactivity_timeout_minutes) ||
+    config.executor.inactivity_timeout_minutes < 1 ||
+    config.executor.inactivity_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  }
+
+  if (
+    typeof config.auditor.min_interval_minutes !== "number" ||
+    Number.isNaN(config.auditor.min_interval_minutes) ||
+    config.auditor.min_interval_minutes < 0 ||
+    config.auditor.min_interval_minutes > 1440
+  ) {
+    throw new Error(
+      "Config validation error: auditor.min_interval_minutes must be a number between 0 and 1440",
+    );
+  }
+
+  if (
+    typeof config.auditor.min_ready_threshold !== "number" ||
+    Number.isNaN(config.auditor.min_ready_threshold) ||
+    !Number.isInteger(config.auditor.min_ready_threshold) ||
+    config.auditor.min_ready_threshold < 0 ||
+    config.auditor.min_ready_threshold > 1000
+  ) {
+    throw new Error(
+      "Config validation error: auditor.min_ready_threshold must be an integer between 0 and 1000",
+    );
+  }
+
+  if (
+    typeof config.auditor.max_issues_per_run !== "number" ||
+    Number.isNaN(config.auditor.max_issues_per_run) ||
+    !Number.isInteger(config.auditor.max_issues_per_run) ||
+    config.auditor.max_issues_per_run < 1 ||
+    config.auditor.max_issues_per_run > 50
+  ) {
+    throw new Error(
+      "Config validation error: auditor.max_issues_per_run must be an integer between 1 and 50",
+    );
+  }
+
+  if (
+    typeof config.executor.fixer_timeout_minutes !== "number" ||
+    Number.isNaN(config.executor.fixer_timeout_minutes) ||
+    config.executor.fixer_timeout_minutes < 1 ||
+    config.executor.fixer_timeout_minutes > 120
+  ) {
+    throw new Error(
+      "Config validation error: executor.fixer_timeout_minutes must be a number between 1 and 120",
+    );
+  }
+
+  if (
+    typeof config.executor.max_fixer_attempts !== "number" ||
+    !Number.isInteger(config.executor.max_fixer_attempts) ||
+    config.executor.max_fixer_attempts < 1 ||
+    config.executor.max_fixer_attempts > 10
+  ) {
+    throw new Error(
+      "Config validation error: executor.max_fixer_attempts must be an integer between 1 and 10",
+    );
+  }
+
+  if (
+    typeof config.budget.warn_at_percent !== "number" ||
+    Number.isNaN(config.budget.warn_at_percent) ||
+    config.budget.warn_at_percent < 0 ||
+    config.budget.warn_at_percent > 100
+  ) {
+    throw new Error(
+      "Config validation error: budget.warn_at_percent must be a number between 0 and 100",
+    );
+  }
+
+  for (const field of [
+    "daily_limit_usd",
+    "monthly_limit_usd",
+    "per_agent_limit_usd",
+  ] as const) {
+    const value = config.budget[field];
+    if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
+      throw new Error(
+        `Config validation error: budget.${field} must be a non-negative number`,
+      );
+    }
   }
 
   return config;

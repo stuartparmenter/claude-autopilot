@@ -309,6 +309,243 @@ executor:
     );
   });
 
+  test("executor.parallel defaults to 3", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    const config = loadConfig(tmpDir);
+    expect(config.executor.parallel).toBe(3);
+  });
+
+  test("executor.parallel throws below 1", () => {
+    const dir = writeConfig(`
+executor:
+  parallel: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.parallel must be an integer between 1 and 50",
+    );
+  });
+
+  test("executor.parallel throws above 50", () => {
+    const dir = writeConfig(`
+executor:
+  parallel: 51
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.parallel must be an integer between 1 and 50",
+    );
+  });
+
+  test("executor.parallel throws for non-integer value", () => {
+    const dir = writeConfig(`
+executor:
+  parallel: 2.5
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.parallel must be an integer between 1 and 50",
+    );
+  });
+
+  test("executor.parallel accepts boundary value 1", () => {
+    const dir = writeConfig(`
+executor:
+  parallel: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.parallel accepts boundary value 50", () => {
+    const dir = writeConfig(`
+executor:
+  parallel: 50
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.timeout_minutes throws below 1", () => {
+    const dir = writeConfig(`
+executor:
+  timeout_minutes: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.timeout_minutes must be a number between 1 and 480",
+    );
+  });
+
+  test("executor.timeout_minutes throws above 480", () => {
+    const dir = writeConfig(`
+executor:
+  timeout_minutes: 481
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.timeout_minutes must be a number between 1 and 480",
+    );
+  });
+
+  test("executor.timeout_minutes accepts boundary value 1", () => {
+    const dir = writeConfig(`
+executor:
+  timeout_minutes: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.timeout_minutes accepts boundary value 480", () => {
+    const dir = writeConfig(`
+executor:
+  timeout_minutes: 480
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.max_retries throws below 0", () => {
+    const dir = writeConfig(`
+executor:
+  max_retries: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.max_retries must be an integer between 0 and 20",
+    );
+  });
+
+  test("executor.max_retries throws above 20", () => {
+    const dir = writeConfig(`
+executor:
+  max_retries: 21
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.max_retries must be an integer between 0 and 20",
+    );
+  });
+
+  test("executor.max_retries accepts boundary value 0", () => {
+    const dir = writeConfig(`
+executor:
+  max_retries: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.max_retries accepts boundary value 20", () => {
+    const dir = writeConfig(`
+executor:
+  max_retries: 20
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.inactivity_timeout_minutes throws below 1", () => {
+    const dir = writeConfig(`
+executor:
+  inactivity_timeout_minutes: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  });
+
+  test("executor.inactivity_timeout_minutes throws above 120", () => {
+    const dir = writeConfig(`
+executor:
+  inactivity_timeout_minutes: 121
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "executor.inactivity_timeout_minutes must be a number between 1 and 120",
+    );
+  });
+
+  test("executor.inactivity_timeout_minutes accepts boundary value 1", () => {
+    const dir = writeConfig(`
+executor:
+  inactivity_timeout_minutes: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("executor.inactivity_timeout_minutes accepts boundary value 120", () => {
+    const dir = writeConfig(`
+executor:
+  inactivity_timeout_minutes: 120
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("auditor.min_ready_threshold throws below 0", () => {
+    const dir = writeConfig(`
+auditor:
+  min_ready_threshold: -1
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "auditor.min_ready_threshold must be an integer between 0 and 1000",
+    );
+  });
+
+  test("auditor.min_ready_threshold throws above 1000", () => {
+    const dir = writeConfig(`
+auditor:
+  min_ready_threshold: 1001
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "auditor.min_ready_threshold must be an integer between 0 and 1000",
+    );
+  });
+
+  test("auditor.min_ready_threshold accepts boundary value 0", () => {
+    const dir = writeConfig(`
+auditor:
+  min_ready_threshold: 0
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("auditor.min_ready_threshold accepts boundary value 1000", () => {
+    const dir = writeConfig(`
+auditor:
+  min_ready_threshold: 1000
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("auditor.max_issues_per_run throws below 1", () => {
+    const dir = writeConfig(`
+auditor:
+  max_issues_per_run: 0
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "auditor.max_issues_per_run must be an integer between 1 and 50",
+    );
+  });
+
+  test("auditor.max_issues_per_run throws above 50", () => {
+    const dir = writeConfig(`
+auditor:
+  max_issues_per_run: 51
+`);
+    expect(() => loadConfig(dir)).toThrow(
+      "auditor.max_issues_per_run must be an integer between 1 and 50",
+    );
+  });
+
+  test("auditor.max_issues_per_run accepts boundary value 1", () => {
+    const dir = writeConfig(`
+auditor:
+  max_issues_per_run: 1
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("auditor.max_issues_per_run accepts boundary value 50", () => {
+    const dir = writeConfig(`
+auditor:
+  max_issues_per_run: 50
+`);
+    expect(() => loadConfig(dir)).not.toThrow();
+  });
+
+  test("all default values pass validation", () => {
+    writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
+    expect(() => loadConfig(tmpDir)).not.toThrow();
+  });
+
   test("sandbox defaults are applied when YAML omits them", () => {
     writeFileSync(join(tmpDir, ".claude-autopilot.yml"), "");
     const config = loadConfig(tmpDir);

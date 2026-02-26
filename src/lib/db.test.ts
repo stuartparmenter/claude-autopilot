@@ -1,7 +1,15 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AgentResult } from "../state";
-import { getAnalytics, getRecentRuns, insertAgentRun, openDb } from "./db";
+import type { ActivityEntry, AgentResult } from "../state";
+import {
+  getActivityLogs,
+  getAnalytics,
+  getRecentRuns,
+  insertActivityLogs,
+  insertAgentRun,
+  openDb,
+  pruneActivityLogs,
+} from "./db";
 
 let db: Database;
 
@@ -29,6 +37,102 @@ describe("openDb", () => {
   test("creates schema and returns an open database", () => {
     // If openDb succeeded without throwing, schema was created
     expect(db).toBeDefined();
+  });
+
+  test("migration adds linear_issue_id column to existing DB without it", () => {
+    // Simulate an old DB that lacks the linear_issue_id column
+    const oldDb = new Database(":memory:", { create: true });
+    oldDb.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
+    `);
+    // Insert a row before migration (no linear_issue_id column yet)
+    oldDb.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+    oldDb.close();
+
+    // Re-open via openDb — it should run the migration without error
+    // We can't re-open :memory: by path, so instead test the migration directly
+    // by running it on a fresh in-memory DB that already has the schema without the column
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_finished_at ON agent_runs(finished_at);
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration (same as openDb does)
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN linear_issue_id TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ linear_issue_id: string | null }, [string]>(
+        "SELECT linear_issue_id FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.linear_issue_id).toBeNull();
+
+    // New rows inserted after migration can use the column
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at, linear_issue_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "post-migration",
+        "ISSUE-2",
+        "New Title",
+        "completed",
+        3000,
+        4000,
+        "uuid-xyz",
+      ],
+    );
+    const newRow = db2
+      .query<{ linear_issue_id: string | null }, [string]>(
+        "SELECT linear_issue_id FROM agent_runs WHERE id = ?",
+      )
+      .get("post-migration");
+    expect(newRow?.linear_issue_id).toBe("uuid-xyz");
+
+    db2.close();
+  });
+
+  test("migration is idempotent on a new DB that already has the column", () => {
+    // openDb on :memory: creates the schema with linear_issue_id, then tries ALTER TABLE
+    // The ALTER TABLE should be silently ignored — no error thrown
+    expect(() => openDb(":memory:")).not.toThrow();
   });
 });
 
@@ -93,6 +197,18 @@ describe("insertAgentRun and getRecentRuns", () => {
     const run = getRecentRuns(db)[0];
     expect(run.status).toBe("failed");
     expect(run.error).toBe("timeout");
+  });
+
+  test("stores and retrieves linearIssueId when set", () => {
+    insertAgentRun(db, makeResult("a1", { linearIssueId: "uuid-1234-abcd" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.linearIssueId).toBe("uuid-1234-abcd");
+  });
+
+  test("linearIssueId is undefined when not set", () => {
+    insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.linearIssueId).toBeUndefined();
   });
 
   test("OR REPLACE upserts a run with the same id", () => {
@@ -186,5 +302,111 @@ describe("getAnalytics", () => {
     }
     const result = getAnalytics(db);
     expect(result.totalRuns).toBe(5);
+  });
+});
+
+describe("insertActivityLogs and getActivityLogs", () => {
+  function makeActivity(overrides?: Partial<ActivityEntry>): ActivityEntry {
+    return {
+      timestamp: Date.now(),
+      type: "tool_use",
+      summary: "Test: doing something",
+      ...overrides,
+    };
+  }
+
+  test("insertActivityLogs with empty array is a no-op", () => {
+    expect(() => insertActivityLogs(db, "run-1", [])).not.toThrow();
+    expect(getActivityLogs(db, "run-1")).toEqual([]);
+  });
+
+  test("inserts and retrieves activity logs in timestamp order", () => {
+    const activities: ActivityEntry[] = [
+      makeActivity({ timestamp: 3000, type: "text", summary: "Third" }),
+      makeActivity({ timestamp: 1000, type: "tool_use", summary: "First" }),
+      makeActivity({ timestamp: 2000, type: "result", summary: "Second" }),
+    ];
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(3);
+    expect(logs[0].summary).toBe("First");
+    expect(logs[1].summary).toBe("Second");
+    expect(logs[2].summary).toBe("Third");
+  });
+
+  test("retrieves all five entries inserted", () => {
+    const activities: ActivityEntry[] = Array.from({ length: 5 }, (_, i) =>
+      makeActivity({ timestamp: i * 1000, summary: `Entry ${i}` }),
+    );
+    insertActivityLogs(db, "run-1", activities);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs).toHaveLength(5);
+  });
+
+  test("returns empty array for unknown agentRunId", () => {
+    expect(getActivityLogs(db, "nonexistent")).toEqual([]);
+  });
+
+  test("stores and retrieves detail field", () => {
+    const activity = makeActivity({ detail: "some detail text" });
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBe("some detail text");
+  });
+
+  test("detail is undefined when not set", () => {
+    const activity = makeActivity();
+    insertActivityLogs(db, "run-1", [activity]);
+    const logs = getActivityLogs(db, "run-1");
+    expect(logs[0].detail).toBeUndefined();
+  });
+
+  test("isolates logs by agentRunId", () => {
+    insertActivityLogs(db, "run-1", [makeActivity({ summary: "Run 1 entry" })]);
+    insertActivityLogs(db, "run-2", [makeActivity({ summary: "Run 2 entry" })]);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
+    expect(getActivityLogs(db, "run-1")[0].summary).toBe("Run 1 entry");
+    expect(getActivityLogs(db, "run-2")).toHaveLength(1);
+  });
+});
+
+describe("pruneActivityLogs", () => {
+  test("deletes entries older than retention window", () => {
+    const now = Date.now();
+    const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-old", [
+      { timestamp: thirtyOneDaysAgo, type: "text", summary: "Old entry" },
+    ]);
+    insertActivityLogs(db, "run-new", [
+      { timestamp: now, type: "text", summary: "New entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(1);
+    expect(getActivityLogs(db, "run-old")).toHaveLength(0);
+    expect(getActivityLogs(db, "run-new")).toHaveLength(1);
+  });
+
+  test("returns 0 when no entries are old enough to prune", () => {
+    const now = Date.now();
+    insertActivityLogs(db, "run-1", [
+      { timestamp: now, type: "text", summary: "Recent entry" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+  });
+
+  test("returns 0 on empty table", () => {
+    expect(pruneActivityLogs(db, 30)).toBe(0);
+  });
+
+  test("preserves entries within the retention window", () => {
+    const now = Date.now();
+    const twentyNineDaysAgo = now - 29 * 24 * 60 * 60 * 1000;
+    insertActivityLogs(db, "run-1", [
+      { timestamp: twentyNineDaysAgo, type: "text", summary: "Within window" },
+    ]);
+    const deleted = pruneActivityLogs(db, 30);
+    expect(deleted).toBe(0);
+    expect(getActivityLogs(db, "run-1")).toHaveLength(1);
   });
 });

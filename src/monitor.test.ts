@@ -118,7 +118,10 @@ function makeIssue(
   };
 }
 
-function makeConfig(parallelSlots = 3): AutopilotConfig {
+function makeConfig(
+  parallelSlots = 3,
+  executorOverrides: Partial<AutopilotConfig["executor"]> = {},
+): AutopilotConfig {
   return {
     linear: {
       team: "ENG",
@@ -135,6 +138,8 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     executor: {
       parallel: parallelSlots,
       timeout_minutes: 30,
+      fixer_timeout_minutes: 20,
+      max_fixer_attempts: 3,
       max_retries: 3,
       inactivity_timeout_minutes: 10,
       poll_interval_minutes: 5,
@@ -143,10 +148,12 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       commit_pattern: "{{id}}: {{title}}",
       model: "sonnet",
       planning_model: "opus",
+      ...executorOverrides,
     },
     auditor: {
       schedule: "when_idle",
       min_ready_threshold: 5,
+      min_interval_minutes: 60,
       max_issues_per_run: 10,
       use_agent_teams: false,
       skip_triage: true,
@@ -157,12 +164,22 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
     },
     github: { repo: "", automerge: false },
     project: { name: "test-project" },
-    persistence: { enabled: false, db_path: ".claude/autopilot.db" },
+    persistence: {
+      enabled: false,
+      db_path: ".claude/autopilot.db",
+      retention_days: 30,
+    },
     sandbox: {
       enabled: true,
       auto_allow_bash: true,
       network_restricted: false,
       extra_allowed_domains: [],
+    },
+    budget: {
+      daily_limit_usd: 0,
+      monthly_limit_usd: 0,
+      per_agent_limit_usd: 0,
+      warn_at_percent: 80,
     },
   };
 }
@@ -518,5 +535,149 @@ describe("checkOpenPRs — slot limiting and dedup", () => {
 
     expect(result).toHaveLength(1);
     await Promise.all(result);
+  });
+});
+
+describe("checkOpenPRs — budget enforcement", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockIssuesQuery.mockResolvedValue({ nodes: [] });
+  });
+
+  test("returns empty array when budget is exhausted", async () => {
+    state.addSpend(10); // $10 spent
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5; // $5 limit — exhausted
+
+    const result = await checkOpenPRs(makeOpts(state, config));
+
+    expect(result).toHaveLength(0);
+  });
+
+  test("auto-pauses when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    expect(state.isPaused()).toBe(false);
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(state.isPaused()).toBe(true);
+  });
+
+  test("does not query Linear when budget is exhausted", async () => {
+    state.addSpend(10);
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    mockIssuesQuery.mockClear();
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(mockIssuesQuery).not.toHaveBeenCalled();
+  });
+
+  test("does not double-pause when already paused and budget is exhausted", async () => {
+    state.addSpend(10);
+    state.togglePause(); // already paused
+    const config = makeConfig();
+    config.budget.daily_limit_usd = 5;
+
+    await checkOpenPRs(makeOpts(state, config));
+
+    expect(state.isPaused()).toBe(true);
+  });
+});
+
+describe("checkOpenPRs — fixer timeout and attempt budget", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = new AppState();
+    mockRunClaude.mockResolvedValue({
+      timedOut: false,
+      inactivityTimedOut: false,
+      error: undefined,
+      costUsd: 0.05,
+      durationMs: 500,
+      numTurns: 2,
+      result: "",
+    });
+    // Default: CI failure so fixers get spawned
+    prData = {
+      merged: false,
+      mergeable: null,
+      head: { ref: "feature/budget", sha: "abc123" },
+    };
+    checkRunsData = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", name: "tests" },
+      ],
+    };
+  });
+
+  test("uses fixer_timeout_minutes from config", async () => {
+    const config = makeConfig(3, { fixer_timeout_minutes: 45 });
+    const issue = makeIssue("timeout-pr", "https://github.com/o/r/pull/400");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    mockRunClaude.mockClear();
+    const result = await checkOpenPRs(makeOpts(state, config));
+    expect(result).toHaveLength(1);
+    await Promise.all(result);
+
+    expect(mockRunClaude.mock.calls.length).toBeGreaterThan(0);
+    const callArgs = (
+      mockRunClaude.mock.calls as unknown as Array<[{ timeoutMs: number }]>
+    )[0][0];
+    expect(callArgs.timeoutMs).toBe(45 * 60 * 1000);
+  });
+
+  test("does not spawn fixer after max_fixer_attempts is reached", async () => {
+    const config = makeConfig(3, { max_fixer_attempts: 2 });
+    const issue = makeIssue("retry-pr", "https://github.com/o/r/pull/500");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    // First attempt
+    const result1 = await checkOpenPRs(makeOpts(state, config));
+    expect(result1).toHaveLength(1);
+    await Promise.all(result1);
+
+    // Second attempt
+    const result2 = await checkOpenPRs(makeOpts(state, config));
+    expect(result2).toHaveLength(1);
+    await Promise.all(result2);
+
+    // Third attempt: max reached, no fixer spawned
+    const result3 = await checkOpenPRs(makeOpts(state, config));
+    expect(result3).toHaveLength(0);
+  });
+
+  test("resets attempt counter when PR leaves In Review", async () => {
+    const config = makeConfig(3, { max_fixer_attempts: 1 });
+    const issue = makeIssue("reset-pr", "https://github.com/o/r/pull/600");
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+
+    // First attempt — fixer spawned, counter reaches max
+    const result1 = await checkOpenPRs(makeOpts(state, config));
+    expect(result1).toHaveLength(1);
+    await Promise.all(result1);
+
+    // Max reached — no fixer spawned
+    const result2 = await checkOpenPRs(makeOpts(state, config));
+    expect(result2).toHaveLength(0);
+
+    // PR leaves "In Review" (no issues returned) — counter is pruned
+    mockIssuesQuery.mockResolvedValue({ nodes: [] });
+    await checkOpenPRs(makeOpts(state, config));
+
+    // PR comes back to "In Review" — counter was reset, fixer spawned again
+    mockIssuesQuery.mockResolvedValue({ nodes: [issue] });
+    const result4 = await checkOpenPRs(makeOpts(state, config));
+    expect(result4).toHaveLength(1);
+    await Promise.all(result4);
   });
 });

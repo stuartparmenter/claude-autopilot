@@ -292,4 +292,9 @@ export const DASHBOARD_CSS = `
     background: var(--green);
     animation: pulse 2s infinite;
   }
+  .budget-bar {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 0 4px;
+  }
 `;
