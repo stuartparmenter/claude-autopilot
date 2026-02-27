@@ -125,6 +125,7 @@ function makeConfig(
       review_responder_timeout_minutes: 20,
     },
     github: { repo: "", automerge: false },
+    project: { name: "" },
     persistence: {
       enabled: true,
       db_path: ".claude/autopilot.db",
