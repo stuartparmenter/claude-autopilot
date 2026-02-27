@@ -123,7 +123,6 @@ export async function createClone(
   const cloneErr = gitSync(projectPath, [
     "clone",
     "--shared",
-    "--single-branch",
     "--no-tags",
     projectPath,
     dest,
@@ -290,9 +289,6 @@ export async function sweepLegacyWorktrees(projectPath: string): Promise<void> {
       warn(`Failed to remove legacy worktree '${name}': ${e}`);
     }
   }
-
-  // Prune stale git worktree references
-  gitSync(projectPath, ["worktree", "prune"]);
 
   // Remove the now-empty worktrees directory itself
   try {

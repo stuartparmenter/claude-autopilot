@@ -85,14 +85,13 @@ describe("createClone — executor mode", () => {
     expect(result.branch).toBe("autopilot-ENG-1");
   });
 
-  test("runs git clone --shared --single-branch --no-tags", async () => {
+  test("runs git clone --shared --no-tags", async () => {
     await createClone(PROJECT, "ENG-42");
 
     const cloneCall = spawnSpy.mock.calls.find(
       (c) =>
         c[0][1] === "clone" &&
         c[0].includes("--shared") &&
-        c[0].includes("--single-branch") &&
         c[0].includes("--no-tags"),
     );
     expect(cloneCall).toBeDefined();
