@@ -161,6 +161,17 @@ export async function checkOpenPRs(opts: {
       continue;
     }
 
+    // Verify PR branch follows autopilot naming convention
+    if (
+      !status.branch.startsWith("autopilot-") &&
+      !status.branch.startsWith("worktree-")
+    ) {
+      warn(
+        `PR #${prNumber} (${issue.identifier}) branch "${status.branch}" is not autopilot-managed — skipping`,
+      );
+      continue;
+    }
+
     // Merged PRs are handled by the Linear/GitHub webhook, not here
 
     const failureType =
