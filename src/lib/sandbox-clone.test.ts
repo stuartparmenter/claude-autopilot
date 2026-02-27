@@ -57,6 +57,14 @@ function defaultSpawnHandler(cmds: string[]): SpawnResult {
   if (cmds[1] === "remote" && cmds[2] === "get-url") {
     return spawnOk("git@github.com:owner/repo.git");
   }
+  // git rev-parse --verify origin/worktree-* → fail by default (no legacy branch)
+  if (
+    cmds[1] === "rev-parse" &&
+    cmds[2] === "--verify" &&
+    cmds[3]?.startsWith("origin/worktree-")
+  ) {
+    return spawnFail("fatal: Needed a single revision");
+  }
   // git checkout worktree-* → fail by default (no legacy branch)
   if (cmds[1] === "checkout" && cmds[2]?.startsWith("worktree-")) {
     return spawnFail("pathspec did not match");
@@ -138,6 +146,10 @@ describe("createClone — executor mode", () => {
 
   test("checks out legacy worktree-<name> branch if it exists (backward compat)", async () => {
     spawnSpy.mockImplementation(((cmds: string[]) => {
+      // rev-parse confirms remote ref exists
+      if (cmds[1] === "rev-parse" && cmds[3] === "origin/worktree-ENG-1") {
+        return spawnOk();
+      }
       // Legacy checkout succeeds (branch exists as remote tracking ref)
       if (cmds[1] === "checkout" && cmds[2] === "worktree-ENG-1") {
         return spawnOk();
@@ -149,18 +161,8 @@ describe("createClone — executor mode", () => {
     expect(result.branch).toBe("worktree-ENG-1");
   });
 
-  test("falls back to autopilot-<name> when legacy branch checkout fails", async () => {
-    // Default handler returns spawnOk() for all commands, and the
-    // defaultSpawnHandler doesn't special-case checkout of worktree-*,
-    // so the legacy checkout will fail (no remote tracking ref).
-    // Actually, spawnOk() means it succeeds. We need to fail it explicitly.
-    spawnSpy.mockImplementation(((cmds: string[]) => {
-      if (cmds[1] === "checkout" && cmds[2] === "worktree-ENG-1") {
-        return spawnFail("pathspec 'worktree-ENG-1' did not match");
-      }
-      return defaultSpawnHandler(cmds);
-    }) as any);
-
+  test("falls back to autopilot-<name> when legacy branch does not exist on remote", async () => {
+    // Default handler already fails rev-parse for origin/worktree-*
     const result = await createClone(PROJECT, "ENG-1");
     expect(result.branch).toBe("autopilot-ENG-1");
   });
@@ -207,6 +209,75 @@ describe("createClone — executor mode", () => {
     expect(createClone(PROJECT, "ENG-4")).rejects.toThrow(
       "Failed to create clone 'ENG-4'",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createClone — gitIdentity
+// ---------------------------------------------------------------------------
+
+describe("createClone — gitIdentity", () => {
+  test("sets user.name and user.email in clone when gitIdentity is provided", async () => {
+    await createClone(PROJECT, "ENG-1", undefined, {
+      userName: "bot[bot]",
+      userEmail: "bot@example.com",
+    });
+
+    const nameCall = spawnSpy.mock.calls.find(
+      (c) =>
+        c[0][1] === "config" &&
+        c[0][2] === "user.name" &&
+        c[0][3] === "bot[bot]",
+    );
+    const emailCall = spawnSpy.mock.calls.find(
+      (c) =>
+        c[0][1] === "config" &&
+        c[0][2] === "user.email" &&
+        c[0][3] === "bot@example.com",
+    );
+    expect(nameCall).toBeDefined();
+    expect(emailCall).toBeDefined();
+  });
+
+  test("does not call git config when gitIdentity is omitted", async () => {
+    await createClone(PROJECT, "ENG-1");
+
+    const configCall = spawnSpy.mock.calls.find(
+      (c) => c[0][1] === "config" && c[0][2]?.startsWith("user."),
+    );
+    expect(configCall).toBeUndefined();
+  });
+
+  test("throws when git config user.name fails", async () => {
+    spawnSpy.mockImplementation(((cmds: string[]) => {
+      if (cmds[1] === "config" && cmds[2] === "user.name") {
+        return spawnFail("could not lock config file");
+      }
+      return defaultSpawnHandler(cmds);
+    }) as any);
+
+    expect(
+      createClone(PROJECT, "ENG-1", undefined, {
+        userName: "bot",
+        userEmail: "bot@example.com",
+      }),
+    ).rejects.toThrow("Failed to set user.name");
+  });
+
+  test("throws when git config user.email fails", async () => {
+    spawnSpy.mockImplementation(((cmds: string[]) => {
+      if (cmds[1] === "config" && cmds[2] === "user.email") {
+        return spawnFail("could not lock config file");
+      }
+      return defaultSpawnHandler(cmds);
+    }) as any);
+
+    expect(
+      createClone(PROJECT, "ENG-1", undefined, {
+        userName: "bot",
+        userEmail: "bot@example.com",
+      }),
+    ).rejects.toThrow("Failed to set user.email");
   });
 });
 
