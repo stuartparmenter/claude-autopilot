@@ -113,6 +113,11 @@ export interface ReviewerConfig {
   max_issues_per_review: number;
 }
 
+export interface GitConfig {
+  user_name: string;
+  user_email: string;
+}
+
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
@@ -121,6 +126,7 @@ export interface AutopilotConfig {
   reviewer: ReviewerConfig;
   monitor: MonitorConfig;
   github: GithubConfig;
+  git: GitConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
   budget: BudgetConfig;
@@ -172,6 +178,10 @@ export const DEFAULTS: AutopilotConfig = {
   github: {
     repo: "",
     automerge: false,
+  },
+  git: {
+    user_name: "autopilot[bot]",
+    user_email: "autopilot[bot]@users.noreply.github.com",
   },
   persistence: {
     enabled: true,

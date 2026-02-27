@@ -16,7 +16,7 @@ import {
 import type { SandboxConfig } from "./config";
 import { info, warn } from "./logger";
 import { AUTOPILOT_ROOT } from "./paths";
-import { createClone, removeClone } from "./sandbox-clone";
+import { createClone, type GitIdentity, removeClone } from "./sandbox-clone";
 
 /** Clone functions indirected through a mutable object so tests can replace them without mock.module(). */
 export const _clone = { createClone, removeClone };
@@ -99,6 +99,7 @@ export async function runClaude(opts: {
   label?: string;
   clone?: string;
   cloneBranch?: string;
+  gitIdentity?: GitIdentity;
   timeoutMs?: number;
   inactivityMs?: number;
   model?: string;
@@ -205,6 +206,7 @@ export async function runClaude(opts: {
         opts.cwd,
         opts.clone,
         opts.cloneBranch,
+        opts.gitIdentity,
       );
       queryOpts.cwd = cloneResult.path;
       cloneName = opts.clone;

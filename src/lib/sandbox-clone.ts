@@ -83,6 +83,11 @@ async function forceRemoveDir(
   }
 }
 
+export interface GitIdentity {
+  userName: string;
+  userEmail: string;
+}
+
 export interface CloneResult {
   path: string;
   branch: string;
@@ -103,6 +108,7 @@ export async function createClone(
   projectPath: string,
   name: string,
   fromBranch?: string,
+  gitIdentity?: GitIdentity,
 ): Promise<CloneResult> {
   const dest = clonePath(projectPath, name);
 
@@ -157,6 +163,12 @@ export async function createClone(
     throw new Error(
       `Failed to set remote URL in clone '${name}': ${setUrlErr}`,
     );
+  }
+
+  // Set bot identity in the clone's local config.
+  if (gitIdentity) {
+    gitSync(dest, ["config", "user.name", gitIdentity.userName]);
+    gitSync(dest, ["config", "user.email", gitIdentity.userEmail]);
   }
 
   // Fetch from GitHub so remote tracking refs are up to date

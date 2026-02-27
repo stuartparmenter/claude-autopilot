@@ -118,6 +118,11 @@ export function buildAgentEnv(): Record<string, string> {
     }
   }
   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+  // Block global/system gitconfig so no settings leak into the sandbox
+  // (GPG signing, credential helpers, hooks, etc.). Agents only use the
+  // clone's local .git/config which we control.
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_GLOBAL = "/dev/null";
   return env;
 }
 

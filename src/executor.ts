@@ -75,6 +75,10 @@ export async function executeIssue(opts: {
       cwd: projectPath,
       label: issue.identifier,
       clone: cloneName,
+      gitIdentity: {
+        userName: config.git.user_name,
+        userEmail: config.git.user_email,
+      },
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
