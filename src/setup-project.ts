@@ -16,6 +16,7 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fatal, header, info, ok, warn } from "./lib/logger";
+import { checkEnvVars, checkGitRemote } from "./validate";
 
 const AUTOPILOT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -170,6 +171,24 @@ if (existsSync(gitignorePath)) {
 } else {
   writeFileSync(gitignorePath, "# autopilot local config\n.autopilot.yml\n");
   ok("Created .gitignore with .autopilot.yml");
+}
+
+// --- Validate prerequisites ---
+
+header("Checking prerequisites...");
+
+const checks: Array<[string, () => Promise<string>]> = [
+  ["Environment variables", () => checkEnvVars()],
+  ["Git remote", () => checkGitRemote(PROJECT_PATH)],
+];
+
+for (const [name, fn] of checks) {
+  try {
+    const detail = await fn();
+    ok(`${name}: ${detail}`);
+  } catch (e) {
+    warn(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 // --- Print next steps ---
