@@ -10,9 +10,13 @@ node_modules/
 # Build artifacts
 *.tsbuildinfo
 
-# Worktrees
+# Test temp dirs (sandbox-safe temp directories next to test files)
+.tmp-*
+
+# Agent isolation directories
 .worktrees/
 .claude/worktrees/
+.claude/clones/
 
 # Editor
 .idea

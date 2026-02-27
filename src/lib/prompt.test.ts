@@ -119,7 +119,7 @@ describe("loadPrompt project-local overrides", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = join("/tmp/claude-1002", `prompt-override-test-${Date.now()}`);
+    tmpDir = join(import.meta.dir, `.tmp-prompt-override-${Date.now()}`);
     mkdirSync(join(tmpDir, ".autopilot", "prompts"), {
       recursive: true,
     });
