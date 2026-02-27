@@ -81,7 +81,7 @@ If after 3 attempts the fix still fails, STOP and proceed to Phase 5 with a fail
 
 ## Phase 4: Push
 
-Push the fix to the existing remote branch. Do NOT force-push.
+Push the fix to the existing remote branch. Do NOT force-push. ALWAYS use the `origin` remote — NEVER construct a URL or use the GitHub MCP to push. The remote is already configured correctly.
 
 ```
 git add <files you changed>

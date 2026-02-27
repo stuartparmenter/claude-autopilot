@@ -95,6 +95,8 @@ If any check fails, analyze and fix (max 3 attempts). If still failing after 3 a
 
 ### Push changes (only if code changes were made):
 
+ALWAYS use the `origin` remote — NEVER construct a URL or use the GitHub MCP to push. The remote is already configured correctly.
+
 ```
 git add <files you changed>
 git commit -m "{{ISSUE_ID}}: address review feedback"
