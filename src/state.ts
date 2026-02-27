@@ -160,7 +160,7 @@ export class AppState {
     }
   }
 
-  completeAgent(
+  async completeAgent(
     agentId: string,
     status: "completed" | "failed" | "timed_out",
     meta?: {
@@ -171,7 +171,7 @@ export class AppState {
       error?: string;
     },
     rawMessages?: unknown[],
-  ): void {
+  ): Promise<void> {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
@@ -199,18 +199,8 @@ export class AppState {
       error: agent.error,
     };
 
-    if (this.db) {
-      insertAgentRun(this.db, result);
-      insertActivityLogs(this.db, result.id, agent.activities);
-      if (rawMessages && rawMessages.length > 0) {
-        insertConversationLog(
-          this.db,
-          result.id,
-          sanitizeMessage(JSON.stringify(rawMessages)),
-        );
-      }
-    }
-
+    // Update in-memory state synchronously (before any awaits) so callers
+    // that don't await this function still see updated state immediately.
     if (meta?.costUsd && meta.costUsd > 0) {
       this.addSpend(meta.costUsd);
     }
@@ -223,6 +213,19 @@ export class AppState {
 
     this.controllers.delete(agentId);
     this.agents.delete(agentId);
+
+    // Persist to database with retry logic (async, after in-memory updates).
+    if (this.db) {
+      await insertAgentRun(this.db, result);
+      await insertActivityLogs(this.db, result.id, agent.activities);
+      if (rawMessages && rawMessages.length > 0) {
+        await insertConversationLog(
+          this.db,
+          result.id,
+          sanitizeMessage(JSON.stringify(rawMessages)),
+        );
+      }
+    }
   }
 
   registerAgentController(agentId: string, controller: AbortController): void {

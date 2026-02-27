@@ -1365,7 +1365,7 @@ describe("getLinearClientAsync", () => {
   test("returns client using OAuth access token when DB has a fresh token", async () => {
     delete process.env.LINEAR_API_KEY;
     // Save a fresh OAuth token to the DB (expires 1 hour from now)
-    saveOAuthToken(db, "linear", {
+    await saveOAuthToken(db, "linear", {
       accessToken: "oauth-access-token",
       refreshToken: "oauth-refresh-token",
       expiresAt: Date.now() + 60 * 60 * 1000,

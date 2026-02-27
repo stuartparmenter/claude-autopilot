@@ -24,7 +24,7 @@ function makeState(): {
   state: AppState;
   completeAgent: ReturnType<typeof mock>;
 } {
-  const completeAgent = mock(() => {});
+  const completeAgent = mock(() => Promise.resolve());
   const state = { completeAgent } as unknown as AppState;
   return { state, completeAgent };
 }

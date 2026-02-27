@@ -86,7 +86,7 @@ export async function ensureFreshToken(
     scope: refreshed.scope,
     actor: "application",
   };
-  saveOAuthToken(db, "linear", newToken);
+  await saveOAuthToken(db, "linear", newToken);
   ok("Linear OAuth token refreshed");
 
   return newToken.accessToken;

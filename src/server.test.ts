@@ -915,7 +915,7 @@ describe("GET /partials/analytics", () => {
     const db = openDb(":memory:");
     state.setDb(db);
     const now = Date.now();
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: "run-1",
       issueId: "ENG-1",
       issueTitle: "Test issue",
@@ -954,7 +954,7 @@ describe("GET /api/analytics", () => {
     state.setDb(db);
     const now = Date.now();
     // Two runs today: one completed, one failed
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: "run-today-1",
       issueId: "ENG-1",
       issueTitle: "Test 1",
@@ -965,7 +965,7 @@ describe("GET /api/analytics", () => {
       durationMs: 60000,
       numTurns: 5,
     });
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: "run-today-2",
       issueId: "ENG-2",
       issueTitle: "Test 2",
@@ -978,7 +978,7 @@ describe("GET /api/analytics", () => {
     });
     // One run from yesterday (outside today's window)
     const yesterday = now - 25 * 60 * 60 * 1000;
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: "run-yesterday",
       issueId: "ENG-3",
       issueTitle: "Old run",
@@ -1011,7 +1011,7 @@ describe("GET /api/analytics", () => {
     state.setDb(db);
     // Only a run from yesterday
     const yesterday = Date.now() - 25 * 60 * 60 * 1000;
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: "run-old",
       issueId: "ENG-1",
       issueTitle: "Old",
