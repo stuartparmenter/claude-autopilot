@@ -168,11 +168,14 @@ export async function checkOpenPRs(opts: {
     }
 
     // When labels or projects are configured, also verify this is an
-    // autopilot-managed branch (starts with "worktree-") so the monitor
-    // never acts on human PRs that happen to carry matching labels.
-    if (hasOwnershipFilter && !status.branch.startsWith("worktree-")) {
+    // autopilot-managed branch so the monitor never acts on human PRs
+    // that happen to carry matching labels.
+    const isAutopilotBranch =
+      status.branch.startsWith("autopilot-") ||
+      status.branch.startsWith("worktree-");
+    if (hasOwnershipFilter && !isAutopilotBranch) {
       warn(
-        `Skipping PR #${prNumber} (${issue.identifier}): branch '${status.branch}' is not autopilot-managed (expected 'worktree-' prefix)`,
+        `Skipping PR #${prNumber} (${issue.identifier}): branch '${status.branch}' is not autopilot-managed`,
       );
       continue;
     }

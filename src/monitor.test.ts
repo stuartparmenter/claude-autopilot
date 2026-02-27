@@ -1111,7 +1111,7 @@ describe("checkOpenPRs — ownership filtering", () => {
 
     const result = await checkOpenPRs(makeOpts(state, config));
 
-    // Branch doesn't start with worktree- → skipped with warning
+    // Branch doesn't start with autopilot- or worktree- → skipped
     expect(result).toHaveLength(0);
   });
 
@@ -1121,7 +1121,7 @@ describe("checkOpenPRs — ownership filtering", () => {
     prData = {
       merged: false,
       mergeable: null,
-      head: { ref: "worktree-ENG-123", sha: "abc123" },
+      head: { ref: "autopilot-ENG-123", sha: "abc123" },
     };
     checkRunsData = {
       check_runs: [
@@ -1134,7 +1134,7 @@ describe("checkOpenPRs — ownership filtering", () => {
 
     const result = await checkOpenPRs(makeOpts(state, config));
 
-    // Branch starts with worktree- → processed normally
+    // Branch starts with autopilot- → processed normally
     expect(result).toHaveLength(1);
     await Promise.all(result);
   });
