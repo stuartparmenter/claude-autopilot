@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+const TEST_TMP = join(process.cwd(), ".tmp", "tests");
+
 import {
   checkCloneDir,
   checkConfig,
@@ -19,7 +21,8 @@ function writeConfig(content: string): string {
 }
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "autopilot-validate-test-"));
+  mkdirSync(TEST_TMP, { recursive: true });
+  tmpDir = mkdtempSync(join(TEST_TMP, "validate-"));
 });
 
 afterEach(() => {
@@ -222,6 +225,8 @@ describe("checkGitRemote", () => {
   });
 
   test("throws when directory is not a git repo", async () => {
+    // Write a .git file to stop git walking up to the parent project's .git/
+    writeFileSync(join(tmpDir, ".git"), "");
     await expect(checkGitRemote(tmpDir)).rejects.toThrow();
   });
 

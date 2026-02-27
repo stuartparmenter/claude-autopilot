@@ -76,6 +76,10 @@ export async function executeIssue(opts: {
       cwd: projectPath,
       label: issue.identifier,
       clone: cloneName,
+      gitIdentity: {
+        userName: config.git.user_name,
+        userEmail: config.git.user_email,
+      },
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
@@ -126,7 +130,7 @@ export async function executeIssue(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Executor agent for ${issue.identifier} crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     return false;
   } finally {
     activeIssueIds.delete(issue.id);

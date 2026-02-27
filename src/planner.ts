@@ -121,7 +121,7 @@ export async function runPlanning(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Planning agent crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     state.updatePlanning({
       running: false,
       lastRunAt: Date.now(),

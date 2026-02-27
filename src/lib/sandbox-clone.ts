@@ -170,6 +170,12 @@ export async function createClone(
     );
   }
 
+  // Disable commit/tag signing in the clone — the sandbox may not have
+  // access to GPG/SSH signing keys and we don't need signed commits.
+  // This overrides any global config (e.g. commit.gpgsign=true).
+  gitSync(dest, ["config", "commit.gpgsign", "false"]);
+  gitSync(dest, ["config", "tag.gpgsign", "false"]);
+
   // Set bot identity in the clone's local config.
   if (gitIdentity) {
     const nameErr = gitSync(dest, [

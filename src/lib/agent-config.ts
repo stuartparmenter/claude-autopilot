@@ -104,6 +104,7 @@ const AGENT_ENV_ALLOWLIST = [
   "SSH_AUTH_SOCK",
   "ANTHROPIC_API_KEY",
   "CLAUDE_API_KEY",
+  "GITHUB_TOKEN",
 ];
 
 /**
@@ -118,6 +119,11 @@ export function buildAgentEnv(): Record<string, string> {
     }
   }
   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+  // Block system gitconfig (rarely useful, can cause surprises).
+  // We intentionally keep GIT_CONFIG_GLOBAL — it may contain essential
+  // settings like core.sshCommand for SSH push on WSL2/Windows.
+  // Problematic settings (commit.gpgsign) are overridden per-clone instead.
+  env.GIT_CONFIG_NOSYSTEM = "1";
   return env;
 }
 

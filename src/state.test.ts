@@ -203,12 +203,12 @@ describe("AppState — completeAgent", () => {
     expect(() => state.completeAgent("a1", "completed", {}, [])).not.toThrow();
   });
 
-  test("completeAgent with rawMessages and DB persists conversation log", () => {
+  test("completeAgent with rawMessages and DB persists conversation log", async () => {
     const db = openDb(":memory:");
     state.setDb(db);
     state.addAgent("a1", "ISSUE-1", "Test");
     const messages = [{ type: "text", content: "hello" }];
-    state.completeAgent("a1", "completed", {}, messages);
+    await state.completeAgent("a1", "completed", {}, messages);
     const agentId = state.getHistory()[0].id;
     const log = getConversationLog(db, agentId);
     expect(log).not.toBeNull();
@@ -216,11 +216,11 @@ describe("AppState — completeAgent", () => {
     db.close();
   });
 
-  test("completeAgent with empty rawMessages does not persist conversation log", () => {
+  test("completeAgent with empty rawMessages does not persist conversation log", async () => {
     const db = openDb(":memory:");
     state.setDb(db);
     state.addAgent("a1", "ISSUE-1", "Test");
-    state.completeAgent("a1", "completed", {}, []);
+    await state.completeAgent("a1", "completed", {}, []);
     const agentId = state.getHistory()[0].id;
     expect(getConversationLog(db, agentId)).toBeNull();
     db.close();

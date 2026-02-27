@@ -38,8 +38,8 @@ If the fetch fails (branch doesn't exist on remote), STOP immediately and report
 Before making any changes, verify that this PR is autopilot-managed.
 
 Check the branch name `{{BRANCH}}`:
-- Autopilot branches follow the pattern `autopilot-<identifier>` (e.g., `autopilot-ENG-123`)
-- If the branch does NOT start with `autopilot-`, STOP immediately. Add a comment to the Linear issue explaining that the PR branch `{{BRANCH}}` is not autopilot-managed, and do NOT proceed with any changes.
+- Autopilot branches start with `autopilot-` (e.g., `autopilot-ENG-123`) or `worktree-` (legacy naming, e.g., `worktree-ENG-31`)
+- If the branch does NOT start with `autopilot-` or `worktree-`, STOP immediately. Add a comment to the Linear issue explaining that the PR branch `{{BRANCH}}` is not autopilot-managed, and do NOT proceed with any changes.
 
 ---
 
@@ -94,6 +94,8 @@ If any check fails, analyze and fix (max 3 attempts). If still failing after 3 a
 ## Phase 5: Push and Reply
 
 ### Push changes (only if code changes were made):
+
+ALWAYS use the `origin` remote — NEVER construct a URL or use the GitHub MCP to push. The remote is already configured correctly.
 
 ```
 git add <files you changed>

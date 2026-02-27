@@ -304,6 +304,10 @@ async function respondToReview(opts: {
     label: `review-${issueIdentifier}`,
     clone: cloneName,
     cloneBranch: branch,
+    gitIdentity: {
+      userName: config.git.user_name,
+      userEmail: config.git.user_email,
+    },
     timeoutMs,
     inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
     model: config.executor.model,
@@ -381,6 +385,10 @@ async function fixPR(opts: {
       label: `fix-${issueIdentifier}`,
       clone: cloneName,
       cloneBranch: branch,
+      gitIdentity: {
+        userName: config.git.user_name,
+        userEmail: config.git.user_email,
+      },
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
@@ -402,7 +410,7 @@ async function fixPR(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Fixer agent for ${issueIdentifier} crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     return false;
   } finally {
     activeFixerIssues.delete(issueId);
