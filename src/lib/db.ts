@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ActivityEntry, AgentResult } from "../state";
+import { error, warn } from "./logger";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_runs (
@@ -50,6 +51,69 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   actor TEXT NOT NULL
 );
 `;
+
+// ---- SQLITE_BUSY retry logic ----
+
+/**
+ * Returns true for SQLITE_BUSY (code 5) and SQLITE_LOCKED (code 6) errors.
+ * These are transient lock-contention errors that can be retried.
+ */
+export function isSqliteBusy(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // Bun's SQLiteError exposes an 'errno' property with the SQLite error code.
+  const e = err as Error & { errno?: unknown; code?: unknown };
+  if (typeof e.errno === "number") return e.errno === 5 || e.errno === 6;
+  if (typeof e.code === "number") return e.code === 5 || e.code === 6;
+  const msg = err.message.toLowerCase();
+  return msg.includes("sqlite_busy") || msg.includes("database is locked");
+}
+
+interface DbRetryOptions {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+/**
+ * Retry a synchronous SQLite write operation on SQLITE_BUSY with exponential
+ * backoff + jitter. Consistent with the withRetry() pattern in retry.ts, but
+ * without circuit-breaker integration (SQLite is a local resource, not a remote
+ * service). On exhaustion, logs an error with the full context data before
+ * rethrowing so the data is never silently lost.
+ */
+async function withDbRetry<T>(
+  fn: () => T,
+  label: string,
+  context: unknown,
+  opts: DbRetryOptions = {},
+): Promise<T> {
+  const maxAttempts = opts.maxAttempts ?? 5;
+  const baseDelayMs = opts.baseDelayMs ?? 50;
+  const maxDelayMs = opts.maxDelayMs ?? 2_000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return fn();
+    } catch (err) {
+      if (attempt === maxAttempts || !isSqliteBusy(err)) {
+        if (isSqliteBusy(err)) {
+          error(
+            `[${label}] SQLITE_BUSY after ${maxAttempts} attempts — data not saved: ${JSON.stringify(context)}`,
+          );
+        }
+        throw err;
+      }
+      const expo = baseDelayMs * 2 ** (attempt - 1);
+      const jitter = Math.random() * 0.3 * expo;
+      const delayMs = Math.round(Math.min(expo + jitter, maxDelayMs));
+      warn(
+        `[${label}] attempt ${attempt}/${maxAttempts} failed (SQLITE_BUSY) — retrying in ${delayMs}ms`,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error("unreachable");
+}
 
 export interface OAuthTokenRow {
   accessToken: string;
@@ -140,25 +204,33 @@ export function openDb(dbFilePath: string): Database {
   return db;
 }
 
-export function insertAgentRun(db: Database, result: AgentResult): void {
-  db.run(
-    `INSERT OR REPLACE INTO agent_runs
-     (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      result.id,
-      result.issueId,
-      result.issueTitle,
-      result.status,
-      result.startedAt,
-      result.finishedAt,
-      result.costUsd ?? null,
-      result.durationMs ?? null,
-      result.numTurns ?? null,
-      result.error ?? null,
-      result.linearIssueId ?? null,
-      result.sessionId ?? null,
-    ],
+export async function insertAgentRun(
+  db: Database,
+  result: AgentResult,
+): Promise<void> {
+  await withDbRetry(
+    () =>
+      db.run(
+        `INSERT OR REPLACE INTO agent_runs
+         (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          result.id,
+          result.issueId,
+          result.issueTitle,
+          result.status,
+          result.startedAt,
+          result.finishedAt,
+          result.costUsd ?? null,
+          result.durationMs ?? null,
+          result.numTurns ?? null,
+          result.error ?? null,
+          result.linearIssueId ?? null,
+          result.sessionId ?? null,
+        ],
+      ),
+    "insertAgentRun",
+    result,
   );
 }
 
@@ -340,11 +412,11 @@ export function getTodayAnalytics(db: Database): TodayAnalyticsResult {
   };
 }
 
-export function insertActivityLogs(
+export async function insertActivityLogs(
   db: Database,
   agentRunId: string,
   activities: ActivityEntry[],
-): void {
+): Promise<void> {
   if (activities.length === 0) return;
   const stmt = db.prepare(
     `INSERT INTO activity_logs (agent_run_id, timestamp, type, summary, detail, is_subagent) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -361,7 +433,10 @@ export function insertActivityLogs(
       );
     }
   });
-  insertMany(activities);
+  await withDbRetry(() => insertMany(activities), "insertActivityLogs", {
+    agentRunId,
+    count: activities.length,
+  });
 }
 
 export function getActivityLogs(
@@ -393,14 +468,19 @@ export function pruneActivityLogs(db: Database, retentionDays: number): number {
   return result.changes;
 }
 
-export function insertConversationLog(
+export async function insertConversationLog(
   db: Database,
   agentRunId: string,
   messagesJson: string,
-): void {
-  db.run(
-    `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
-    [agentRunId, messagesJson, Date.now()],
+): Promise<void> {
+  await withDbRetry(
+    () =>
+      db.run(
+        `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
+        [agentRunId, messagesJson, Date.now()],
+      ),
+    "insertConversationLog",
+    { agentRunId },
   );
 }
 
@@ -447,24 +527,29 @@ export function getOAuthToken(
   };
 }
 
-export function saveOAuthToken(
+export async function saveOAuthToken(
   db: Database,
   service: string,
   token: OAuthTokenRow,
-): void {
-  db.run(
-    `INSERT OR REPLACE INTO oauth_tokens
-     (service, access_token, refresh_token, expires_at, token_type, scope, actor)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      service,
-      token.accessToken,
-      token.refreshToken,
-      token.expiresAt,
-      token.tokenType,
-      token.scope,
-      token.actor,
-    ],
+): Promise<void> {
+  await withDbRetry(
+    () =>
+      db.run(
+        `INSERT OR REPLACE INTO oauth_tokens
+         (service, access_token, refresh_token, expires_at, token_type, scope, actor)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          service,
+          token.accessToken,
+          token.refreshToken,
+          token.expiresAt,
+          token.tokenType,
+          token.scope,
+          token.actor,
+        ],
+      ),
+    "saveOAuthToken",
+    { service },
   );
 }
 
@@ -521,7 +606,10 @@ export function getRunWithTranscript(
   };
 }
 
-export function markRunsReviewed(db: Database, agentRunIds: string[]): void {
+export async function markRunsReviewed(
+  db: Database,
+  agentRunIds: string[],
+): Promise<void> {
   if (agentRunIds.length === 0) return;
   const stmt = db.prepare(`UPDATE agent_runs SET reviewed_at = ? WHERE id = ?`);
   const updateMany = db.transaction((ids: string[]) => {
@@ -530,5 +618,7 @@ export function markRunsReviewed(db: Database, agentRunIds: string[]): void {
       stmt.run(now, id);
     }
   });
-  updateMany(agentRunIds);
+  await withDbRetry(() => updateMany(agentRunIds), "markRunsReviewed", {
+    ids: agentRunIds,
+  });
 }

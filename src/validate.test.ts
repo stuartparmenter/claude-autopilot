@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+const TEST_TMP = join(process.cwd(), ".tmp", "tests");
+
 import {
+  checkCloneDir,
   checkConfig,
   checkEnvVars,
   checkGitRemote,
   checkPromptTemplates,
-  checkWorktreeDir,
   runPreflight,
 } from "./validate";
 
@@ -19,7 +21,8 @@ function writeConfig(content: string): string {
 }
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "autopilot-validate-test-"));
+  mkdirSync(TEST_TMP, { recursive: true });
+  tmpDir = mkdtempSync(join(TEST_TMP, "validate-"));
 });
 
 afterEach(() => {
@@ -163,27 +166,27 @@ describe("checkEnvVars", () => {
   });
 });
 
-describe("checkWorktreeDir", () => {
+describe("checkCloneDir", () => {
   test("passes and reports path as writable", async () => {
-    const result = await checkWorktreeDir(tmpDir);
+    const result = await checkCloneDir(tmpDir);
     expect(result).toContain("writable");
   });
 
-  test("creates the worktree directory if it does not exist", async () => {
+  test("creates the clone directory if it does not exist", async () => {
     const { existsSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const worktreeBase = resolve(tmpDir, ".claude", "worktrees");
-    expect(existsSync(worktreeBase)).toBe(false);
-    await checkWorktreeDir(tmpDir);
-    expect(existsSync(worktreeBase)).toBe(true);
+    const cloneBase = resolve(tmpDir, ".claude", "clones");
+    expect(existsSync(cloneBase)).toBe(false);
+    await checkCloneDir(tmpDir);
+    expect(existsSync(cloneBase)).toBe(true);
   });
 
   test("does not leave temporary files behind", async () => {
     const { readdirSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    await checkWorktreeDir(tmpDir);
-    const worktreeBase = resolve(tmpDir, ".claude", "worktrees");
-    const files = readdirSync(worktreeBase);
+    await checkCloneDir(tmpDir);
+    const cloneBase = resolve(tmpDir, ".claude", "clones");
+    const files = readdirSync(cloneBase);
     expect(files).toHaveLength(0);
   });
 });
@@ -222,6 +225,8 @@ describe("checkGitRemote", () => {
   });
 
   test("throws when directory is not a git repo", async () => {
+    // Write a .git file to stop git walking up to the parent project's .git/
+    writeFileSync(join(tmpDir, ".git"), "");
     await expect(checkGitRemote(tmpDir)).rejects.toThrow();
   });
 
@@ -305,7 +310,7 @@ describe("runPreflight", () => {
     const config = loadConfig(tmpDir);
     const result = await runPreflight(tmpDir, config);
 
-    // runPreflight runs 5 checks: env vars, git remote, worktree dir, linear, github
+    // runPreflight runs 5 checks: env vars, git remote, clone dir, linear, github
     expect(result.results).toHaveLength(5);
     expect(result.results.every((r) => typeof r.name === "string")).toBe(true);
     expect(result.results.every((r) => typeof r.pass === "boolean")).toBe(true);

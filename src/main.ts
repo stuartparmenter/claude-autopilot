@@ -24,16 +24,17 @@ import {
   resolveLinearIds,
   updateIssue,
 } from "./lib/linear";
-import { getCurrentLinearToken, initLinearAuth } from "./lib/linear-oauth";
+import { initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
+import { sweepClones, sweepLegacyWorktrees } from "./lib/sandbox-clone";
 import { sanitizeMessage } from "./lib/sanitize";
-import { sweepWorktrees } from "./lib/worktree";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
 import { runReviewer, shouldRunReviewer } from "./reviewer";
 import { createApp } from "./server";
 import { type AgentState, AppState } from "./state";
+import { runPreflight } from "./validate";
 
 // --- Parse args ---
 
@@ -81,44 +82,31 @@ const authDbPath = resolve(projectPath, config.persistence.db_path);
 const authDb = openDb(authDbPath);
 await initLinearAuth(authDb);
 
-if (!getCurrentLinearToken()) {
+// Configure async client with OAuth auto-refresh support.
+// Must happen before runPreflight() which calls checkLinear() -> getLinearClientAsync().
+configureLinearAuth(
+  authDb,
+  config.linear.oauth
+    ? {
+        clientId: config.linear.oauth.client_id,
+        clientSecret: config.linear.oauth.client_secret,
+      }
+    : undefined,
+);
+
+// --- Preflight validation ---
+const preflight = await runPreflight(projectPath, config);
+for (const result of preflight.results) {
+  if (result.pass) {
+    ok(`${result.name}: ${result.detail}`);
+  } else {
+    error(`${result.name}: ${result.detail}`);
+  }
+}
+if (!preflight.passed) {
   fatal(
-    "No Linear authentication configured.\n" +
-      "Option 1: Set LINEAR_API_KEY environment variable.\n" +
-      "  Create one at: https://linear.app/settings/api\n" +
-      "  Then: export LINEAR_API_KEY=lin_api_...\n" +
-      "Option 2: Connect via OAuth at the dashboard (/auth/linear).\n" +
-      "  Required: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET env vars.",
+    "Preflight checks failed. Fix the issues above and try again.\nRun 'bun run validate <project-path>' for detailed diagnostics.",
   );
-}
-
-if (!process.env.GITHUB_TOKEN) {
-  error(
-    "GITHUB_TOKEN environment variable is not set.\n" +
-      "Create one at: https://github.com/settings/tokens\n" +
-      "Required scopes: repo (for PR monitoring and GitHub MCP).\n" +
-      "Then: export GITHUB_TOKEN=ghp_...",
-  );
-}
-
-// The Agent SDK accepts ANTHROPIC_API_KEY or Claude Code subscription auth.
-// Check common env vars so the user gets a clear message instead of a cryptic
-// failure minutes into the run when the first agent spawns.
-if (
-  !process.env.ANTHROPIC_API_KEY &&
-  !process.env.CLAUDE_API_KEY &&
-  !process.env.CLAUDE_CODE_USE_BEDROCK &&
-  !process.env.CLAUDE_CODE_USE_VERTEX
-) {
-  info(
-    "WARNING: No Anthropic API key found (ANTHROPIC_API_KEY or CLAUDE_API_KEY).",
-  );
-  info(
-    "If you are using Claude Code subscription auth, this is fine. Otherwise,",
-  );
-  info("agents will fail when they try to make API calls.");
-  info("Set: export ANTHROPIC_API_KEY=sk-ant-...");
-  console.log();
 }
 
 const dashboardToken = process.env.AUTOPILOT_DASHBOARD_TOKEN || undefined;
@@ -180,18 +168,6 @@ ok(
 // --- Init state and server ---
 
 const state = new AppState(config.executor.parallel);
-
-// Configure ENG-107's async client with OAuth auto-refresh support.
-// Must happen before resolveLinearIds() which calls getLinearClientAsync().
-configureLinearAuth(
-  authDb,
-  config.linear.oauth
-    ? {
-        clientId: config.linear.oauth.client_id,
-        clientSecret: config.linear.oauth.client_secret,
-      }
-    : undefined,
-);
 
 if (config.persistence.enabled) {
   // Reuse the already-opened authDb (same file) for persistence
@@ -314,9 +290,12 @@ let lastProjectsCheckAt = 0;
 
 let consecutiveFailures = 0;
 
-// Sweep stale worktrees left behind by previous crashed runs.
-// No agents are running yet, so every worktree found is stale.
-await sweepWorktrees(projectPath, new Set());
+// Sweep stale clones left behind by previous crashed runs.
+// No agents are running yet, so every clone found is stale.
+await sweepClones(projectPath, new Set());
+
+// One-time migration: clean up legacy .claude/worktrees/ from before the clone migration.
+await sweepLegacyWorktrees(projectPath);
 
 info("Starting main loop (Ctrl+C to stop)...");
 console.log();

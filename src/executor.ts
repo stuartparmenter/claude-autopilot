@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
@@ -8,7 +10,7 @@ import {
   validateIdentifier,
 } from "./lib/linear";
 import { info, warn } from "./lib/logger";
-import { buildPrompt } from "./lib/prompt";
+import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import { sanitizeMessage } from "./lib/sanitize";
 import type { AppState } from "./state";
 
@@ -42,34 +44,47 @@ export async function executeIssue(opts: {
   // Move to In Progress immediately so it's not picked up again
   await updateIssue(issue.id, { stateId: linearIds.states.in_progress });
 
-  const prompt = buildPrompt(
-    "executor",
-    {
-      ISSUE_ID: issue.identifier,
-      IN_REVIEW_STATE: config.linear.states.in_review,
-      BLOCKED_STATE: config.linear.states.blocked,
-      REPO_NAME: projectPath.split("/").pop() || "unknown",
-      AUTOMERGE_INSTRUCTION: config.github.automerge
-        ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
-        : "Skip — auto-merge is not enabled for this project.",
-    },
-    projectPath,
-  );
+  const promptBuilder = (branch: string) =>
+    buildPrompt(
+      "executor",
+      {
+        ISSUE_ID: issue.identifier,
+        BRANCH: branch,
+        IN_REVIEW_STATE: config.linear.states.in_review,
+        BLOCKED_STATE: config.linear.states.blocked,
+        REPO_NAME: projectPath.split("/").pop() || "unknown",
+        AUTOMERGE_INSTRUCTION: config.github.automerge
+          ? "Enable auto-merge on the PR using the `enable_auto_merge` tool from the `autopilot` MCP server. If enabling auto-merge fails (e.g., the repository does not have auto-merge enabled, or branch protection rules are not configured), note the failure in your Linear comment but do NOT treat it as a blocking error."
+          : "Skip — auto-merge is not enabled for this project.",
+      },
+      projectPath,
+    );
 
-  const worktree = issue.identifier;
+  const cloneName = issue.identifier;
   const timeoutMs = config.executor.timeout_minutes * 60 * 1000;
+  const plugins: SdkPluginConfig[] = [
+    {
+      type: "local",
+      path: resolve(AUTOPILOT_ROOT, "plugins/git-safety"),
+    },
+  ];
 
   try {
     const result = await runClaude({
-      prompt,
+      prompt: promptBuilder,
       cwd: projectPath,
       label: issue.identifier,
-      worktree,
+      clone: cloneName,
+      gitIdentity: {
+        userName: config.git.user_name,
+        userEmail: config.git.user_email,
+      },
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
+      plugins,
       parentSignal: opts.shutdownSignal,
       onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
@@ -88,7 +103,7 @@ export async function executeIssue(opts: {
       } else {
         await updateIssue(issue.id, {
           stateId: linearIds.states.blocked,
-          comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the \`worktree-${worktree}\` branch for any progress.`,
+          comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the agent's branch for any progress.`,
         });
       }
       return false;
@@ -114,7 +129,7 @@ export async function executeIssue(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Executor agent for ${issue.identifier} crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     return false;
   } finally {
     activeIssueIds.delete(issue.id);
@@ -133,7 +148,10 @@ export async function recoverStaleIssues(opts: {
 }): Promise<number> {
   const { config, linearIds, state } = opts;
 
-  const inProgressIssues = await getInProgressIssues(linearIds);
+  const inProgressIssues = await getInProgressIssues(linearIds, 50, {
+    labels: config.linear.labels,
+    projects: config.linear.projects,
+  });
   if (inProgressIssues.length === 0) return 0;
 
   const activeIds = new Set(

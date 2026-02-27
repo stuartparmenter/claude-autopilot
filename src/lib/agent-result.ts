@@ -46,9 +46,9 @@ export function handleAgentResult(
     warn(`${label} inactive, timed out`);
     const meta = { ...metrics, error: "Inactivity timeout" };
     if (rawMessages !== undefined) {
-      state.completeAgent(agentId, "timed_out", meta, rawMessages);
+      void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
-      state.completeAgent(agentId, "timed_out", meta);
+      void state.completeAgent(agentId, "timed_out", meta);
     }
     return { status: "timed_out", metrics };
   }
@@ -57,9 +57,9 @@ export function handleAgentResult(
     warn(`${label} timed out`);
     const meta = { ...metrics, error: "Timed out" };
     if (rawMessages !== undefined) {
-      state.completeAgent(agentId, "timed_out", meta, rawMessages);
+      void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
-      state.completeAgent(agentId, "timed_out", meta);
+      void state.completeAgent(agentId, "timed_out", meta);
     }
     return { status: "timed_out", metrics };
   }
@@ -68,9 +68,9 @@ export function handleAgentResult(
     warn(`${label} failed: ${result.error}`);
     const meta = { ...metrics, error: result.error };
     if (rawMessages !== undefined) {
-      state.completeAgent(agentId, "failed", meta, rawMessages);
+      void state.completeAgent(agentId, "failed", meta, rawMessages);
     } else {
-      state.completeAgent(agentId, "failed", meta);
+      void state.completeAgent(agentId, "failed", meta);
     }
     return { status: "failed", metrics };
   }
@@ -78,9 +78,9 @@ export function handleAgentResult(
   ok(`${label} completed successfully`);
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
   if (rawMessages !== undefined) {
-    state.completeAgent(agentId, "completed", metrics, rawMessages);
+    void state.completeAgent(agentId, "completed", metrics, rawMessages);
   } else {
-    state.completeAgent(agentId, "completed", metrics);
+    void state.completeAgent(agentId, "completed", metrics);
   }
   return { status: "completed", metrics };
 }

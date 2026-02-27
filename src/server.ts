@@ -156,6 +156,7 @@ export interface HealthResponse {
       running: boolean;
       lastResult: string | null;
       lastRunAt: number | null;
+      sessionCount: number;
     };
     projects: { status: HealthStatus };
   };
@@ -226,6 +227,7 @@ export function computeHealth(
         running: snap.planning.running,
         lastResult: snap.planning.lastResult ?? null,
         lastRunAt: snap.planning.lastRunAt ?? null,
+        sessionCount: snap.planningHistory.length,
       },
       projects: {
         status: projectsStatus,
@@ -662,6 +664,10 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           ${String(snap.history.filter((h) => h.status !== "completed").length)}
         </div>
         <div class="label">Failed</div>
+      </div>
+      <div class="stat">
+        <div class="value">${String(snap.planningHistory.length)}</div>
+        <div class="label">Plans</div>
       </div>
     `);
   });

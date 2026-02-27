@@ -9,6 +9,7 @@ import {
   findOrCreateLabel,
   findState,
   findTeam,
+  getInProgressIssues,
   getLinearClient,
   getLinearClientAsync,
   getReadyIssues,
@@ -827,6 +828,110 @@ describe("getTriageIssues", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getInProgressIssues
+// ---------------------------------------------------------------------------
+
+describe("getInProgressIssues", () => {
+  beforeEach(() => {
+    mockIssuesNodes = [];
+    mockIssuesForReady.mockClear();
+    setClientForTesting(makeStandardClient());
+  });
+
+  test("returns empty array when no in-progress issues exist", async () => {
+    const result = await getInProgressIssues(TEST_IDS);
+    expect(result).toEqual([]);
+  });
+
+  test("passes correct filter and limit to API", async () => {
+    await getInProgressIssues(TEST_IDS, 25);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+      },
+      first: 25,
+    });
+  });
+
+  test("default limit is 50", async () => {
+    await getInProgressIssues(TEST_IDS);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith(
+      expect.objectContaining({ first: 50 }),
+    );
+  });
+
+  test("no filters — sends only team and state filter (backwards compat)", async () => {
+    await getInProgressIssues(TEST_IDS);
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+      },
+      first: 50,
+    });
+  });
+
+  test("labels filter — sends labels.some.name.in filter", async () => {
+    await getInProgressIssues(TEST_IDS, 50, { labels: ["autopilot:managed"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+        labels: { some: { name: { in: ["autopilot:managed"] } } },
+      },
+      first: 50,
+    });
+  });
+
+  test("projects filter — sends project.name.in filter", async () => {
+    await getInProgressIssues(TEST_IDS, 50, { projects: ["Alpha"] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+        project: { name: { in: ["Alpha"] } },
+      },
+      first: 50,
+    });
+  });
+
+  test("labels + projects — sends both labels and project filters", async () => {
+    await getInProgressIssues(TEST_IDS, 50, {
+      labels: ["autopilot:managed"],
+      projects: ["Alpha"],
+    });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+        labels: { some: { name: { in: ["autopilot:managed"] } } },
+        project: { name: { in: ["Alpha"] } },
+      },
+      first: 50,
+    });
+  });
+
+  test("empty arrays — omits labels and project filters (same as no filter)", async () => {
+    await getInProgressIssues(TEST_IDS, 50, { labels: [], projects: [] });
+
+    expect(mockIssuesForReady).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: TEST_IDS.teamId } },
+        state: { id: { eq: TEST_IDS.states.in_progress } },
+      },
+      first: 50,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // countIssuesInState
 // ---------------------------------------------------------------------------
 
@@ -1260,7 +1365,7 @@ describe("getLinearClientAsync", () => {
   test("returns client using OAuth access token when DB has a fresh token", async () => {
     delete process.env.LINEAR_API_KEY;
     // Save a fresh OAuth token to the DB (expires 1 hour from now)
-    saveOAuthToken(db, "linear", {
+    await saveOAuthToken(db, "linear", {
       accessToken: "oauth-access-token",
       refreshToken: "oauth-refresh-token",
       expiresAt: Date.now() + 60 * 60 * 1000,

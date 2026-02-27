@@ -81,6 +81,19 @@ export interface ReviewerStatus {
   lastResult?: "completed" | "skipped" | "failed" | "timed_out";
 }
 
+export interface PlanningSession {
+  id: string;
+  agentRunId: string;
+  startedAt: number;
+  finishedAt: number;
+  status: "completed" | "failed" | "timed_out";
+  summary?: string;
+  issuesFiledCount: number;
+  issuesFiled?: Array<{ identifier: string; title: string }>;
+  findingsRejected?: Array<{ finding: string; reason: string }>;
+  costUsd?: number;
+}
+
 export interface ApiHealthStatus {
   linear: CircuitState;
   github: CircuitState;
@@ -92,6 +105,7 @@ export interface AppStateSnapshot {
   history: AgentResult[];
   queue: QueueInfo;
   planning: PlanningStatus;
+  planningHistory: PlanningSession[];
   reviewer: ReviewerStatus;
   startedAt: number;
   apiHealth: ApiHealthStatus;
@@ -111,6 +125,7 @@ export class AppState {
     lastChecked: 0,
   };
   private planning: PlanningStatus = { running: false };
+  private planningHistory: PlanningSession[] = [];
   private reviewer: ReviewerStatus = { running: false };
   private paused = false;
   private issueFailureCount = new Map<string, number>();
@@ -154,7 +169,7 @@ export class AppState {
     }
   }
 
-  completeAgent(
+  async completeAgent(
     agentId: string,
     status: "completed" | "failed" | "timed_out",
     meta?: {
@@ -165,7 +180,7 @@ export class AppState {
       error?: string;
     },
     rawMessages?: unknown[],
-  ): void {
+  ): Promise<void> {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
@@ -193,18 +208,8 @@ export class AppState {
       error: agent.error,
     };
 
-    if (this.db) {
-      insertAgentRun(this.db, result);
-      insertActivityLogs(this.db, result.id, agent.activities);
-      if (rawMessages && rawMessages.length > 0) {
-        insertConversationLog(
-          this.db,
-          result.id,
-          sanitizeMessage(JSON.stringify(rawMessages)),
-        );
-      }
-    }
-
+    // Update in-memory state synchronously (before any awaits) so callers
+    // that don't await this function still see updated state immediately.
     if (meta?.costUsd && meta.costUsd > 0) {
       this.addSpend(meta.costUsd);
     }
@@ -217,6 +222,19 @@ export class AppState {
 
     this.controllers.delete(agentId);
     this.agents.delete(agentId);
+
+    // Persist to database with retry logic (async, after in-memory updates).
+    if (this.db) {
+      await insertAgentRun(this.db, result);
+      await insertActivityLogs(this.db, result.id, agent.activities);
+      if (rawMessages && rawMessages.length > 0) {
+        await insertConversationLog(
+          this.db,
+          result.id,
+          sanitizeMessage(JSON.stringify(rawMessages)),
+        );
+      }
+    }
   }
 
   registerAgentController(agentId: string, controller: AbortController): void {
@@ -289,6 +307,17 @@ export class AppState {
 
   getPlanningStatus(): PlanningStatus {
     return this.planning;
+  }
+
+  getPlanningHistory(): PlanningSession[] {
+    return this.planningHistory;
+  }
+
+  addPlanningSession(session: PlanningSession): void {
+    this.planningHistory.unshift(session);
+    if (this.planningHistory.length > 20) {
+      this.planningHistory = this.planningHistory.slice(0, 20);
+    }
   }
 
   updateReviewer(status: Partial<ReviewerStatus>): void {
@@ -437,6 +466,7 @@ export class AppState {
       history: this.history,
       queue: this.queue,
       planning: this.planning,
+      planningHistory: this.planningHistory,
       reviewer: this.reviewer,
       startedAt: this.startedAt,
       apiHealth: defaultRegistry.getAllStates(),

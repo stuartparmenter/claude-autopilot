@@ -11,6 +11,7 @@ import {
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
+  isSqliteBusy,
   markRunsReviewed,
   openDb,
   pruneActivityLogs,
@@ -143,9 +144,52 @@ describe("openDb", () => {
   });
 });
 
+describe("isSqliteBusy", () => {
+  test("returns true for SQLITE_BUSY (errno=5)", () => {
+    const err = Object.assign(new Error("database is locked"), { errno: 5 });
+    expect(isSqliteBusy(err)).toBe(true);
+  });
+
+  test("returns true for SQLITE_LOCKED (errno=6)", () => {
+    const err = Object.assign(new Error("table is locked"), { errno: 6 });
+    expect(isSqliteBusy(err)).toBe(true);
+  });
+
+  test("returns true for SQLITE_BUSY via code property (code=5)", () => {
+    const err = Object.assign(new Error("database is locked"), { code: 5 });
+    expect(isSqliteBusy(err)).toBe(true);
+  });
+
+  test("returns false for other SQLite error codes", () => {
+    const err = Object.assign(new Error("no such table"), { errno: 1 });
+    expect(isSqliteBusy(err)).toBe(false);
+  });
+
+  test("returns true when message contains 'database is locked'", () => {
+    expect(isSqliteBusy(new Error("database is locked"))).toBe(true);
+  });
+
+  test("returns true when message contains 'sqlite_busy'", () => {
+    expect(isSqliteBusy(new Error("SQLITE_BUSY: database is locked"))).toBe(
+      true,
+    );
+  });
+
+  test("returns false for non-Error values", () => {
+    expect(isSqliteBusy("string error")).toBe(false);
+    expect(isSqliteBusy(null)).toBe(false);
+    expect(isSqliteBusy(undefined)).toBe(false);
+  });
+
+  test("returns false for unrelated errors", () => {
+    expect(isSqliteBusy(new Error("no such table: agent_runs"))).toBe(false);
+    expect(isSqliteBusy(new Error("UNIQUE constraint failed"))).toBe(false);
+  });
+});
+
 describe("insertAgentRun and getRecentRuns", () => {
-  test("inserts and retrieves a run", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("inserts and retrieves a run", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const runs = getRecentRuns(db);
     expect(runs).toHaveLength(1);
     expect(runs[0].id).toBe("a1");
@@ -154,17 +198,23 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(runs[0].status).toBe("completed");
   });
 
-  test("retrieves runs in newest-first order by finished_at", () => {
-    insertAgentRun(db, makeResult("a1", { startedAt: 1000, finishedAt: 2000 }));
-    insertAgentRun(db, makeResult("a2", { startedAt: 3000, finishedAt: 4000 }));
+  test("retrieves runs in newest-first order by finished_at", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { startedAt: 1000, finishedAt: 2000 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", { startedAt: 3000, finishedAt: 4000 }),
+    );
     const runs = getRecentRuns(db);
     expect(runs[0].id).toBe("a2");
     expect(runs[1].id).toBe("a1");
   });
 
-  test("respects the limit parameter", () => {
+  test("respects the limit parameter", async () => {
     for (let i = 0; i < 5; i++) {
-      insertAgentRun(
+      await insertAgentRun(
         db,
         makeResult(`a${i}`, {
           startedAt: i * 1000,
@@ -176,8 +226,8 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(runs).toHaveLength(3);
   });
 
-  test("stores and retrieves optional fields", () => {
-    insertAgentRun(
+  test("stores and retrieves optional fields", async () => {
+    await insertAgentRun(
       db,
       makeResult("a1", { costUsd: 0.05, durationMs: 30000, numTurns: 10 }),
     );
@@ -187,8 +237,8 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(run.numTurns).toBe(10);
   });
 
-  test("optional fields are undefined when not set", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("optional fields are undefined when not set", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const run = getRecentRuns(db)[0];
     expect(run.costUsd).toBeUndefined();
     expect(run.durationMs).toBeUndefined();
@@ -196,8 +246,8 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(run.error).toBeUndefined();
   });
 
-  test("stores error field when set", () => {
-    insertAgentRun(
+  test("stores error field when set", async () => {
+    await insertAgentRun(
       db,
       makeResult("a1", { status: "failed", error: "timeout" }),
     );
@@ -206,21 +256,24 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(run.error).toBe("timeout");
   });
 
-  test("stores and retrieves linearIssueId when set", () => {
-    insertAgentRun(db, makeResult("a1", { linearIssueId: "uuid-1234-abcd" }));
+  test("stores and retrieves linearIssueId when set", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { linearIssueId: "uuid-1234-abcd" }),
+    );
     const run = getRecentRuns(db)[0];
     expect(run.linearIssueId).toBe("uuid-1234-abcd");
   });
 
-  test("linearIssueId is undefined when not set", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("linearIssueId is undefined when not set", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const run = getRecentRuns(db)[0];
     expect(run.linearIssueId).toBeUndefined();
   });
 
-  test("OR REPLACE upserts a run with the same id", () => {
-    insertAgentRun(db, makeResult("a1", { status: "completed" }));
-    insertAgentRun(db, makeResult("a1", { status: "failed" }));
+  test("OR REPLACE upserts a run with the same id", async () => {
+    await insertAgentRun(db, makeResult("a1", { status: "completed" }));
+    await insertAgentRun(db, makeResult("a1", { status: "failed" }));
     const runs = getRecentRuns(db);
     expect(runs).toHaveLength(1);
     expect(runs[0].status).toBe("failed");
@@ -230,9 +283,9 @@ describe("insertAgentRun and getRecentRuns", () => {
     expect(getRecentRuns(db)).toEqual([]);
   });
 
-  test("default limit is 50", () => {
+  test("default limit is 50", async () => {
     for (let i = 0; i < 60; i++) {
-      insertAgentRun(
+      await insertAgentRun(
         db,
         makeResult(`a${i}`, {
           startedAt: i * 1000,
@@ -254,58 +307,58 @@ describe("getAnalytics", () => {
     expect(result.avgDurationMs).toBe(0);
   });
 
-  test("calculates success rate correctly", () => {
-    insertAgentRun(db, makeResult("a1", { status: "completed" }));
-    insertAgentRun(db, makeResult("a2", { status: "completed" }));
-    insertAgentRun(db, makeResult("a3", { status: "failed" }));
-    insertAgentRun(db, makeResult("a4", { status: "timed_out" }));
+  test("calculates success rate correctly", async () => {
+    await insertAgentRun(db, makeResult("a1", { status: "completed" }));
+    await insertAgentRun(db, makeResult("a2", { status: "completed" }));
+    await insertAgentRun(db, makeResult("a3", { status: "failed" }));
+    await insertAgentRun(db, makeResult("a4", { status: "timed_out" }));
     const result = getAnalytics(db);
     expect(result.totalRuns).toBe(4);
     expect(result.successRate).toBe(0.5);
   });
 
-  test("success rate is 1.0 when all runs succeed", () => {
-    insertAgentRun(db, makeResult("a1", { status: "completed" }));
-    insertAgentRun(db, makeResult("a2", { status: "completed" }));
+  test("success rate is 1.0 when all runs succeed", async () => {
+    await insertAgentRun(db, makeResult("a1", { status: "completed" }));
+    await insertAgentRun(db, makeResult("a2", { status: "completed" }));
     const result = getAnalytics(db);
     expect(result.successRate).toBe(1.0);
   });
 
-  test("success rate is 0 when all runs fail", () => {
-    insertAgentRun(db, makeResult("a1", { status: "failed" }));
+  test("success rate is 0 when all runs fail", async () => {
+    await insertAgentRun(db, makeResult("a1", { status: "failed" }));
     const result = getAnalytics(db);
     expect(result.successRate).toBe(0);
   });
 
-  test("sums total cost correctly", () => {
-    insertAgentRun(db, makeResult("a1", { costUsd: 0.1 }));
-    insertAgentRun(db, makeResult("a2", { costUsd: 0.2 }));
+  test("sums total cost correctly", async () => {
+    await insertAgentRun(db, makeResult("a1", { costUsd: 0.1 }));
+    await insertAgentRun(db, makeResult("a2", { costUsd: 0.2 }));
     const result = getAnalytics(db);
     expect(result.totalCostUsd).toBeCloseTo(0.3);
   });
 
-  test("total cost is 0 when no cost data", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("total cost is 0 when no cost data", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const result = getAnalytics(db);
     expect(result.totalCostUsd).toBe(0);
   });
 
-  test("averages duration correctly", () => {
-    insertAgentRun(db, makeResult("a1", { durationMs: 1000 }));
-    insertAgentRun(db, makeResult("a2", { durationMs: 3000 }));
+  test("averages duration correctly", async () => {
+    await insertAgentRun(db, makeResult("a1", { durationMs: 1000 }));
+    await insertAgentRun(db, makeResult("a2", { durationMs: 3000 }));
     const result = getAnalytics(db);
     expect(result.avgDurationMs).toBe(2000);
   });
 
-  test("avg duration is 0 when no duration data", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("avg duration is 0 when no duration data", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const result = getAnalytics(db);
     expect(result.avgDurationMs).toBe(0);
   });
 
-  test("counts total runs correctly", () => {
+  test("counts total runs correctly", async () => {
     for (let i = 0; i < 5; i++) {
-      insertAgentRun(db, makeResult(`a${i}`));
+      await insertAgentRun(db, makeResult(`a${i}`));
     }
     const result = getAnalytics(db);
     expect(result.totalRuns).toBe(5);
@@ -322,18 +375,18 @@ describe("insertActivityLogs and getActivityLogs", () => {
     };
   }
 
-  test("insertActivityLogs with empty array is a no-op", () => {
-    expect(() => insertActivityLogs(db, "run-1", [])).not.toThrow();
+  test("insertActivityLogs with empty array is a no-op", async () => {
+    await expect(insertActivityLogs(db, "run-1", [])).resolves.toBeUndefined();
     expect(getActivityLogs(db, "run-1")).toEqual([]);
   });
 
-  test("inserts and retrieves activity logs in timestamp order", () => {
+  test("inserts and retrieves activity logs in timestamp order", async () => {
     const activities: ActivityEntry[] = [
       makeActivity({ timestamp: 3000, type: "text", summary: "Third" }),
       makeActivity({ timestamp: 1000, type: "tool_use", summary: "First" }),
       makeActivity({ timestamp: 2000, type: "result", summary: "Second" }),
     ];
-    insertActivityLogs(db, "run-1", activities);
+    await insertActivityLogs(db, "run-1", activities);
     const logs = getActivityLogs(db, "run-1");
     expect(logs).toHaveLength(3);
     expect(logs[0].summary).toBe("First");
@@ -341,11 +394,11 @@ describe("insertActivityLogs and getActivityLogs", () => {
     expect(logs[2].summary).toBe("Third");
   });
 
-  test("retrieves all five entries inserted", () => {
+  test("retrieves all five entries inserted", async () => {
     const activities: ActivityEntry[] = Array.from({ length: 5 }, (_, i) =>
       makeActivity({ timestamp: i * 1000, summary: `Entry ${i}` }),
     );
-    insertActivityLogs(db, "run-1", activities);
+    await insertActivityLogs(db, "run-1", activities);
     const logs = getActivityLogs(db, "run-1");
     expect(logs).toHaveLength(5);
   });
@@ -354,23 +407,27 @@ describe("insertActivityLogs and getActivityLogs", () => {
     expect(getActivityLogs(db, "nonexistent")).toEqual([]);
   });
 
-  test("stores and retrieves detail field", () => {
+  test("stores and retrieves detail field", async () => {
     const activity = makeActivity({ detail: "some detail text" });
-    insertActivityLogs(db, "run-1", [activity]);
+    await insertActivityLogs(db, "run-1", [activity]);
     const logs = getActivityLogs(db, "run-1");
     expect(logs[0].detail).toBe("some detail text");
   });
 
-  test("detail is undefined when not set", () => {
+  test("detail is undefined when not set", async () => {
     const activity = makeActivity();
-    insertActivityLogs(db, "run-1", [activity]);
+    await insertActivityLogs(db, "run-1", [activity]);
     const logs = getActivityLogs(db, "run-1");
     expect(logs[0].detail).toBeUndefined();
   });
 
-  test("isolates logs by agentRunId", () => {
-    insertActivityLogs(db, "run-1", [makeActivity({ summary: "Run 1 entry" })]);
-    insertActivityLogs(db, "run-2", [makeActivity({ summary: "Run 2 entry" })]);
+  test("isolates logs by agentRunId", async () => {
+    await insertActivityLogs(db, "run-1", [
+      makeActivity({ summary: "Run 1 entry" }),
+    ]);
+    await insertActivityLogs(db, "run-2", [
+      makeActivity({ summary: "Run 2 entry" }),
+    ]);
     expect(getActivityLogs(db, "run-1")).toHaveLength(1);
     expect(getActivityLogs(db, "run-1")[0].summary).toBe("Run 1 entry");
     expect(getActivityLogs(db, "run-2")).toHaveLength(1);
@@ -378,13 +435,13 @@ describe("insertActivityLogs and getActivityLogs", () => {
 });
 
 describe("pruneActivityLogs", () => {
-  test("deletes entries older than retention window", () => {
+  test("deletes entries older than retention window", async () => {
     const now = Date.now();
     const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
-    insertActivityLogs(db, "run-old", [
+    await insertActivityLogs(db, "run-old", [
       { timestamp: thirtyOneDaysAgo, type: "text", summary: "Old entry" },
     ]);
-    insertActivityLogs(db, "run-new", [
+    await insertActivityLogs(db, "run-new", [
       { timestamp: now, type: "text", summary: "New entry" },
     ]);
     const deleted = pruneActivityLogs(db, 30);
@@ -393,9 +450,9 @@ describe("pruneActivityLogs", () => {
     expect(getActivityLogs(db, "run-new")).toHaveLength(1);
   });
 
-  test("returns 0 when no entries are old enough to prune", () => {
+  test("returns 0 when no entries are old enough to prune", async () => {
     const now = Date.now();
-    insertActivityLogs(db, "run-1", [
+    await insertActivityLogs(db, "run-1", [
       { timestamp: now, type: "text", summary: "Recent entry" },
     ]);
     const deleted = pruneActivityLogs(db, 30);
@@ -406,10 +463,10 @@ describe("pruneActivityLogs", () => {
     expect(pruneActivityLogs(db, 30)).toBe(0);
   });
 
-  test("preserves entries within the retention window", () => {
+  test("preserves entries within the retention window", async () => {
     const now = Date.now();
     const twentyNineDaysAgo = now - 29 * 24 * 60 * 60 * 1000;
-    insertActivityLogs(db, "run-1", [
+    await insertActivityLogs(db, "run-1", [
       { timestamp: twentyNineDaysAgo, type: "text", summary: "Within window" },
     ]);
     const deleted = pruneActivityLogs(db, 30);
@@ -467,20 +524,20 @@ describe("session_id migration", () => {
 });
 
 describe("insertAgentRun with sessionId", () => {
-  test("stores and retrieves sessionId", () => {
-    insertAgentRun(db, makeResult("a1", { sessionId: "sess-abc-123" }));
+  test("stores and retrieves sessionId", async () => {
+    await insertAgentRun(db, makeResult("a1", { sessionId: "sess-abc-123" }));
     const run = getRecentRuns(db)[0];
     expect(run.sessionId).toBe("sess-abc-123");
   });
 
-  test("sessionId is undefined when not set", () => {
-    insertAgentRun(db, makeResult("a1"));
+  test("sessionId is undefined when not set", async () => {
+    await insertAgentRun(db, makeResult("a1"));
     const run = getRecentRuns(db)[0];
     expect(run.sessionId).toBeUndefined();
   });
 
-  test("getRecentRuns does not include messagesJson field", () => {
-    insertAgentRun(db, makeResult("a1", { sessionId: "sess-xyz" }));
+  test("getRecentRuns does not include messagesJson field", async () => {
+    await insertAgentRun(db, makeResult("a1", { sessionId: "sess-xyz" }));
     const run = getRecentRuns(db)[0];
     expect(
       (run as unknown as Record<string, unknown>).messagesJson,
@@ -489,13 +546,13 @@ describe("insertAgentRun with sessionId", () => {
 });
 
 describe("insertConversationLog and getConversationLog", () => {
-  test("round-trip stores and retrieves messages JSON", () => {
-    insertAgentRun(db, makeResult("run-1"));
+  test("round-trip stores and retrieves messages JSON", async () => {
+    await insertAgentRun(db, makeResult("run-1"));
     const messages = [
       { type: "text", content: "hello" },
       { type: "result", content: "done" },
     ];
-    insertConversationLog(db, "run-1", JSON.stringify(messages));
+    await insertConversationLog(db, "run-1", JSON.stringify(messages));
     const retrieved = getConversationLog(db, "run-1");
     expect(retrieved).not.toBeNull();
     expect(JSON.parse(retrieved as string)).toEqual(messages);
@@ -505,10 +562,10 @@ describe("insertConversationLog and getConversationLog", () => {
     expect(getConversationLog(db, "nonexistent-run")).toBeNull();
   });
 
-  test("INSERT OR REPLACE overwrites existing log for same run ID", () => {
-    insertAgentRun(db, makeResult("run-1"));
-    insertConversationLog(db, "run-1", JSON.stringify(["first"]));
-    insertConversationLog(db, "run-1", JSON.stringify(["second"]));
+  test("INSERT OR REPLACE overwrites existing log for same run ID", async () => {
+    await insertAgentRun(db, makeResult("run-1"));
+    await insertConversationLog(db, "run-1", JSON.stringify(["first"]));
+    await insertConversationLog(db, "run-1", JSON.stringify(["second"]));
     const retrieved = getConversationLog(db, "run-1");
     expect(retrieved).not.toBeNull();
     expect(JSON.parse(retrieved as string)).toEqual(["second"]);
@@ -516,11 +573,11 @@ describe("insertConversationLog and getConversationLog", () => {
 });
 
 describe("pruneConversationLogs", () => {
-  test("deletes entries older than retention window", () => {
+  test("deletes entries older than retention window", async () => {
     const now = Date.now();
     const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000;
-    insertAgentRun(db, makeResult("run-old"));
-    insertAgentRun(db, makeResult("run-new"));
+    await insertAgentRun(db, makeResult("run-old"));
+    await insertAgentRun(db, makeResult("run-new"));
     // Manually insert an old entry
     db.run(
       `INSERT OR REPLACE INTO conversation_log (agent_run_id, messages_json, created_at) VALUES (?, ?, ?)`,
@@ -536,9 +593,9 @@ describe("pruneConversationLogs", () => {
     expect(getConversationLog(db, "run-new")).not.toBeNull();
   });
 
-  test("returns 0 when no entries are old enough to prune", () => {
-    insertAgentRun(db, makeResult("run-1"));
-    insertConversationLog(db, "run-1", "[]");
+  test("returns 0 when no entries are old enough to prune", async () => {
+    await insertAgentRun(db, makeResult("run-1"));
+    await insertConversationLog(db, "run-1", "[]");
     expect(pruneConversationLogs(db, 30)).toBe(0);
   });
 
@@ -593,11 +650,11 @@ describe("reviewed_at migration", () => {
 });
 
 describe("getUnreviewedRuns", () => {
-  test("returns only runs where reviewed_at IS NULL", () => {
-    insertAgentRun(db, makeResult("r1", { status: "completed" }));
-    insertAgentRun(db, makeResult("r2", { status: "failed" }));
-    insertAgentRun(db, makeResult("r3", { status: "timed_out" }));
-    markRunsReviewed(db, ["r1"]);
+  test("returns only runs where reviewed_at IS NULL", async () => {
+    await insertAgentRun(db, makeResult("r1", { status: "completed" }));
+    await insertAgentRun(db, makeResult("r2", { status: "failed" }));
+    await insertAgentRun(db, makeResult("r3", { status: "timed_out" }));
+    await markRunsReviewed(db, ["r1"]);
 
     const runs = getUnreviewedRuns(db);
     expect(runs).toHaveLength(2);
@@ -607,18 +664,24 @@ describe("getUnreviewedRuns", () => {
     expect(ids).toContain("r3");
   });
 
-  test("returns runs in ascending finished_at order", () => {
-    insertAgentRun(db, makeResult("r1", { startedAt: 3000, finishedAt: 4000 }));
-    insertAgentRun(db, makeResult("r2", { startedAt: 1000, finishedAt: 2000 }));
+  test("returns runs in ascending finished_at order", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("r1", { startedAt: 3000, finishedAt: 4000 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { startedAt: 1000, finishedAt: 2000 }),
+    );
 
     const runs = getUnreviewedRuns(db);
     expect(runs[0].id).toBe("r2");
     expect(runs[1].id).toBe("r1");
   });
 
-  test("respects the limit parameter", () => {
+  test("respects the limit parameter", async () => {
     for (let i = 0; i < 10; i++) {
-      insertAgentRun(
+      await insertAgentRun(
         db,
         makeResult(`r${i}`, {
           startedAt: i * 1000,
@@ -630,9 +693,9 @@ describe("getUnreviewedRuns", () => {
     expect(runs).toHaveLength(5);
   });
 
-  test("returns empty array when all runs are reviewed", () => {
-    insertAgentRun(db, makeResult("r1"));
-    markRunsReviewed(db, ["r1"]);
+  test("returns empty array when all runs are reviewed", async () => {
+    await insertAgentRun(db, makeResult("r1"));
+    await markRunsReviewed(db, ["r1"]);
     expect(getUnreviewedRuns(db)).toHaveLength(0);
   });
 
@@ -642,18 +705,18 @@ describe("getUnreviewedRuns", () => {
 });
 
 describe("getRunWithTranscript", () => {
-  test("returns run metadata and null messagesJson when no conversation log", () => {
-    insertAgentRun(db, makeResult("r1", { status: "completed" }));
+  test("returns run metadata and null messagesJson when no conversation log", async () => {
+    await insertAgentRun(db, makeResult("r1", { status: "completed" }));
     const result = getRunWithTranscript(db, "r1");
     expect(result.run.id).toBe("r1");
     expect(result.run.status).toBe("completed");
     expect(result.messagesJson).toBeNull();
   });
 
-  test("returns run metadata and messagesJson when conversation log exists", () => {
-    insertAgentRun(db, makeResult("r1"));
+  test("returns run metadata and messagesJson when conversation log exists", async () => {
+    await insertAgentRun(db, makeResult("r1"));
     const messages = [{ type: "text", content: "hello" }];
-    insertConversationLog(db, "r1", JSON.stringify(messages));
+    await insertConversationLog(db, "r1", JSON.stringify(messages));
 
     const result = getRunWithTranscript(db, "r1");
     expect(result.run.id).toBe("r1");
@@ -669,42 +732,87 @@ describe("getRunWithTranscript", () => {
 });
 
 describe("markRunsReviewed", () => {
-  test("sets reviewed_at for the specified run IDs", () => {
-    insertAgentRun(db, makeResult("r1"));
-    insertAgentRun(db, makeResult("r2"));
+  test("sets reviewed_at for the specified run IDs", async () => {
+    await insertAgentRun(db, makeResult("r1"));
+    await insertAgentRun(db, makeResult("r2"));
 
-    markRunsReviewed(db, ["r1"]);
+    await markRunsReviewed(db, ["r1"]);
 
     const unreviewedAfter = getUnreviewedRuns(db);
     expect(unreviewedAfter).toHaveLength(1);
     expect(unreviewedAfter[0].id).toBe("r2");
   });
 
-  test("is a no-op for empty array", () => {
-    insertAgentRun(db, makeResult("r1"));
-    expect(() => markRunsReviewed(db, [])).not.toThrow();
+  test("is a no-op for empty array", async () => {
+    await insertAgentRun(db, makeResult("r1"));
+    await expect(markRunsReviewed(db, [])).resolves.toBeUndefined();
     expect(getUnreviewedRuns(db)).toHaveLength(1);
   });
 
-  test("batch-updates multiple run IDs", () => {
-    insertAgentRun(db, makeResult("r1"));
-    insertAgentRun(db, makeResult("r2"));
-    insertAgentRun(db, makeResult("r3"));
+  test("batch-updates multiple run IDs", async () => {
+    await insertAgentRun(db, makeResult("r1"));
+    await insertAgentRun(db, makeResult("r2"));
+    await insertAgentRun(db, makeResult("r3"));
 
-    markRunsReviewed(db, ["r1", "r2"]);
+    await markRunsReviewed(db, ["r1", "r2"]);
 
     const unreviewed = getUnreviewedRuns(db);
     expect(unreviewed).toHaveLength(1);
     expect(unreviewed[0].id).toBe("r3");
   });
 
-  test("reviewedAt is set on results returned from getRecentRuns after marking", () => {
-    insertAgentRun(db, makeResult("r1"));
-    markRunsReviewed(db, ["r1"]);
+  test("reviewedAt is set on results returned from getRecentRuns after marking", async () => {
+    await insertAgentRun(db, makeResult("r1"));
+    await markRunsReviewed(db, ["r1"]);
 
     const runs = getRecentRuns(db);
     expect(runs[0].reviewedAt).toBeDefined();
     expect(typeof runs[0].reviewedAt).toBe("number");
+  });
+});
+
+describe("concurrent writes do not lose data", () => {
+  test("N simultaneous insertAgentRun calls all persist data", async () => {
+    const N = 20;
+    await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        insertAgentRun(
+          db,
+          makeResult(`concurrent-${i}`, {
+            startedAt: i * 1000,
+            finishedAt: i * 1000 + 500,
+          }),
+        ),
+      ),
+    );
+    const runs = getRecentRuns(db, N);
+    expect(runs).toHaveLength(N);
+  });
+
+  test("N simultaneous insertActivityLogs calls all persist data", async () => {
+    const N = 10;
+    // Insert agent runs first
+    for (let i = 0; i < N; i++) {
+      await insertAgentRun(db, makeResult(`run-${i}`));
+    }
+    // Insert activity logs concurrently
+    await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        insertActivityLogs(db, `run-${i}`, [
+          {
+            timestamp: Date.now(),
+            type: "tool_use",
+            summary: `Activity for run ${i}`,
+          },
+        ]),
+      ),
+    );
+    // Verify all activity logs were stored
+    let total = 0;
+    for (let i = 0; i < N; i++) {
+      total += getActivityLogs(db, `run-${i}`).length;
+    }
+    expect(total).toBe(N);
   });
 });
 
