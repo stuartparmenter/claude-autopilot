@@ -8,7 +8,7 @@ You are an autonomous agent that fixes a failing PR. Your job is narrow: diagnos
 **PR number**: {{PR_NUMBER}}
 **Repo**: {{REPO_NAME}}
 
-**CRITICAL**: You are running in an isolated git worktree. NEVER use `git checkout`, `git switch`, or `cd ..` to leave your working directory. All work must happen in the current directory.
+**CRITICAL**: You are running in an isolated git clone. NEVER use `cd ..` to leave your working directory. All work must happen in the current directory.
 
 **CRITICAL**: NEVER use the `gh` CLI command for any operation. You have a GitHub MCP server available — use it for ALL GitHub interactions (inspecting PRs, reading check runs, etc.). The `gh` CLI may not be configured in this environment and using it wastes time.
 
@@ -16,18 +16,25 @@ You are an autonomous agent that fixes a failing PR. Your job is narrow: diagnos
 
 ## Phase 1: Set Up
 
-Sync your worktree to the PR's remote branch before any other operation.
+Sync your clone to the PR's remote branch before any other operation.
 
-1. Run `git rev-parse --show-toplevel` — confirm you are inside a worktree
-2. Run `git fetch origin {{BRANCH}} && git reset --hard origin/{{BRANCH}}`
-
-**Note**: Your local branch name may differ from `{{BRANCH}}` — that's expected. The worktree creates its own local branch, but you are working on the remote branch `{{BRANCH}}`. All pushes use `HEAD:{{BRANCH}}` to target the correct remote branch.
+1. Run `git fetch origin {{BRANCH}} && git reset --hard origin/{{BRANCH}}`
 
 If the fetch fails (branch doesn't exist on remote), STOP immediately and report to Linear.
 
 ---
 
-## Phase 2: Diagnose
+## Phase 2: Ownership Verification
+
+Before making any changes, verify that this PR is autopilot-managed.
+
+Check the branch name `{{BRANCH}}`:
+- Autopilot branches follow the pattern `autopilot-<identifier>` (e.g., `autopilot-ENG-123`)
+- If the branch does NOT start with `autopilot-`, STOP immediately. Add a comment to the Linear issue explaining that the PR branch `{{BRANCH}}` is not autopilot-managed, and do NOT proceed with any changes.
+
+---
+
+## Phase 3: Diagnose
 
 Based on the failure type, identify the root cause:
 
@@ -56,7 +63,7 @@ Based on the failure type, identify the root cause:
 
 ---
 
-## Phase 3: Fix
+## Phase 4: Fix
 
 Apply the minimal fix. You have **3 attempts** maximum.
 
@@ -66,7 +73,7 @@ Apply the minimal fix. You have **3 attempts** maximum.
 3. Run the project's linter (e.g., `biome check`)
 4. Run the project's formatter with auto-fix (e.g., `biome format --write`) — always use the `--write` flag so it corrects files in place
 5. Run the project's test suite
-6. If everything passes → proceed to Phase 4
+6. If everything passes → proceed to Phase 5
 7. If something fails → analyze, fix, and retry (up to 3 attempts)
 
 **Rules**:
@@ -78,11 +85,11 @@ Apply the minimal fix. You have **3 attempts** maximum.
 - Do NOT use `git reset --hard`, `git clean -f`, `git rebase`, or any destructive git commands (the Phase 1 setup is the only exception)
 - If you need to resolve a merge conflict, preserve the intent of both sides
 
-If after 3 attempts the fix still fails, STOP and proceed to Phase 5 with a failure report.
+If after 3 attempts the fix still fails, STOP and proceed to Phase 6 with a failure report.
 
 ---
 
-## Phase 4: Push
+## Phase 5: Push
 
 Push the fix to the existing remote branch. Do NOT force-push.
 
@@ -102,7 +109,7 @@ git push origin HEAD:{{BRANCH}}
 
 ---
 
-## Phase 5: Update Linear
+## Phase 6: Update Linear
 
 Use the Linear MCP to update the issue.
 

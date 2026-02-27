@@ -72,6 +72,19 @@ export interface ReviewerStatus {
   lastResult?: "completed" | "skipped" | "failed" | "timed_out";
 }
 
+export interface PlanningSession {
+  id: string;
+  agentRunId: string;
+  startedAt: number;
+  finishedAt: number;
+  status: "completed" | "failed" | "timed_out";
+  summary?: string;
+  issuesFiledCount: number;
+  issuesFiled?: Array<{ identifier: string; title: string }>;
+  findingsRejected?: Array<{ finding: string; reason: string }>;
+  costUsd?: number;
+}
+
 export interface ApiHealthStatus {
   linear: CircuitState;
   github: CircuitState;
@@ -83,6 +96,7 @@ export interface AppStateSnapshot {
   history: AgentResult[];
   queue: QueueInfo;
   planning: PlanningStatus;
+  planningHistory: PlanningSession[];
   reviewer: ReviewerStatus;
   startedAt: number;
   apiHealth: ApiHealthStatus;
@@ -102,6 +116,7 @@ export class AppState {
     lastChecked: 0,
   };
   private planning: PlanningStatus = { running: false };
+  private planningHistory: PlanningSession[] = [];
   private reviewer: ReviewerStatus = { running: false };
   private paused = false;
   private issueFailureCount = new Map<string, number>();
@@ -207,7 +222,7 @@ export class AppState {
         await insertConversationLog(
           this.db,
           result.id,
-          JSON.stringify(rawMessages),
+          sanitizeMessage(JSON.stringify(rawMessages)),
         );
       }
     }
@@ -270,6 +285,17 @@ export class AppState {
 
   getPlanningStatus(): PlanningStatus {
     return this.planning;
+  }
+
+  getPlanningHistory(): PlanningSession[] {
+    return this.planningHistory;
+  }
+
+  addPlanningSession(session: PlanningSession): void {
+    this.planningHistory.unshift(session);
+    if (this.planningHistory.length > 20) {
+      this.planningHistory = this.planningHistory.slice(0, 20);
+    }
   }
 
   updateReviewer(status: Partial<ReviewerStatus>): void {
@@ -418,6 +444,7 @@ export class AppState {
       history: this.history,
       queue: this.queue,
       planning: this.planning,
+      planningHistory: this.planningHistory,
       reviewer: this.reviewer,
       startedAt: this.startedAt,
       apiHealth: defaultRegistry.getAllStates(),

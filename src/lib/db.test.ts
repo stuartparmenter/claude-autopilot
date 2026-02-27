@@ -17,6 +17,7 @@ import {
   pruneActivityLogs,
   pruneConversationLogs,
 } from "./db";
+import { sanitizeMessage } from "./sanitize";
 
 let db: Database;
 
@@ -812,5 +813,53 @@ describe("concurrent writes do not lose data", () => {
       total += getActivityLogs(db, `run-${i}`).length;
     }
     expect(total).toBe(N);
+  });
+});
+
+describe("transcript redaction before storage", () => {
+  test("sanitized transcript has secrets redacted and stored value is valid JSON", () => {
+    insertAgentRun(db, makeResult("run-secrets"));
+    const rawMessages = [
+      {
+        role: "tool_result",
+        content:
+          "cat .env returned: AWS_KEY=AKIAIOSFODNN7EXAMPLE password=supersecret123",
+      },
+      {
+        role: "assistant",
+        content: "I can see credentials in the output",
+      },
+    ];
+    const scrubbedJson = sanitizeMessage(JSON.stringify(rawMessages));
+    insertConversationLog(db, "run-secrets", scrubbedJson);
+
+    const retrieved = getConversationLog(db, "run-secrets");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(retrieved).not.toContain("supersecret123");
+    expect(() => JSON.parse(retrieved as string)).not.toThrow();
+  });
+
+  test("round-trip: JSON.parse succeeds on scrubbed transcript with secrets in JSON string values", () => {
+    insertAgentRun(db, makeResult("run-roundtrip"));
+    const rawMessages = [
+      {
+        type: "text",
+        content:
+          "Found sk_live_abcdefghijklmnopqrst in config and npm_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij in package",
+      },
+    ];
+    const scrubbedJson = sanitizeMessage(JSON.stringify(rawMessages));
+    insertConversationLog(db, "run-roundtrip", scrubbedJson);
+
+    const retrieved = getConversationLog(db, "run-roundtrip");
+    expect(retrieved).not.toBeNull();
+    const parsed = JSON.parse(retrieved as string) as typeof rawMessages;
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0].content).toContain("[REDACTED]");
+    expect(parsed[0].content).not.toContain("abcdefghijklmnopqrst");
+    expect(parsed[0].content).not.toContain(
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+    );
   });
 });

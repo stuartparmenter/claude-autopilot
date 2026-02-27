@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defaultRegistry } from "./circuit-breaker";
 import { getOAuthToken, saveOAuthToken } from "./db";
 import { ensureFreshToken, getLinearAccessToken } from "./linear-auth";
 
@@ -133,6 +134,7 @@ describe("ensureFreshToken", () => {
   beforeEach(() => {
     db = openTestDb();
     mockRefreshFn.mockClear();
+    defaultRegistry.reset();
     delete process.env.LINEAR_API_KEY;
   });
 

@@ -60,16 +60,16 @@ export async function checkEnvVars(opts?: {
 }
 
 /**
- * Check 3: Verify the worktree base directory is writable.
+ * Check 3: Verify the clone base directory is writable.
  * Creates the directory if absent, then writes and removes a test file.
  */
-export async function checkWorktreeDir(projectPath: string): Promise<string> {
-  const worktreeBase = resolve(projectPath, ".claude", "worktrees");
-  mkdirSync(worktreeBase, { recursive: true });
-  const testFile = resolve(worktreeBase, `.validate-${Date.now()}`);
+export async function checkCloneDir(projectPath: string): Promise<string> {
+  const cloneBase = resolve(projectPath, ".claude", "clones");
+  mkdirSync(cloneBase, { recursive: true });
+  const testFile = resolve(cloneBase, `.validate-${Date.now()}`);
   writeFileSync(testFile, "validate");
   rmSync(testFile);
-  return `${worktreeBase} is writable`;
+  return `${cloneBase} is writable`;
 }
 
 /**
@@ -148,9 +148,50 @@ export async function checkPromptTemplates(
   return `${files.length} template(s) OK — ${names}`;
 }
 
+/**
+ * Check 7: Verify the git remote is configured and parseable.
+ * Runs without requiring GITHUB_TOKEN — useful for setup validation.
+ */
+export async function checkGitRemote(
+  projectPath: string,
+  config?: { github?: { repo?: string } },
+): Promise<string> {
+  const { owner, repo } = detectRepo(
+    projectPath,
+    config?.github?.repo || undefined,
+  );
+  return `${owner}/${repo}`;
+}
+
+/**
+ * Check 8: Verify the GitHub token has the required `repo` scope.
+ * Checks the `x-oauth-scopes` response header from the authenticated user API.
+ * Fine-grained tokens do not include this header — those are treated as acceptable.
+ */
+export async function checkGitHubPermissions(): Promise<string> {
+  const octokit = getGitHubClient();
+  const response = await withRetry(
+    () => octokit.rest.users.getAuthenticated(),
+    "checkGitHubPermissions",
+  );
+  const scopeHeader = response.headers["x-oauth-scopes"];
+  if (!scopeHeader) {
+    return `Authenticated as ${response.data.login} (fine-grained token, scope check skipped)`;
+  }
+  const scopes = scopeHeader.split(",").map((s: string) => s.trim());
+  if (!scopes.includes("repo")) {
+    throw new Error(
+      `Token missing required 'repo' scope. ` +
+        `Token has scopes: ${scopeHeader}. ` +
+        `Create a new token at https://github.com/settings/tokens with the 'repo' scope enabled.`,
+    );
+  }
+  return `Token has scopes: ${scopeHeader}`;
+}
+
 // --- CLI entry point ---
 
-interface CheckResult {
+export interface CheckResult {
   name: string;
   pass: boolean;
   detail: string;
@@ -167,6 +208,32 @@ async function runCheck(
     const msg = e instanceof Error ? e.message : String(e);
     return { name, pass: false, detail: msg };
   }
+}
+
+/**
+ * Run all preflight checks for the system to function.
+ * Runs every check regardless of earlier failures and returns a summary.
+ * Intended for use in main.ts before starting the main loop.
+ */
+export async function runPreflight(
+  projectPath: string,
+  config: AutopilotConfig,
+): Promise<{ passed: boolean; results: CheckResult[] }> {
+  const hasOAuth = !!config.linear.oauth;
+  const checks: Array<[string, () => Promise<string>]> = [
+    ["Environment variables", () => checkEnvVars({ hasOAuth })],
+    ["Git remote", () => checkGitRemote(projectPath, config)],
+    ["Clone directory", () => checkCloneDir(projectPath)],
+    ["Linear connection", () => checkLinear(config)],
+    ["GitHub connection", () => checkGitHub(projectPath, config)],
+  ];
+
+  const results: CheckResult[] = [];
+  for (const [name, fn] of checks) {
+    results.push(await runCheck(name, fn));
+  }
+
+  return { passed: results.every((r) => r.pass), results };
 }
 
 if (import.meta.main) {
@@ -207,7 +274,7 @@ if (import.meta.main) {
   const checks: Array<[string, () => Promise<string>]> = [
     ["Config", () => checkConfig(projectPath)],
     ["Environment variables", () => checkEnvVars({ hasOAuth })],
-    ["Worktree directory", () => checkWorktreeDir(projectPath)],
+    ["Clone directory", () => checkCloneDir(projectPath)],
     [
       "Linear connection",
       () => {

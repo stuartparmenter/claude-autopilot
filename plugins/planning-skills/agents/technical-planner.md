@@ -82,6 +82,7 @@ For each sub-issue, use `save_issue` with:
 - `project`: same project as parent (omit if parent has no project / project is "N/A")
 - `parentId`: the parent issue ID
 - `state`: the Ready State Name from the prompt (so the executor picks them up)
+- `labels`: always include `autopilot:managed` — this label identifies autopilot-created issues and enables safe coexistence with human-managed issues
 
 **Set dependency relations between sub-issues:**
 - Use `blocks` / `blockedBy` to encode ordering

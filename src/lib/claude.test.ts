@@ -14,13 +14,11 @@ let queryError: Error | null = null;
 
 const mockClose = mock(() => {});
 
-const mockCreateWorktree = mock(
-  (_cwd: string, _name: string, _branch?: string) =>
-    Promise.resolve("/fake/worktree"),
+const mockCreateClone = mock((_cwd: string, _name: string, _branch?: string) =>
+  Promise.resolve({ path: "/fake/clone", branch: "autopilot-test" }),
 );
-const mockRemoveWorktree = mock(
-  (_cwd: string, _name: string, _opts?: { keepBranch?: boolean }) =>
-    Promise.resolve(),
+const mockRemoveClone = mock((_cwd: string, _name: string) =>
+  Promise.resolve(),
 );
 
 const mockQuery = mock(
@@ -65,9 +63,9 @@ const mockQuery = mock(
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 // Must be at top level so Bun processes them before static imports resolve.
-// Only mock external modules here — internal modules (./worktree, ./logger, ./github)
+// Only mock external modules here — internal modules (./sandbox-clone, ./logger, ./github)
 // must NOT be mocked via mock.module() because it causes permanent cross-file leakage
-// (Bun bug #7823). Worktree is injected via _worktree instead (see beforeEach below).
+// (Bun bug #7823). Clone is injected via _clone instead (see beforeEach below).
 
 mock.module("@anthropic-ai/claude-agent-sdk", () => ({
   query: mockQuery,
@@ -79,7 +77,7 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 import {
-  _worktree,
+  _clone,
   acquireSpawnSlot,
   buildMcpServers,
   resetSpawnGate,
@@ -87,9 +85,9 @@ import {
   summarizeToolUse,
 } from "./claude";
 
-// Capture real worktree functions before tests replace them
-const origCreateWorktree = _worktree.createWorktree;
-const origRemoveWorktree = _worktree.removeWorktree;
+// Capture real clone functions before tests replace them
+const origCreateClone = _clone.createClone;
+const origRemoveClone = _clone.removeClone;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -133,22 +131,20 @@ beforeEach(() => {
   queryBehavior = "normal";
   queryError = null;
   mockClose.mockClear();
-  mockCreateWorktree.mockClear();
-  mockRemoveWorktree.mockClear();
+  mockCreateClone.mockClear();
+  mockRemoveClone.mockClear();
   mockQuery.mockClear();
   resetSpawnGate();
-  // Inject mock worktree functions via the exported indirection object so we
-  // don't need mock.module("./worktree") which leaks into other test files.
-  _worktree.createWorktree =
-    mockCreateWorktree as unknown as typeof _worktree.createWorktree;
-  _worktree.removeWorktree =
-    mockRemoveWorktree as unknown as typeof _worktree.removeWorktree;
+  // Inject mock clone functions via the exported indirection object so we
+  // don't need mock.module("./sandbox-clone") which leaks into other test files.
+  _clone.createClone = mockCreateClone as unknown as typeof _clone.createClone;
+  _clone.removeClone = mockRemoveClone as unknown as typeof _clone.removeClone;
 });
 
 afterEach(() => {
-  // Restore real worktree functions so other test files are not affected.
-  _worktree.createWorktree = origCreateWorktree;
-  _worktree.removeWorktree = origRemoveWorktree;
+  // Restore real clone functions so other test files are not affected.
+  _clone.createClone = origCreateClone;
+  _clone.removeClone = origRemoveClone;
 });
 
 // ─── summarizeToolUse ────────────────────────────────────────────────────────
@@ -214,9 +210,9 @@ describe("summarizeToolUse", () => {
     expect(summarizeToolUse("Task", {})).toBe("Task: subagent");
   });
 
-  test("unknown tool returns 'Tool: <name>'", () => {
+  test("unknown tool uses tool name as badge", () => {
     expect(summarizeToolUse("UnknownTool", { something: "value" })).toBe(
-      "Tool: UnknownTool",
+      "UnknownTool: ",
     );
   });
 
@@ -423,44 +419,53 @@ describe("runClaude — error path", () => {
   });
 });
 
-// ─── runClaude — worktree lifecycle ──────────────────────────────────────────
+// ─── runClaude — clone lifecycle ─────────────────────────────────────────────
 
-describe("runClaude — worktree lifecycle", () => {
+describe("runClaude — clone lifecycle", () => {
   beforeEach(() => {
     queryMessages = [makeInitMessage(), makeSuccessResult()];
   });
 
-  test("createWorktree is called when opts.worktree is set", async () => {
-    await runClaude({ ...baseOpts(), worktree: "my-worktree" });
-    expect(mockCreateWorktree).toHaveBeenCalledTimes(1);
-    expect(mockCreateWorktree.mock.calls[0][1]).toBe("my-worktree");
+  test("createClone is called when opts.clone is set", async () => {
+    await runClaude({ ...baseOpts(), clone: "my-clone" });
+    expect(mockCreateClone).toHaveBeenCalledTimes(1);
+    expect(mockCreateClone.mock.calls[0][1]).toBe("my-clone");
   });
 
-  test("removeWorktree is called in finally on success", async () => {
-    await runClaude({ ...baseOpts(), worktree: "my-worktree" });
-    expect(mockRemoveWorktree).toHaveBeenCalledTimes(1);
+  test("removeClone is called in finally on success", async () => {
+    await runClaude({ ...baseOpts(), clone: "my-clone" });
+    expect(mockRemoveClone).toHaveBeenCalledTimes(1);
   });
 
-  test("removeWorktree is called in finally on query error", async () => {
+  test("removeClone is called in finally on query error", async () => {
     queryError = new Error("crash");
-    await runClaude({ ...baseOpts(), worktree: "my-worktree" });
-    expect(mockRemoveWorktree).toHaveBeenCalledTimes(1);
+    await runClaude({ ...baseOpts(), clone: "my-clone" });
+    expect(mockRemoveClone).toHaveBeenCalledTimes(1);
   });
 
-  test("removeWorktree called with keepBranch=true when worktreeBranch is set", async () => {
+  test("cloneBranch is passed to createClone as fromBranch", async () => {
     await runClaude({
       ...baseOpts(),
-      worktree: "my-worktree",
-      worktreeBranch: "feature/branch",
+      clone: "my-clone",
+      cloneBranch: "feature/branch",
     });
-    const callArgs = mockRemoveWorktree.mock.calls[0];
-    expect(callArgs[2]).toEqual({ keepBranch: true });
+    expect(mockCreateClone.mock.calls[0][2]).toBe("feature/branch");
   });
 
-  test("createWorktree and removeWorktree not called when opts.worktree is absent", async () => {
+  test("createClone and removeClone not called when opts.clone is absent", async () => {
     await runClaude(baseOpts());
-    expect(mockCreateWorktree).not.toHaveBeenCalled();
-    expect(mockRemoveWorktree).not.toHaveBeenCalled();
+    expect(mockCreateClone).not.toHaveBeenCalled();
+    expect(mockRemoveClone).not.toHaveBeenCalled();
+  });
+
+  test("prompt builder function receives branch name from createClone", async () => {
+    const promptBuilder = mock((branch: string) => `prompt for ${branch}`);
+    await runClaude({
+      ...baseOpts(),
+      prompt: promptBuilder,
+      clone: "my-clone",
+    });
+    expect(promptBuilder).toHaveBeenCalledWith("autopilot-test");
   });
 });
 
