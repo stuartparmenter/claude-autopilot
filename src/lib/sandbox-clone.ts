@@ -119,11 +119,29 @@ export async function createClone(
     }
   }
 
-  // Clone with shared objects — reuses parent's object store via alternates
+  // Detect the default branch from the parent's remote HEAD (usually main/master).
+  // This ensures the clone starts on the right branch regardless of what
+  // branch the parent repo currently has checked out.
+  let defaultBranch = "main";
+  try {
+    const ref = gitOutput(projectPath, [
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+    ]);
+    defaultBranch = ref.replace(/^refs\/remotes\/origin\//, "");
+  } catch {
+    // Fallback to "main" if origin/HEAD isn't set
+  }
+
+  // Clone with shared objects — reuses parent's object store via alternates.
+  // --branch ensures the clone checks out the default branch, not whatever
+  // branch the parent happens to be on.
   const cloneErr = gitSync(projectPath, [
     "clone",
     "--shared",
     "--no-tags",
+    "--branch",
+    defaultBranch,
     projectPath,
     dest,
   ]);
@@ -138,6 +156,15 @@ export async function createClone(
   if (setUrlErr) {
     throw new Error(
       `Failed to set remote URL in clone '${name}': ${setUrlErr}`,
+    );
+  }
+
+  // Fetch from GitHub so remote tracking refs are up to date
+  // (the initial clone copied refs from the local repo, not GitHub).
+  const fetchErr = gitSync(dest, ["fetch", "origin"]);
+  if (fetchErr) {
+    throw new Error(
+      `Failed to fetch from origin in clone '${name}': ${fetchErr}`,
     );
   }
 
