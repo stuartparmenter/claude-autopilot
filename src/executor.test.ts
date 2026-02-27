@@ -138,6 +138,10 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       review_responder_timeout_minutes: 20,
     },
     github: { repo: "", automerge: false },
+    git: {
+      user_name: "autopilot[bot]",
+      user_email: "autopilot[bot]@users.noreply.github.com",
+    },
     persistence: {
       enabled: false,
       db_path: ".claude/autopilot.db",

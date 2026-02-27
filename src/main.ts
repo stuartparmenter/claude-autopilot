@@ -26,8 +26,8 @@ import {
 } from "./lib/linear";
 import { getCurrentLinearToken, initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
+import { sweepClones, sweepLegacyWorktrees } from "./lib/sandbox-clone";
 import { sanitizeMessage } from "./lib/sanitize";
-import { sweepWorktrees } from "./lib/worktree";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
@@ -314,9 +314,12 @@ let lastProjectsCheckAt = 0;
 
 let consecutiveFailures = 0;
 
-// Sweep stale worktrees left behind by previous crashed runs.
-// No agents are running yet, so every worktree found is stale.
-await sweepWorktrees(projectPath, new Set());
+// Sweep stale clones left behind by previous crashed runs.
+// No agents are running yet, so every clone found is stale.
+await sweepClones(projectPath, new Set());
+
+// One-time migration: clean up legacy .claude/worktrees/ from before the clone migration.
+await sweepLegacyWorktrees(projectPath);
 
 info("Starting main loop (Ctrl+C to stop)...");
 console.log();

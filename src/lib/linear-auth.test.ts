@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defaultRegistry } from "./circuit-breaker";
 import { getOAuthToken, saveOAuthToken } from "./db";
 import { ensureFreshToken, getLinearAccessToken } from "./linear-auth";
 
@@ -69,8 +70,8 @@ describe("getLinearAccessToken", () => {
     delete process.env.LINEAR_API_KEY;
   });
 
-  test("returns OAuth access token from DB when present", () => {
-    saveOAuthToken(db, "linear", makeFreshToken("my-oauth-token"));
+  test("returns OAuth access token from DB when present", async () => {
+    await saveOAuthToken(db, "linear", makeFreshToken("my-oauth-token"));
     const token = getLinearAccessToken(db);
     expect(token).toBe("my-oauth-token");
   });
@@ -133,6 +134,7 @@ describe("ensureFreshToken", () => {
   beforeEach(() => {
     db = openTestDb();
     mockRefreshFn.mockClear();
+    defaultRegistry.reset();
     delete process.env.LINEAR_API_KEY;
   });
 
@@ -142,14 +144,14 @@ describe("ensureFreshToken", () => {
   });
 
   test("returns existing access token when not expired", async () => {
-    saveOAuthToken(db, "linear", makeFreshToken("still-valid-token"));
+    await saveOAuthToken(db, "linear", makeFreshToken("still-valid-token"));
     const token = await ensureFreshToken(db, oauthConfig);
     expect(token).toBe("still-valid-token");
     expect(mockRefreshFn).not.toHaveBeenCalled();
   });
 
   test("refreshes token when expired and persists new token to DB", async () => {
-    saveOAuthToken(db, "linear", makeExpiredToken());
+    await saveOAuthToken(db, "linear", makeExpiredToken());
     const token = await ensureFreshToken(db, oauthConfig);
     expect(token).toBe("new-access-token");
     expect(mockRefreshFn).toHaveBeenCalledTimes(1);
@@ -161,7 +163,7 @@ describe("ensureFreshToken", () => {
 
   test("refreshes token within 5-minute buffer window", async () => {
     // Token expires in 4 minutes — within the 5-minute buffer
-    saveOAuthToken(db, "linear", {
+    await saveOAuthToken(db, "linear", {
       ...makeFreshToken(),
       expiresAt: Date.now() + 4 * 60 * 1000,
     });
@@ -172,7 +174,7 @@ describe("ensureFreshToken", () => {
 
   test("does not refresh when token expires after 5-minute buffer", async () => {
     // Token expires in 6 minutes — outside the buffer
-    saveOAuthToken(db, "linear", {
+    await saveOAuthToken(db, "linear", {
       ...makeFreshToken("still-good"),
       expiresAt: Date.now() + 6 * 60 * 1000,
     });
@@ -196,7 +198,11 @@ describe("ensureFreshToken", () => {
   });
 
   test("passes correct refresh credentials to refreshAccessToken", async () => {
-    saveOAuthToken(db, "linear", makeExpiredToken("old", "my-refresh-token"));
+    await saveOAuthToken(
+      db,
+      "linear",
+      makeExpiredToken("old", "my-refresh-token"),
+    );
     await ensureFreshToken(db, oauthConfig);
     expect(mockRefreshFn).toHaveBeenCalledWith({
       refreshToken: "my-refresh-token",

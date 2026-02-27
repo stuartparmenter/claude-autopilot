@@ -1,10 +1,12 @@
+import { resolve } from "node:path";
+import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
 import { getPRReviewInfo, getPRStatus } from "./lib/github";
 import { getLinearClient } from "./lib/linear";
 import { info, warn } from "./lib/logger";
-import { buildPrompt } from "./lib/prompt";
+import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import { withRetry } from "./lib/retry";
 import type { AppState } from "./state";
 
@@ -286,20 +288,31 @@ async function respondToReview(opts: {
     BLOCKED_STATE: config.linear.states.blocked,
   });
 
-  const worktree = `review-${issueIdentifier}`;
+  const cloneName = `review-${issueIdentifier}`;
   const timeoutMs = config.monitor.review_responder_timeout_minutes * 60 * 1000;
+  const plugins: SdkPluginConfig[] = [
+    {
+      type: "local",
+      path: resolve(AUTOPILOT_ROOT, "plugins/git-safety"),
+    },
+  ];
 
   const result = await runClaude({
     prompt,
     cwd: projectPath,
     label: `review-${issueIdentifier}`,
-    worktree,
-    worktreeBranch: branch,
+    clone: cloneName,
+    cloneBranch: branch,
+    gitIdentity: {
+      userName: config.git.user_name,
+      userEmail: config.git.user_email,
+    },
     timeoutMs,
     inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
     model: config.executor.model,
     sandbox: config.sandbox,
     mcpServers: buildMcpServers(),
+    plugins,
     parentSignal: opts.shutdownSignal,
     onActivity: (entry) => state.addActivity(agentId, entry),
   });
@@ -355,21 +368,32 @@ async function fixPR(opts: {
     projectPath,
   );
 
-  const worktree = `fix-${issueIdentifier}`;
+  const cloneName = `fix-${issueIdentifier}`;
   const timeoutMs = config.executor.fixer_timeout_minutes * 60 * 1000;
+  const plugins: SdkPluginConfig[] = [
+    {
+      type: "local",
+      path: resolve(AUTOPILOT_ROOT, "plugins/git-safety"),
+    },
+  ];
 
   try {
     const result = await runClaude({
       prompt,
       cwd: projectPath,
       label: `fix-${issueIdentifier}`,
-      worktree,
-      worktreeBranch: branch,
+      clone: cloneName,
+      cloneBranch: branch,
+      gitIdentity: {
+        userName: config.git.user_name,
+        userEmail: config.git.user_email,
+      },
       timeoutMs,
       inactivityMs: config.executor.inactivity_timeout_minutes * 60 * 1000,
       model: config.executor.model,
       sandbox: config.sandbox,
       mcpServers: buildMcpServers(),
+      plugins,
       parentSignal: opts.shutdownSignal,
       onControllerReady: (ctrl) => state.registerAgentController(agentId, ctrl),
       onActivity: (entry) => state.addActivity(agentId, entry),
@@ -385,7 +409,7 @@ async function fixPR(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Fixer agent for ${issueIdentifier} crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     return false;
   } finally {
     activeFixerIssues.delete(issueId);
