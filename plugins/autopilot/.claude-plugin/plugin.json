@@ -1,0 +1,5 @@
+{
+  "name": "autopilot",
+  "version": "1.0.0",
+  "description": "Core runtime support for all autopilot agents. Fixes sandbox TMPDIR issues via SessionStart hook."
+}

@@ -60,16 +60,16 @@ export async function checkEnvVars(opts?: {
 }
 
 /**
- * Check 3: Verify the worktree base directory is writable.
+ * Check 3: Verify the clone base directory is writable.
  * Creates the directory if absent, then writes and removes a test file.
  */
-export async function checkWorktreeDir(projectPath: string): Promise<string> {
-  const worktreeBase = resolve(projectPath, ".claude", "worktrees");
-  mkdirSync(worktreeBase, { recursive: true });
-  const testFile = resolve(worktreeBase, `.validate-${Date.now()}`);
+export async function checkCloneDir(projectPath: string): Promise<string> {
+  const cloneBase = resolve(projectPath, ".claude", "clones");
+  mkdirSync(cloneBase, { recursive: true });
+  const testFile = resolve(cloneBase, `.validate-${Date.now()}`);
   writeFileSync(testFile, "validate");
   rmSync(testFile);
-  return `${worktreeBase} is writable`;
+  return `${cloneBase} is writable`;
 }
 
 /**
@@ -223,7 +223,7 @@ export async function runPreflight(
   const checks: Array<[string, () => Promise<string>]> = [
     ["Environment variables", () => checkEnvVars({ hasOAuth })],
     ["Git remote", () => checkGitRemote(projectPath, config)],
-    ["Worktree directory", () => checkWorktreeDir(projectPath)],
+    ["Clone directory", () => checkCloneDir(projectPath)],
     ["Linear connection", () => checkLinear(config)],
     ["GitHub connection", () => checkGitHub(projectPath, config)],
   ];
@@ -274,7 +274,7 @@ if (import.meta.main) {
   const checks: Array<[string, () => Promise<string>]> = [
     ["Config", () => checkConfig(projectPath)],
     ["Environment variables", () => checkEnvVars({ hasOAuth })],
-    ["Worktree directory", () => checkWorktreeDir(projectPath)],
+    ["Clone directory", () => checkCloneDir(projectPath)],
     [
       "Linear connection",
       () => {

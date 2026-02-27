@@ -122,8 +122,8 @@ export function buildAgentEnv(): Record<string, string> {
 }
 
 export function buildSandboxConfig(
-  cwd: string,
   sandbox: SandboxConfig,
+  agentTmpDir: string,
 ): Record<string, unknown> {
   const config: Record<string, unknown> = {
     enabled: true,
@@ -131,12 +131,11 @@ export function buildSandboxConfig(
     allowUnsandboxedCommands: false,
     filesystem: {
       allowWrite: [
-        // Git worktrees share the parent repo's .git directory
-        resolve(cwd, ".git"),
-        // Allow /tmp for Claude Code internals, git, bun, ssh-keygen, etc.
-        // Per-agent TMPDIR scoping is blocked by SDK overriding env vars:
-        // https://github.com/anthropics/claude-code/issues/15700
+        // Allow /tmp broadly, plus the specific agent tmpdir.
+        // The explicit agentTmpDir entry ensures this agent's temp directory
+        // is writable even if the SDK/sandbox layer drops the broad "/tmp".
         "/tmp",
+        agentTmpDir,
         // Teams need write access to these dirs for coordination files
         resolve(homedir(), ".claude/teams"),
         resolve(homedir(), ".claude/tasks"),
@@ -237,7 +236,7 @@ export function buildSandboxGuardHook(
 
 /**
  * Build the base query options object for the Agent SDK.
- * Does not include sandbox config (added conditionally) or worktree cwd override.
+ * Does not include sandbox config (added conditionally) or clone cwd override.
  */
 export function buildQueryOptions(
   cwd: string,

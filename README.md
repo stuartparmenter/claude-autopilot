@@ -2,7 +2,7 @@
 
 A fully autonomous AI development loop using **Claude Code** + **Linear**.
 
-Four automated loops keep your project moving forward — no human intervention required:
+Plans new features, implements them, opens PRs, and fixes CI failures — no human in the loop. A planning team with a Product Manager thinks about what the product should do next, not just what's broken. Four automated loops keep your project moving forward:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -23,6 +23,7 @@ Four automated loops keep your project moving forward — no human intervention 
 │       │                                                         │
 │  Linear (Triage) ←── Claude Code ←── Codebase scan             │
 │                       (CTO Agent Team)                          │
+│                       ├─ Product Manager                        │
 │                       ├─ Scout                                  │
 │                       ├─ Security Analyst                       │
 │                       ├─ Quality Engineer                       │
@@ -49,7 +50,7 @@ Four automated loops keep your project moving forward — no human intervention 
 
 **Monitor**: Watches issues in "In Review" state. Checks their linked GitHub PRs for CI failures, merge conflicts, and review feedback. Spawns fixer agents to repair CI/conflicts automatically, and review-responder agents to address requested changes. If a fix can't be applied after max attempts, moves the issue to "Blocked".
 
-**Planning**: When the backlog runs low, scans the codebase for improvements. Uses a CTO agent that leads a team of specialists (Scout, Security Analyst, Quality Engineer, Architect) and spawns Issue Planner subagents to file well-planned issues to "Triage".
+**Planning**: When the backlog runs low, a CTO agent leads a team of specialists — Scout, Security Analyst, Quality Engineer, Architect, and a **Product Manager** — to investigate the codebase. The PM maintains a living Product Brief, tracks strategic continuity across sessions, and identifies opportunities for new features and capabilities alongside technical improvements. Findings are filed as well-planned issues to "Triage" via Issue Planner subagents.
 
 **Projects**: Polls active projects for triage issues. Spawns project-owner agents that accept or defer issues, spawn technical planners to decompose accepted issues into Ready sub-issues, and track project health.
 
@@ -209,8 +210,8 @@ See [templates/autopilot.yml.template](templates/autopilot.yml.template) for the
 ## How It Works
 
 1. **Linear is the source of truth.** Issue states drive the entire system. The executor reads from Ready, writes to In Review/Blocked. The monitor watches In Review. The planning loop writes to Triage. Project owners triage into Ready.
-2. **Prompts are the product.** The TypeScript scripts are just plumbing. The prompts in `prompts/` define what Claude actually does — they're the highest-leverage thing to customize.
-3. **Fully autonomous by default.** The planning loop files to Triage. Project owners triage and decompose into Ready sub-issues. The executor implements and opens PRs with auto-merge. The monitor fixes CI failures, resolves merge conflicts, and responds to review feedback. No human intervention required — but you can still review PRs and triage issues if you want oversight.
+2. **Prompts are the product.** The TypeScript scripts are just plumbing. The prompts in `prompts/` and agent definitions in `plugins/` define what Claude actually does — they're the highest-leverage thing to customize.
+3. **Fully autonomous by default.** The planning loop files to Triage — not just tech debt and bug fixes, but new features, capability extensions, and product improvements identified by the PM agent. Project owners triage and decompose into Ready sub-issues. The executor implements and opens PRs with auto-merge. The monitor fixes CI failures, resolves merge conflicts, and responds to review feedback. No human intervention required — but you can still review PRs and triage issues if you want oversight.
 4. **Git worktrees provide isolation.** Each executor and fixer instance works in its own worktree, so parallel execution doesn't cause conflicts.
 5. **Agent SDK for execution.** Claude Code agents are spawned via the `@anthropic-ai/claude-agent-sdk` with activity streaming for live dashboard updates.
 6. **PR monitoring is automatic.** The monitor checks GitHub PRs linked to In Review issues. CI failures, merge conflicts, and review feedback are handled automatically; unfixable issues move to Blocked.

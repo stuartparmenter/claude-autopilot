@@ -1,5 +1,0 @@
-{
-  "name": "executor",
-  "version": "1.0.0",
-  "description": "Runtime support for executor and fixer agents. Fixes sandbox TMPDIR issues and provides executor-specific skills."
-}

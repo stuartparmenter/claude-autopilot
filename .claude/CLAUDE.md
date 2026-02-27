@@ -33,9 +33,9 @@ CI runs `typecheck`, `check`, and `bun test` on all PRs (`.github/workflows/lint
 
 `bun run start` (`src/main.ts`) runs a single event loop that drives four subsystems:
 
-1. **Executor** (`src/executor.ts`) — Pulls "Ready" leaf issues from Linear (team-wide, skipping parents with children), spawns Claude Code agents in isolated git worktrees. Each agent implements the issue, runs tests, pushes a PR, and updates Linear to "In Review". Runs up to `executor.parallel` agents concurrently.
+1. **Executor** (`src/executor.ts`) — Pulls "Ready" leaf issues from Linear (team-wide, skipping parents with children), spawns Claude Code agents in isolated git clones. Each agent implements the issue, runs tests, pushes a PR, and updates Linear to "In Review". Runs up to `executor.parallel` agents concurrently.
 
-2. **Monitor** (`src/monitor.ts`) — Checks "In Review" issues for CI failures or merge conflicts on their linked GitHub PRs. Spawns fixer agents to repair problems. Fixers check out the existing PR branch in a worktree and push fixes.
+2. **Monitor** (`src/monitor.ts`) — Checks "In Review" issues for CI failures or merge conflicts on their linked GitHub PRs. Spawns fixer agents to repair problems. Fixers check out the existing PR branch in a clone and push fixes.
 
 3. **Planning** (`src/planner.ts`) — When the backlog drops below `min_ready_threshold`, a CTO agent leads a team of specialists (PM, Scout, Security Analyst, Quality Engineer, Architect) to investigate the codebase. Groups findings into projects under the initiative, then spawns Issue Planner agents to file improvement issues to Linear. Posts initiative-level status updates.
 
@@ -56,12 +56,12 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 ### Key Modules
 
 - **`src/projects.ts`** — Projects loop. `checkProjects()` queries active projects under the initiative for triage issues, spawns project-owner agents.
-- **`src/lib/claude.ts`** — Wraps `@anthropic-ai/claude-agent-sdk` `query()`. Handles worktree creation/cleanup, timeout/inactivity watchdogs, activity streaming to `AppState`, and a **spawn gate** (sequential agent init to avoid `~/.claude.json` race conditions).
+- **`src/lib/claude.ts`** — Wraps `@anthropic-ai/claude-agent-sdk` `query()`. Handles clone creation/cleanup, timeout/inactivity watchdogs, activity streaming to `AppState`, and a **spawn gate** (sequential agent init to avoid `~/.claude.json` race conditions).
 - **`src/lib/config.ts`** — Loads `.autopilot.yml` from the target project, deep-merges with `DEFAULTS`, validates string fields against injection.
 - **`src/lib/linear.ts`** — Linear SDK wrapper. All calls use `withRetry()` for transient error resilience.
 - **`src/lib/github.ts`** — Octokit wrapper. `detectRepo()` auto-detects owner/repo from git remote. `getPRStatus()` combines Checks API results.
 - **`src/lib/prompt.ts`** — Loads `prompts/*.md` templates and substitutes `{{VARIABLE}}` placeholders with sanitized values.
-- **`src/lib/worktree.ts`** — Creates/removes git worktrees at `.claude/worktrees/<name>`. Handles stale cleanup, Windows file lock retries.
+- **`src/lib/sandbox-clone.ts`** — Creates/removes isolated git clones at `.claude/clones/<name>` via `git clone --shared`. Each clone has its own `.git/` (no lock contention) while reusing the parent's object store. Handles stale cleanup with retry logic.
 - **`src/lib/retry.ts`** — `withRetry()` with exponential backoff + jitter, respects `Retry-After` headers.
 - **`src/state.ts`** — In-memory `AppState` class tracking running agents, activity feeds, history, queue info, planning status.
 - **`src/server.ts`** — Hono app serving the dashboard HTML shell and htmx partials. JSON API at `/api/status` and `/api/pause`.
@@ -70,10 +70,10 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 
 `runClaude()` in `src/lib/claude.ts` is the central agent runner:
 1. Acquires spawn slot (serial init to avoid config race)
-2. Creates worktree (executor: fresh branch from HEAD; fixer: existing PR branch)
+2. Creates isolated clone (executor: fresh branch from HEAD; fixer: existing PR branch)
 3. Calls Agent SDK `query()` with `bypassPermissions` mode and Linear+GitHub MCP servers
 4. Streams activity events to `AppState` for dashboard display
-5. On completion/timeout/error: cleans up worktree, releases spawn slot
+5. On completion/timeout/error: cleans up clone, releases spawn slot
 
 ## Conventions
 
@@ -83,7 +83,7 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 - **MCP servers** (Linear + GitHub) are injected into agents via `buildMcpServers()` in `src/lib/claude.ts`
 - **Tests** use Bun's built-in test runner, colocated as `*.test.ts` alongside source files
 - **Formatting**: Biome with 2-space indent, double quotes, organized imports
-- **Worktrees** live at `<project>/.claude/worktrees/<name>`; executor branches are `worktree-<issue-id>`, fixer branches are the PR branch itself
+- **Clones** live at `<project>/.claude/clones/<name>`; executor branches are `autopilot-<issue-id>`, fixer branches are the PR branch itself
 
 ## Development Guidance
 
