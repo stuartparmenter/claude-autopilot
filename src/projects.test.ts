@@ -172,6 +172,7 @@ function makeLinearIds(withInitiative = true): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
+    managedLabelId: "managed-label-id",
     ...(withInitiative
       ? { initiativeId: "init-1", initiativeName: "Test Initiative" }
       : {}),

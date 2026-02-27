@@ -154,6 +154,7 @@ function makeLinearIds(): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
+    managedLabelId: "managed-label-id",
     states: {
       triage: "triage-id",
       ready: "ready-id",

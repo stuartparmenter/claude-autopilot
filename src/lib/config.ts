@@ -30,6 +30,7 @@ export interface LinearIds {
   teamKey: string;
   initiativeId?: string;
   initiativeName?: string;
+  managedLabelId: string;
   states: {
     triage: string;
     ready: string;
