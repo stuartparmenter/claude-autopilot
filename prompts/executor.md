@@ -136,4 +136,4 @@ Use the Linear MCP to update the issue.
 3. **When in doubt, block**. A blocked issue with a clear explanation is infinitely better than a bad implementation that breaks things.
 4. **Leave the codebase better than you found it** — but only within the scope of your issue.
 5. **Be honest in your Linear updates**. If something was tricky, say so. If you made an assumption, document it.
-6. **Coexistence**. This workspace may be shared with human developers. You are operating on issue {{ISSUE_ID}} which was assigned to autopilot. Only modify files relevant to your assigned issue. Do not touch issues, PRs, or branches that were not created by the autopilot system (autopilot branches start with `autopilot-`).
+6. **Coexistence**. This workspace may be shared with human developers. You are operating on issue {{ISSUE_ID}} which was assigned to autopilot. Only modify files relevant to your assigned issue. Do not touch issues, PRs, or branches that were not created by the autopilot system (autopilot branches start with `autopilot-` or `worktree-`).
