@@ -1467,3 +1467,206 @@ describe("GET /partials/stats — planning count", () => {
     expect(body).toContain(">2<");
   });
 });
+
+describe("GET /api/planning-history", () => {
+  test("returns { sessions: [] } when no sessions added", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/planning-history");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { sessions: unknown[] };
+    expect(json).toHaveProperty("sessions");
+    expect(json.sessions).toHaveLength(0);
+  });
+
+  test("returns sessions after addPlanningSession()", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-api-1",
+      agentRunId: "run-api-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      summary: "Investigated codebase",
+      issuesFiledCount: 3,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/planning-history");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      sessions: Array<{
+        id: string;
+        issuesFiledCount: number;
+        summary: string;
+      }>;
+    };
+    expect(json.sessions).toHaveLength(1);
+    expect(json.sessions[0].id).toBe("ps-api-1");
+    expect(json.sessions[0].issuesFiledCount).toBe(3);
+    expect(json.sessions[0].summary).toBe("Investigated codebase");
+  });
+});
+
+describe("GET /partials/planning-history", () => {
+  test("returns 'No planning sessions yet' when empty", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("No planning sessions yet");
+  });
+
+  test("returns HTML with session data when sessions exist", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-html-1",
+      agentRunId: "run-html-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      summary: "Found improvements",
+      issuesFiledCount: 5,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("planning-card");
+    expect(body).toContain("Found improvements");
+    expect(body).toContain("5 issue(s) filed");
+    expect(body).toContain("status-dot completed");
+  });
+
+  test("shows 'Planning session' fallback when summary is absent", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-no-summary",
+      agentRunId: "run-no-summary",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "failed",
+      issuesFiledCount: 0,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    const body = await res.text();
+    expect(body).toContain("Planning session");
+    expect(body).toContain("status-dot failed");
+  });
+
+  test("escapes special characters in session ID used in hx-get", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-<script>",
+      agentRunId: "run-xss",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 0,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    const body = await res.text();
+    expect(body).toContain("ps-&lt;script&gt;");
+    expect(body).not.toContain("ps-<script>");
+  });
+});
+
+describe("GET /partials/planning-detail/:id", () => {
+  test("returns 404 for unknown session ID", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-detail/no-such-id");
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("Planning session not found");
+  });
+
+  test("returns session details for known ID", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-detail-1",
+      agentRunId: "run-detail-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      summary: "Full investigation complete",
+      issuesFiledCount: 2,
+      issuesFiled: [
+        { identifier: "ENG-10", title: "Add tests" },
+        { identifier: "ENG-11", title: "Fix lint" },
+      ],
+      findingsRejected: [{ finding: "Rewrite DB", reason: "Too risky" }],
+      costUsd: 0.0123,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-detail/ps-detail-1");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Full investigation complete");
+    expect(body).toContain("ENG-10");
+    expect(body).toContain("Add tests");
+    expect(body).toContain("ENG-11");
+    expect(body).toContain("Fix lint");
+    expect(body).toContain("Rewrite DB");
+    expect(body).toContain("Too risky");
+    expect(body).toContain("0.0123");
+    expect(body).toContain("status-dot completed");
+  });
+
+  test("shows agent activity log link when agentRunId is present", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-link-1",
+      agentRunId: "run-link-abc",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 0,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-detail/ps-link-1");
+    const body = await res.text();
+    expect(body).toContain("/partials/activity/run-link-abc");
+    expect(body).toContain("View agent activity log");
+  });
+
+  test("shows 'None recorded' when no issues filed details", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-empty-1",
+      agentRunId: "run-empty-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "timed_out",
+      issuesFiledCount: 0,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-detail/ps-empty-1");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("None recorded");
+    expect(body).toContain("status-dot timed_out");
+  });
+});
+
+describe("dashboard HTML includes planning-history sidebar section", () => {
+  test("includes planning-history-list div with 30s poll trigger", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("planning-history-list");
+    expect(body).toContain("/partials/planning-history");
+    expect(body).toContain("every 30s");
+  });
+
+  test("includes 'Planning' section title in sidebar", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("Planning");
+  });
+});

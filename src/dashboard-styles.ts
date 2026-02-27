@@ -304,6 +304,28 @@ export const DASHBOARD_CSS = `
   .action-btn.danger:hover {
     background: #3f1f1f;
   }
+  .planning-card {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    border-left: 2px solid var(--purple);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .planning-card:hover {
+    background: var(--bg-card);
+  }
+  .planning-card .title {
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .planning-card .meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
   .planning-badge {
     display: inline-block;
     font-size: 10px;

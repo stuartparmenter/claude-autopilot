@@ -455,6 +455,13 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                   hx-trigger="load, every 10s"
                   hx-swap="innerHTML"
                 ></div>
+                <div class="section-title">Planning</div>
+                <div
+                  id="planning-history-list"
+                  hx-get="/partials/planning-history"
+                  hx-trigger="load, every 30s"
+                  hx-swap="innerHTML"
+                ></div>
                 <div class="section-title">History</div>
                 <div
                   id="history-list"
@@ -495,6 +502,11 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     }
     const today = state.getTodayAnalytics();
     return c.json({ enabled: true, ...analytics, ...(today ?? {}) });
+  });
+
+  app.get("/api/planning-history", (c) => {
+    const history = state.getPlanningHistory();
+    return c.json({ sessions: history });
   });
 
   app.get("/api/budget", (c) => {
@@ -793,6 +805,78 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
           .join(""),
       )}`,
     );
+  });
+
+  app.get("/partials/planning-history", (c) => {
+    const sessions = state.getPlanningHistory();
+    if (sessions.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No planning sessions yet
+        </div>`,
+      );
+    }
+    return c.html(
+      html`${raw(
+        sessions
+          .map((s) => {
+            const dateStr = new Date(s.finishedAt).toLocaleDateString();
+            const costStr = s.costUsd ? ` · $${s.costUsd.toFixed(4)}` : "";
+            return `<div class="planning-card" hx-get="/partials/planning-detail/${escapeHtml(s.id)}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
+          <div><span class="status-dot ${s.status}"></span><span style="font-weight:600">${escapeHtml(dateStr)}</span>${costStr}</div>
+          <div class="title">${escapeHtml(s.summary ?? "Planning session")}</div>
+          <div class="meta">${String(s.issuesFiledCount)} issue(s) filed</div>
+        </div>`;
+          })
+          .join(""),
+      )}`,
+    );
+  });
+
+  app.get("/partials/planning-detail/:id", (c) => {
+    const id = c.req.param("id");
+    const session = state.getPlanningHistory().find((s) => s.id === id);
+    if (!session) {
+      return c.html(
+        html`<div class="empty-state">Planning session not found</div>`,
+        404,
+      );
+    }
+    const dateStr = new Date(session.finishedAt).toLocaleString();
+    const costStr = session.costUsd ? `$${session.costUsd.toFixed(4)}` : "n/a";
+    const issuesFiled = session.issuesFiled ?? [];
+    const findingsRejected = session.findingsRejected ?? [];
+    return c.html(html`
+      <div>
+        <div style="padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px">
+          <span class="status-dot ${session.status}"></span>
+          <strong>Planning Session</strong>
+          <span class="meta" style="margin-left: 8px">${dateStr} &middot; cost: ${costStr}</span>
+        </div>
+        ${session.summary ? html`<div style="margin-bottom: 12px; font-size: 12px">${session.summary}</div>` : ""}
+        <div style="margin-bottom: 12px">
+          <div class="section-title" style="padding-left: 0; padding-top: 0">Issues Filed (${String(session.issuesFiledCount)})</div>
+          ${issuesFiled.length > 0 ? raw(issuesFiled.map((i) => `<div style="font-size: 12px; padding: 4px 0"><span class="issue-id">${escapeHtml(i.identifier)}</span> ${escapeHtml(i.title)}</div>`).join("")) : html`<div style="font-size: 12px; color: var(--text-dim)">None recorded</div>`}
+        </div>
+        ${
+          findingsRejected.length > 0
+            ? html`<div style="margin-bottom: 12px">
+          <div class="section-title" style="padding-left: 0; padding-top: 0">Findings Rejected (${String(findingsRejected.length)})</div>
+          ${raw(findingsRejected.map((f) => `<div style="font-size: 12px; padding: 4px 0; color: var(--text-dim)"><strong>${escapeHtml(f.finding)}</strong>: ${escapeHtml(f.reason)}</div>`).join(""))}
+        </div>`
+            : ""
+        }
+        ${
+          session.agentRunId
+            ? html`<div>
+          <a href="#" hx-get="/partials/activity/${escapeHtml(session.agentRunId)}" hx-target="#main-panel" hx-swap="innerHTML" style="color: var(--accent); font-size: 12px">View agent activity log</a>
+        </div>`
+            : ""
+        }
+      </div>
+    `);
   });
 
   app.get("/partials/budget", (c) => {
