@@ -83,6 +83,11 @@ async function forceRemoveDir(
   }
 }
 
+export interface GitIdentity {
+  userName: string;
+  userEmail: string;
+}
+
 export interface CloneResult {
   path: string;
   branch: string;
@@ -103,6 +108,7 @@ export async function createClone(
   projectPath: string,
   name: string,
   fromBranch?: string,
+  gitIdentity?: GitIdentity,
 ): Promise<CloneResult> {
   const dest = clonePath(projectPath, name);
 
@@ -119,12 +125,29 @@ export async function createClone(
     }
   }
 
-  // Clone with shared objects — reuses parent's object store via alternates
+  // Detect the default branch from the parent's remote HEAD (usually main/master).
+  // This ensures the clone starts on the right branch regardless of what
+  // branch the parent repo currently has checked out.
+  let defaultBranch = "main";
+  try {
+    const ref = gitOutput(projectPath, [
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+    ]);
+    defaultBranch = ref.replace(/^refs\/remotes\/origin\//, "");
+  } catch {
+    // Fallback to "main" if origin/HEAD isn't set
+  }
+
+  // Clone with shared objects — reuses parent's object store via alternates.
+  // --branch ensures the clone checks out the default branch, not whatever
+  // branch the parent happens to be on.
   const cloneErr = gitSync(projectPath, [
     "clone",
     "--shared",
-    "--single-branch",
     "--no-tags",
+    "--branch",
+    defaultBranch,
     projectPath,
     dest,
   ]);
@@ -142,17 +165,47 @@ export async function createClone(
     );
   }
 
-  if (fromBranch) {
-    // Fixer/review mode: check out an existing PR branch.
-    // Use "--" to prevent branch names starting with "-" from being parsed as flags.
-    const fetchErr = gitSync(dest, ["fetch", "origin", "--", fromBranch]);
-    if (fetchErr) {
+  // Disable commit/tag signing in the clone — the sandbox may not have
+  // access to GPG/SSH signing keys and we don't need signed commits.
+  // This overrides any global config (e.g. commit.gpgsign=true).
+  gitSync(dest, ["config", "commit.gpgsign", "false"]);
+  gitSync(dest, ["config", "tag.gpgsign", "false"]);
+
+  // Set bot identity in the clone's local config.
+  if (gitIdentity) {
+    const nameErr = gitSync(dest, [
+      "config",
+      "user.name",
+      gitIdentity.userName,
+    ]);
+    if (nameErr) {
+      throw new Error(`Failed to set user.name in clone '${name}': ${nameErr}`);
+    }
+    const emailErr = gitSync(dest, [
+      "config",
+      "user.email",
+      gitIdentity.userEmail,
+    ]);
+    if (emailErr) {
       throw new Error(
-        `Failed to fetch branch '${fromBranch}' in clone '${name}': ${fetchErr}`,
+        `Failed to set user.email in clone '${name}': ${emailErr}`,
       );
     }
+  }
 
-    const checkoutErr = gitSync(dest, ["checkout", "--", fromBranch]);
+  // Fetch from GitHub so remote tracking refs are up to date
+  // (the initial clone copied refs from the local repo, not GitHub).
+  const fetchErr = gitSync(dest, ["fetch", "origin"]);
+  if (fetchErr) {
+    throw new Error(
+      `Failed to fetch from origin in clone '${name}': ${fetchErr}`,
+    );
+  }
+
+  if (fromBranch) {
+    // Fixer/review mode: check out an existing PR branch.
+    // The full fetch above already retrieved all remote tracking refs.
+    const checkoutErr = gitSync(dest, ["checkout", fromBranch]);
     if (checkoutErr) {
       throw new Error(
         `Failed to checkout branch '${fromBranch}' in clone '${name}': ${checkoutErr}`,
@@ -164,34 +217,23 @@ export async function createClone(
   }
 
   // Executor mode: create a fresh branch.
-  // Check if a legacy worktree-<name> branch exists on remote (in-flight PRs).
+  // Check if a legacy worktree-<name> branch exists on the remote
+  // (in-flight PRs from before the rename). The full fetch above already
+  // retrieved all remote tracking refs, so we can check locally.
+  // Use rev-parse to verify the remote ref exists (avoids ambiguity with
+  // file paths that `git checkout` could match).
   const legacyBranch = `worktree-${name}`;
-  const lsResult = Bun.spawnSync(
-    ["git", "ls-remote", "--heads", "origin", legacyBranch],
-    { cwd: dest, stdout: "pipe", stderr: "pipe" },
-  );
-  const hasLegacyBranch =
-    lsResult.exitCode === 0 && lsResult.stdout.toString().trim().length > 0;
-
-  if (hasLegacyBranch) {
-    // Resume work on legacy branch for backward compat
-    const legacyFetchErr = gitSync(dest, [
-      "fetch",
-      "origin",
-      "--",
-      legacyBranch,
-    ]);
-    const legacyCheckoutErr =
-      !legacyFetchErr && gitSync(dest, ["checkout", "--", legacyBranch]);
-
-    if (!legacyFetchErr && !legacyCheckoutErr) {
-      info(`Created clone: ${name} (resuming legacy branch ${legacyBranch})`);
-      return { path: dest, branch: legacyBranch };
-    }
-
-    warn(
-      `Legacy branch '${legacyBranch}' found on remote but could not be checked out — falling back to new branch`,
-    );
+  const legacyExists = gitSync(dest, [
+    "rev-parse",
+    "--verify",
+    `origin/${legacyBranch}`,
+  ]);
+  const legacyCheckoutErr = legacyExists
+    ? "no remote ref"
+    : gitSync(dest, ["checkout", legacyBranch]);
+  if (!legacyCheckoutErr) {
+    info(`Created clone: ${name} (resuming legacy branch ${legacyBranch})`);
+    return { path: dest, branch: legacyBranch };
   }
 
   // New naming: autopilot-<name>
@@ -290,9 +332,6 @@ export async function sweepLegacyWorktrees(projectPath: string): Promise<void> {
       warn(`Failed to remove legacy worktree '${name}': ${e}`);
     }
   }
-
-  // Prune stale git worktree references
-  gitSync(projectPath, ["worktree", "prune"]);
 
   // Remove the now-empty worktrees directory itself
   try {

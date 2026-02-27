@@ -123,6 +123,11 @@ export interface ReviewerConfig {
   max_issues_per_review: number;
 }
 
+export interface GitConfig {
+  user_name: string;
+  user_email: string;
+}
+
 export interface AutopilotConfig {
   linear: LinearConfig;
   executor: ExecutorConfig;
@@ -133,6 +138,7 @@ export interface AutopilotConfig {
   github: GithubConfig;
   project: ProjectConfig;
   webhooks?: WebhooksConfig;
+  git: GitConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
   budget: BudgetConfig;
@@ -192,6 +198,10 @@ export const DEFAULTS: AutopilotConfig = {
     enabled: false,
     linear_secret: "",
     github_secret: "",
+  },
+  git: {
+    user_name: "autopilot[bot]",
+    user_email: "autopilot[bot]@users.noreply.github.com",
   },
   persistence: {
     enabled: true,
@@ -299,6 +309,8 @@ function validateConfigStrings(config: AutopilotConfig): void {
     ["linear.states.in_review", config.linear.states.in_review],
     ["linear.states.done", config.linear.states.done],
     ["linear.states.blocked", config.linear.states.blocked],
+    ["git.user_name", config.git.user_name],
+    ["git.user_email", config.git.user_email],
   ];
 
   for (const [key, value] of fields) {

@@ -83,7 +83,7 @@ The planning system writes to Triage. Project owners accept triage issues and sp
 - **MCP servers** (Linear + GitHub) are injected into agents via `buildMcpServers()` in `src/lib/claude.ts`
 - **Tests** use Bun's built-in test runner, colocated as `*.test.ts` alongside source files
 - **Formatting**: Biome with 2-space indent, double quotes, organized imports
-- **Clones** live at `<project>/.claude/clones/<name>`; executor branches are `autopilot-<issue-id>`, fixer branches are the PR branch itself
+- **Clones** live at `<project>/.claude/clones/<name>`; executor branches are `autopilot-<issue-id>` (or legacy `worktree-<issue-id>`), fixer branches are the PR branch itself
 
 ## Development Guidance
 

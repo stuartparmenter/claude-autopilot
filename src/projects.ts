@@ -237,7 +237,7 @@ async function runProjectOwner(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Project owner for "${projectName}" crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
     return false;
   } finally {
     activeProjectIds.delete(projectId);

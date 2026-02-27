@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+const TEST_TMP = join(process.cwd(), ".tmp", "tests");
+
 import {
   buildPrompt,
   loadPrompt,
@@ -119,7 +122,8 @@ describe("loadPrompt project-local overrides", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = join("/tmp/claude-1002", `prompt-override-test-${Date.now()}`);
+    mkdirSync(TEST_TMP, { recursive: true });
+    tmpDir = join(TEST_TMP, `prompt-override-${Date.now()}`);
     mkdirSync(join(tmpDir, ".autopilot", "prompts"), {
       recursive: true,
     });

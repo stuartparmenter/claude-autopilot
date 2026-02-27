@@ -209,6 +209,10 @@ function makeConfig(
     },
     github: { repo: "", automerge: false },
     project: { name: "" },
+    git: {
+      user_name: "autopilot[bot]",
+      user_email: "autopilot[bot]@users.noreply.github.com",
+    },
     persistence: {
       enabled: false,
       db_path: ".claude/autopilot.db",

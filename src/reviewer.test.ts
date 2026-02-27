@@ -126,6 +126,10 @@ function makeConfig(
     },
     github: { repo: "", automerge: false },
     project: { name: "" },
+    git: {
+      user_name: "autopilot[bot]",
+      user_email: "autopilot[bot]@users.noreply.github.com",
+    },
     persistence: {
       enabled: true,
       db_path: ".claude/autopilot.db",
@@ -161,9 +165,12 @@ function makeLinearIds(): LinearIds {
   };
 }
 
-function insertRuns(db: ReturnType<typeof openDb>, count: number): void {
+async function insertRuns(
+  db: ReturnType<typeof openDb>,
+  count: number,
+): Promise<void> {
   for (let i = 0; i < count; i++) {
-    insertAgentRun(db, {
+    await insertAgentRun(db, {
       id: `run-${i}`,
       issueId: `ENG-${i}`,
       issueTitle: `Test Issue ${i}`,
@@ -182,7 +189,7 @@ describe("shouldRunReviewer — enabled check", () => {
   test("returns false when enabled === false", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     const result = await shouldRunReviewer({
       config: makeConfig({ enabled: false }),
@@ -200,7 +207,7 @@ describe("shouldRunReviewer — already running", () => {
     const db = openDb(":memory:");
     const state = new AppState();
     state.updateReviewer({ running: true });
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     const result = await shouldRunReviewer({
       config: makeConfig(),
@@ -219,7 +226,7 @@ describe("shouldRunReviewer — min interval", () => {
     const state = new AppState();
     // Set lastRunAt to 30 minutes ago; interval is 60 minutes
     state.updateReviewer({ lastRunAt: Date.now() - 30 * 60 * 1000 });
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     const result = await shouldRunReviewer({
       config: makeConfig({ min_interval_minutes: 60 }),
@@ -236,7 +243,7 @@ describe("shouldRunReviewer — min interval", () => {
     const state = new AppState();
     // Set lastRunAt to 90 minutes ago; interval is 60 minutes
     state.updateReviewer({ lastRunAt: Date.now() - 90 * 60 * 1000 });
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     const result = await shouldRunReviewer({
       config: makeConfig({
@@ -257,7 +264,7 @@ describe("shouldRunReviewer — min runs threshold", () => {
     const db = openDb(":memory:");
     const state = new AppState();
     // Only 2 runs, threshold is 3
-    insertRuns(db, 2);
+    await insertRuns(db, 2);
 
     const result = await shouldRunReviewer({
       config: makeConfig({ min_runs_before_review: 3 }),
@@ -273,7 +280,7 @@ describe("shouldRunReviewer — min runs threshold", () => {
     const db = openDb(":memory:");
     const state = new AppState();
     // 5 runs, threshold is 3
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     const result = await shouldRunReviewer({
       config: makeConfig({ min_runs_before_review: 3 }),
@@ -289,8 +296,8 @@ describe("shouldRunReviewer — min runs threshold", () => {
     const db = openDb(":memory:");
     const state = new AppState();
     // Insert 5 runs but mark them all reviewed
-    insertRuns(db, 5);
-    markRunsReviewed(db, ["run-0", "run-1", "run-2", "run-3", "run-4"]);
+    await insertRuns(db, 5);
+    await markRunsReviewed(db, ["run-0", "run-1", "run-2", "run-3", "run-4"]);
 
     const result = await shouldRunReviewer({
       config: makeConfig({ min_runs_before_review: 3 }),
@@ -311,7 +318,7 @@ describe("runReviewer — success path", () => {
   test("marks queried runs as reviewed after agent completes", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     mockRunClaude.mockResolvedValue({
       timedOut: false,
@@ -341,7 +348,7 @@ describe("runReviewer — success path", () => {
   test("updates reviewer status: running=false, lastResult='completed'", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 3);
+    await insertRuns(db, 3);
 
     mockRunClaude.mockResolvedValue({
       timedOut: false,
@@ -371,7 +378,7 @@ describe("runReviewer — success path", () => {
   test("calls runClaude with a prompt containing run summaries", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 3);
+    await insertRuns(db, 3);
 
     await runReviewer({
       config: makeConfig(),
@@ -401,7 +408,7 @@ describe("runReviewer — failure path (agent returns error)", () => {
   test("still marks runs as reviewed even when agent fails", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 5);
+    await insertRuns(db, 5);
 
     mockRunClaude.mockResolvedValue({
       timedOut: false,
@@ -430,7 +437,7 @@ describe("runReviewer — failure path (agent returns error)", () => {
   test("sets lastResult to 'failed' when agent fails", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 3);
+    await insertRuns(db, 3);
 
     mockRunClaude.mockResolvedValue({
       timedOut: false,
@@ -464,7 +471,7 @@ describe("runReviewer — crash path (runClaude rejects)", () => {
   test("marks runs reviewed and sets running=false when runClaude throws", async () => {
     const db = openDb(":memory:");
     const state = new AppState();
-    insertRuns(db, 3);
+    await insertRuns(db, 3);
 
     mockRunClaude.mockRejectedValue(new Error("boom"));
 

@@ -107,7 +107,7 @@ export async function runReviewer(opts: {
 
     // Mark runs as reviewed regardless of agent success/failure to avoid
     // reviewing the same runs in a tight loop on repeated failures.
-    markRunsReviewed(db, runIds);
+    await markRunsReviewed(db, runIds);
 
     state.updateReviewer({
       running: false,
@@ -117,11 +117,11 @@ export async function runReviewer(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Reviewer agent crashed: ${msg}`);
-    state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", { error: msg });
 
     // Still mark runs reviewed to prevent a crash loop
     if (runIds.length > 0) {
-      markRunsReviewed(db, runIds);
+      await markRunsReviewed(db, runIds);
     }
 
     state.updateReviewer({
