@@ -2,7 +2,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { defaultRegistry } from "./circuit-breaker";
 import { getOAuthToken, saveOAuthToken } from "./db";
-import { ensureFreshToken, getLinearAccessToken } from "./linear-auth";
+import {
+  ensureFreshToken,
+  getLinearAccessToken,
+  hasLinearAuth,
+} from "./linear-auth";
 
 // ---------------------------------------------------------------------------
 // In-memory DB setup shared across tests
@@ -14,9 +18,10 @@ const OAUTH_TOKENS_DDL = `
     access_token TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
-    token_type TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    actor TEXT NOT NULL
+    token_type TEXT NOT NULL DEFAULT 'Bearer',
+    scope TEXT,
+    actor TEXT,
+    updated_at INTEGER NOT NULL DEFAULT 0
   )
 `;
 
@@ -100,6 +105,32 @@ describe("getLinearAccessToken", () => {
     expect(() => getLinearAccessToken(db)).toThrow(
       "No Linear authentication configured",
     );
+  });
+
+  test("falls back to LINEAR_API_KEY when OAuth token is expired", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_fallback";
+    await saveOAuthToken(db, "linear", {
+      ...makeFreshToken("expired-tok"),
+      expiresAt: Date.now() - 1000, // already expired
+    });
+    const token = getLinearAccessToken(db);
+    expect(token).toBe("lin_api_fallback");
+  });
+
+  test("falls back to LINEAR_API_KEY when OAuth token expires within 60s", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_fallback";
+    await saveOAuthToken(db, "linear", {
+      ...makeFreshToken("soon-expired-tok"),
+      expiresAt: Date.now() + 30_000, // expires in 30s, within 60s buffer
+    });
+    const token = getLinearAccessToken(db);
+    expect(token).toBe("lin_api_fallback");
+  });
+
+  test("throws clear error with actionable instructions when no auth configured", () => {
+    delete process.env.LINEAR_API_KEY;
+    expect(() => getLinearAccessToken()).toThrow("/auth/linear");
+    expect(() => getLinearAccessToken()).toThrow("LINEAR_API_KEY");
   });
 });
 
@@ -209,5 +240,58 @@ describe("ensureFreshToken", () => {
       clientId: "test-client-id",
       clientSecret: "test-secret",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasLinearAuth
+// ---------------------------------------------------------------------------
+
+describe("hasLinearAuth", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = openTestDb();
+    delete process.env.LINEAR_API_KEY;
+  });
+
+  afterEach(() => {
+    db.close();
+    delete process.env.LINEAR_API_KEY;
+  });
+
+  test("returns true when LINEAR_API_KEY is set and no DB", () => {
+    process.env.LINEAR_API_KEY = "lin_api_key";
+    expect(hasLinearAuth()).toBe(true);
+  });
+
+  test("returns false when no LINEAR_API_KEY and no DB", () => {
+    expect(hasLinearAuth()).toBe(false);
+  });
+
+  test("returns true when valid OAuth token is in DB", async () => {
+    await saveOAuthToken(db, "linear", makeFreshToken());
+    expect(hasLinearAuth(db)).toBe(true);
+  });
+
+  test("returns false when OAuth token is expired and no LINEAR_API_KEY", async () => {
+    await saveOAuthToken(db, "linear", makeExpiredToken());
+    expect(hasLinearAuth(db)).toBe(false);
+  });
+
+  test("returns true when OAuth token is expired but LINEAR_API_KEY is set", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_key";
+    await saveOAuthToken(db, "linear", makeExpiredToken());
+    expect(hasLinearAuth(db)).toBe(true);
+  });
+
+  test("returns false when DB is empty and no LINEAR_API_KEY", () => {
+    expect(hasLinearAuth(db)).toBe(false);
+  });
+
+  test("returns true when both valid OAuth token and LINEAR_API_KEY are set", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_key";
+    await saveOAuthToken(db, "linear", makeFreshToken());
+    expect(hasLinearAuth(db)).toBe(true);
   });
 });

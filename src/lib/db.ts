@@ -46,9 +46,10 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   access_token TEXT NOT NULL,
   refresh_token TEXT NOT NULL,
   expires_at INTEGER NOT NULL,
-  token_type TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  actor TEXT NOT NULL
+  token_type TEXT NOT NULL DEFAULT 'Bearer',
+  scope TEXT,
+  actor TEXT,
+  updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS planning_sessions (
   id TEXT PRIMARY KEY,
@@ -131,10 +132,10 @@ async function withDbRetry<T>(
 export interface OAuthTokenRow {
   accessToken: string;
   refreshToken: string;
-  expiresAt: number;
+  expiresAt: number; // Unix timestamp in ms
   tokenType: string;
-  scope: string;
-  actor: string;
+  scope?: string;
+  actor?: string;
 }
 
 export interface AnalyticsResult {
@@ -217,6 +218,13 @@ export function openDb(dbFilePath: string): Database {
   }
   try {
     db.exec("ALTER TABLE agent_runs ADD COLUMN run_type TEXT");
+  } catch {
+    // Column already exists — safe to ignore
+  }
+  try {
+    db.exec(
+      "ALTER TABLE oauth_tokens ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+    );
   } catch {
     // Column already exists — safe to ignore
   }
@@ -535,8 +543,8 @@ export function getOAuthToken(
         refresh_token: string;
         expires_at: number;
         token_type: string;
-        scope: string;
-        actor: string;
+        scope: string | null;
+        actor: string | null;
       },
       [string]
     >(
@@ -550,8 +558,8 @@ export function getOAuthToken(
     refreshToken: row.refresh_token,
     expiresAt: row.expires_at,
     tokenType: row.token_type,
-    scope: row.scope,
-    actor: row.actor,
+    scope: row.scope ?? undefined,
+    actor: row.actor ?? undefined,
   };
 }
 
@@ -564,21 +572,26 @@ export async function saveOAuthToken(
     () =>
       db.run(
         `INSERT OR REPLACE INTO oauth_tokens
-         (service, access_token, refresh_token, expires_at, token_type, scope, actor)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (service, access_token, refresh_token, expires_at, token_type, scope, actor, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           service,
           token.accessToken,
           token.refreshToken,
           token.expiresAt,
           token.tokenType,
-          token.scope,
-          token.actor,
+          token.scope ?? null,
+          token.actor ?? null,
+          Date.now(),
         ],
       ),
     "saveOAuthToken",
     { service },
   );
+}
+
+export function deleteOAuthToken(db: Database, service: string): void {
+  db.run("DELETE FROM oauth_tokens WHERE service = ?", [service]);
 }
 
 export function pruneConversationLogs(
