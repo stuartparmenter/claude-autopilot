@@ -3,6 +3,7 @@ import { DEFAULTS } from "./lib/config";
 import {
   getConversationLog,
   getRecentPlanningSessions,
+  insertAgentRun,
   openDb,
 } from "./lib/db";
 import type { ActivityEntry, PlanningSession } from "./state";
@@ -761,6 +762,109 @@ describe("AppState — planningHistory persistence", () => {
     expect(persisted.findingsRejected).toEqual(session.findingsRejected);
     expect(persisted.costUsd).toBe(0.42);
 
+    db.close();
+  });
+});
+
+describe("AppState — setDb() reconstructs issueFailureCount", () => {
+  function makeRun(
+    id: string,
+    linearIssueId: string | null,
+    status: "completed" | "failed" | "timed_out",
+    finishedAt: number,
+  ) {
+    return {
+      id,
+      issueId: `issue-${id}`,
+      issueTitle: `Title ${id}`,
+      linearIssueId: linearIssueId ?? undefined,
+      status,
+      startedAt: finishedAt - 1000,
+      finishedAt,
+    };
+  }
+
+  test("issue that failed twice returns count 2 after setDb", async () => {
+    const db = openDb(":memory:");
+    await insertAgentRun(db, makeRun("r1", "uuid-A", "failed", 1000));
+    await insertAgentRun(db, makeRun("r2", "uuid-A", "failed", 2000));
+    const state = new AppState();
+    state.setDb(db);
+    expect(state.getIssueFailureCount("uuid-A")).toBe(2);
+    db.close();
+  });
+
+  test("issue that succeeded after failures returns 0 after setDb", async () => {
+    const db = openDb(":memory:");
+    await insertAgentRun(db, makeRun("r1", "uuid-B", "failed", 1000));
+    await insertAgentRun(db, makeRun("r2", "uuid-B", "failed", 2000));
+    await insertAgentRun(db, makeRun("r3", "uuid-B", "completed", 3000));
+    const state = new AppState();
+    state.setDb(db);
+    expect(state.getIssueFailureCount("uuid-B")).toBe(0);
+    db.close();
+  });
+
+  test("issue that failed after success returns only post-success count", async () => {
+    const db = openDb(":memory:");
+    // Two failures before success
+    await insertAgentRun(db, makeRun("r1", "uuid-C", "failed", 1000));
+    await insertAgentRun(db, makeRun("r2", "uuid-C", "failed", 2000));
+    // Success
+    await insertAgentRun(db, makeRun("r3", "uuid-C", "completed", 3000));
+    // Two failures after success
+    await insertAgentRun(db, makeRun("r4", "uuid-C", "failed", 4000));
+    await insertAgentRun(db, makeRun("r5", "uuid-C", "timed_out", 5000));
+    const state = new AppState();
+    state.setDb(db);
+    expect(state.getIssueFailureCount("uuid-C")).toBe(2);
+    db.close();
+  });
+
+  test("issue never run returns 0 after setDb", async () => {
+    const db = openDb(":memory:");
+    // Populate with runs for a different issue only
+    await insertAgentRun(db, makeRun("r1", "uuid-D", "failed", 1000));
+    const state = new AppState();
+    state.setDb(db);
+    expect(state.getIssueFailureCount("uuid-E")).toBe(0);
+    db.close();
+  });
+
+  test("rows with null linear_issue_id are excluded", async () => {
+    const db = openDb(":memory:");
+    // Insert a run with no linear_issue_id
+    await insertAgentRun(db, makeRun("r1", null, "failed", 1000));
+    const state = new AppState();
+    state.setDb(db);
+    // No entries should have been loaded into the map
+    // We verify indirectly: incrementing for any issue starts from 0
+    expect(state.getIssueFailureCount("r1")).toBe(0);
+    db.close();
+  });
+
+  test("reconstruction counts timed_out as a failure", async () => {
+    const db = openDb(":memory:");
+    await insertAgentRun(db, makeRun("r1", "uuid-F", "timed_out", 1000));
+    await insertAgentRun(db, makeRun("r2", "uuid-F", "timed_out", 2000));
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getIssueFailureCount("uuid-F")).toBe(2);
+    db.close();
+  });
+
+  test("reconstructed counts work with incrementIssueFailures", async () => {
+    const db = openDb(":memory:");
+    await insertAgentRun(db, makeRun("r1", "uuid-G", "failed", 1000));
+
+    const state = new AppState();
+    state.setDb(db);
+
+    // Count starts at 1 (from DB), increment returns 2
+    expect(state.incrementIssueFailures("uuid-G")).toBe(2);
+    expect(state.getIssueFailureCount("uuid-G")).toBe(2);
     db.close();
   });
 });

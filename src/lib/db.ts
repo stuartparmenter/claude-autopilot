@@ -1141,3 +1141,45 @@ export function getStateTransitions(
     reason: row.reason ?? undefined,
   }));
 }
+
+interface IssueFailureCountRow {
+  linear_issue_id: string;
+  failure_count: number;
+}
+
+/**
+ * Returns failure counts per Linear issue UUID, counting only failed/timed_out
+ * runs that occurred after the most recent completed run for each issue.
+ * Issues with no failures after their last success are excluded.
+ * Results are ordered by most recent failure, capped at `limit` entries.
+ */
+export function getIssueFailureCounts(
+  db: Database,
+  limit = 1000,
+): Map<string, number> {
+  const rows = db
+    .query<IssueFailureCountRow, [number]>(
+      `WITH last_success AS (
+         SELECT linear_issue_id, MAX(finished_at) AS success_at
+         FROM agent_runs
+         WHERE linear_issue_id IS NOT NULL AND status = 'completed'
+         GROUP BY linear_issue_id
+       )
+       SELECT a.linear_issue_id, COUNT(*) AS failure_count
+       FROM agent_runs a
+       LEFT JOIN last_success ls ON a.linear_issue_id = ls.linear_issue_id
+       WHERE a.linear_issue_id IS NOT NULL
+         AND a.status IN ('failed', 'timed_out')
+         AND a.finished_at > COALESCE(ls.success_at, 0)
+       GROUP BY a.linear_issue_id
+       ORDER BY MAX(a.finished_at) DESC
+       LIMIT ?`,
+    )
+    .all(limit);
+
+  const result = new Map<string, number>();
+  for (const row of rows) {
+    result.set(row.linear_issue_id, row.failure_count);
+  }
+  return result;
+}
