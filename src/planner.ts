@@ -3,7 +3,7 @@ import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { countIssuesInState } from "./lib/linear";
+import { countIssuesInState, getReadyIssues } from "./lib/linear";
 import { info, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
@@ -35,10 +35,14 @@ export async function shouldRunPlanning(opts: {
     labels: config.linear.labels,
     projects: config.linear.projects,
   };
-  const [readyCount, triageCount] = await Promise.all([
-    countIssuesInState(linearIds, linearIds.states.ready, filters),
+  // Use getReadyIssues (not countIssuesInState) so the planner applies the
+  // same leaf + blocking filters the executor uses, giving an accurate count
+  // of actually-workable backlog.
+  const [readyIssues, triageCount] = await Promise.all([
+    getReadyIssues(linearIds, 250, filters),
     countIssuesInState(linearIds, linearIds.states.triage, filters),
   ]);
+  const readyCount = readyIssues.length;
   const backlogCount = readyCount + triageCount;
 
   state.updatePlanning({
