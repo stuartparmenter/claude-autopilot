@@ -26,12 +26,14 @@ import {
   getRecentPlanningSessions,
   getRecentRuns,
   getRepeatFailures,
+  getSpendLogEntries,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
   insertPlanningSession,
+  insertStateTransition,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -172,6 +174,8 @@ export class AppState {
     for (const [issueId, count] of counts) {
       this.issueFailureCount.set(issueId, count);
     }
+    const cutoffMs = Date.now() - 32 * 24 * 60 * 60 * 1000;
+    this.spendLog = getSpendLogEntries(db, cutoffMs);
   }
 
   addAgent(
@@ -378,6 +382,12 @@ export class AppState {
     }
     if (this.db) {
       void insertPlanningSession(this.db, session);
+    }
+  }
+
+  logStateTransition(transition: StateTransition): void {
+    if (this.db) {
+      void insertStateTransition(this.db, transition);
     }
   }
 

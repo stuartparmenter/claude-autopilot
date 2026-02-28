@@ -1021,6 +1021,29 @@ export async function insertPlanningSession(
   );
 }
 
+interface SpendLogRow {
+  finished_at: number;
+  cost_usd: number;
+}
+
+export function getSpendLogEntries(
+  db: Database,
+  cutoffMs: number,
+): Array<{ timestampMs: number; costUsd: number }> {
+  const rows = db
+    .query<SpendLogRow, [number]>(
+      `SELECT finished_at, cost_usd
+       FROM agent_runs
+       WHERE finished_at >= ? AND cost_usd IS NOT NULL AND cost_usd > 0
+       ORDER BY finished_at ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    timestampMs: row.finished_at,
+    costUsd: row.cost_usd,
+  }));
+}
+
 export function getRecentPlanningSessions(
   db: Database,
   limit = 20,

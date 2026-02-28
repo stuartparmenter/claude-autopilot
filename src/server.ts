@@ -583,6 +583,28 @@ export function createApp(
     return c.json({ enabled: true, ...trends });
   });
 
+  app.get("/api/costs", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.json({ enabled: false });
+    }
+    const dailyCosts = state.getDailyCosts(30);
+    const perIssueCosts = state.getPerIssueCosts(50);
+    return c.json({
+      enabled: true,
+      totalCostUsd: analytics.totalCostUsd,
+      dailyCosts,
+      perIssueCosts,
+    });
+  });
+
+  app.get("/api/costs/daily", (c) => {
+    const days = parseInt(c.req.query("days") ?? "30", 10);
+    const safeDays = Math.min(Math.max(days, 1), 365);
+    const dailyCosts = state.getDailyCosts(safeDays);
+    return c.json({ dailyCosts });
+  });
+
   app.get("/api/planning/history", (c) => {
     const history = state.getPlanningHistory();
     return c.json({ sessions: history });

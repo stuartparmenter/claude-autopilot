@@ -788,10 +788,8 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     const db = openDb(":memory:");
     await insertAgentRun(db, makeRun("r1", "uuid-A", "failed", 1000));
     await insertAgentRun(db, makeRun("r2", "uuid-A", "failed", 2000));
-
     const state = new AppState();
     state.setDb(db);
-
     expect(state.getIssueFailureCount("uuid-A")).toBe(2);
     db.close();
   });
@@ -801,10 +799,8 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     await insertAgentRun(db, makeRun("r1", "uuid-B", "failed", 1000));
     await insertAgentRun(db, makeRun("r2", "uuid-B", "failed", 2000));
     await insertAgentRun(db, makeRun("r3", "uuid-B", "completed", 3000));
-
     const state = new AppState();
     state.setDb(db);
-
     expect(state.getIssueFailureCount("uuid-B")).toBe(0);
     db.close();
   });
@@ -819,10 +815,8 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     // Two failures after success
     await insertAgentRun(db, makeRun("r4", "uuid-C", "failed", 4000));
     await insertAgentRun(db, makeRun("r5", "uuid-C", "timed_out", 5000));
-
     const state = new AppState();
     state.setDb(db);
-
     expect(state.getIssueFailureCount("uuid-C")).toBe(2);
     db.close();
   });
@@ -831,10 +825,8 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     const db = openDb(":memory:");
     // Populate with runs for a different issue only
     await insertAgentRun(db, makeRun("r1", "uuid-D", "failed", 1000));
-
     const state = new AppState();
     state.setDb(db);
-
     expect(state.getIssueFailureCount("uuid-E")).toBe(0);
     db.close();
   });
@@ -843,10 +835,8 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     const db = openDb(":memory:");
     // Insert a run with no linear_issue_id
     await insertAgentRun(db, makeRun("r1", null, "failed", 1000));
-
     const state = new AppState();
     state.setDb(db);
-
     // No entries should have been loaded into the map
     // We verify indirectly: incrementing for any issue starts from 0
     expect(state.getIssueFailureCount("r1")).toBe(0);
@@ -875,6 +865,93 @@ describe("AppState — setDb() reconstructs issueFailureCount", () => {
     // Count starts at 1 (from DB), increment returns 2
     expect(state.incrementIssueFailures("uuid-G")).toBe(2);
     expect(state.getIssueFailureCount("uuid-G")).toBe(2);
+    db.close();
+  });
+});
+
+describe("AppState — spendLog reconstruction from DB", () => {
+  function insertRun(
+    db: ReturnType<typeof openDb>,
+    id: string,
+    finishedAt: number,
+    costUsd: number | null,
+  ) {
+    db.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at, cost_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, "ISSUE-1", "Test", "completed", finishedAt, finishedAt, costUsd],
+    );
+  }
+
+  test("setDb reconstructs getDailySpend from agent_runs within last 24h", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, 2.5); // 1h ago — within daily window
+    insertRun(db, "run-2", now - 25 * 3_600_000, 10.0); // 25h ago — outside daily window
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(2.5);
+    db.close();
+  });
+
+  test("setDb reconstructs getMonthlySpend from agent_runs within current UTC calendar month", () => {
+    const db = openDb(":memory:");
+    const now = new Date();
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const withinMonthMs = monthStart + 3_600_000; // 1h after month start
+    const prevMonthMs = monthStart - 24 * 3_600_000; // 1 day before month start
+
+    insertRun(db, "run-1", withinMonthMs, 5.0);
+    insertRun(db, "run-2", prevMonthMs, 20.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getMonthlySpend()).toBeCloseTo(5.0);
+    db.close();
+  });
+
+  test("setDb ignores agent_runs with NULL cost_usd", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, null);
+    insertRun(db, "run-2", now - 3_600_000, 1.5);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(1.5);
+    db.close();
+  });
+
+  test("setDb ignores agent_runs with cost_usd = 0", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, 0);
+    insertRun(db, "run-2", now - 3_600_000, 3.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(3.0);
+    db.close();
+  });
+
+  test("setDb does not load agent_runs older than 32 days", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    const oldMs = now - 33 * 24 * 3_600_000;
+
+    insertRun(db, "run-1", oldMs, 100.0);
+    insertRun(db, "run-2", now - 3_600_000, 2.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(2.0);
+    expect((state as any).spendLog).toHaveLength(1);
     db.close();
   });
 });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import type { AutopilotConfig } from "./lib/config";
 import { DEFAULTS } from "./lib/config";
 import {
@@ -7,6 +8,7 @@ import {
   openDb,
   saveOAuthToken,
 } from "./lib/db";
+import { WebhookTrigger } from "./lib/webhooks";
 import {
   computeHealth,
   createApp,
@@ -1012,6 +1014,171 @@ describe("GET /api/cost-trends", () => {
     const state = new AppState();
     const app = createApp(state, { authToken: "test-token" });
     const res = await app.request("/api/cost-trends");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("GET /api/costs", () => {
+  test("returns { enabled: false } when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/costs");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { enabled: boolean };
+    expect(json.enabled).toBe(false);
+  });
+
+  test("returns enabled: true with empty arrays for empty database", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const app = createApp(state);
+    const res = await app.request("/api/costs");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      totalCostUsd: number;
+      dailyCosts: unknown[];
+      perIssueCosts: unknown[];
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.totalCostUsd).toBe(0);
+    expect(json.dailyCosts).toEqual([]);
+    expect(json.perIssueCosts).toEqual([]);
+    db.close();
+  });
+
+  test("returns populated dailyCosts and perIssueCosts when runs exist", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-10",
+      issueTitle: "Feature A",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.25,
+      durationMs: 60000,
+      numTurns: 3,
+    });
+    await insertAgentRun(db, {
+      id: "run-2",
+      issueId: "ENG-10",
+      issueTitle: "Feature A",
+      status: "completed",
+      startedAt: now - 30000,
+      finishedAt: now,
+      costUsd: 0.1,
+      durationMs: 30000,
+      numTurns: 2,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/costs");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      totalCostUsd: number;
+      dailyCosts: Array<{
+        date: string;
+        totalCostUsd: number;
+        runCount: number;
+      }>;
+      perIssueCosts: Array<{
+        issueId: string;
+        issueTitle: string;
+        totalCostUsd: number;
+        runCount: number;
+        lastRunAt: number;
+      }>;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.totalCostUsd).toBeCloseTo(0.35);
+    expect(json.dailyCosts.length).toBeGreaterThan(0);
+    expect(json.dailyCosts[0].totalCostUsd).toBeCloseTo(0.35);
+    expect(json.perIssueCosts.length).toBe(1);
+    expect(json.perIssueCosts[0].issueId).toBe("ENG-10");
+    expect(json.perIssueCosts[0].totalCostUsd).toBeCloseTo(0.35);
+    expect(json.perIssueCosts[0].runCount).toBe(2);
+    db.close();
+  });
+
+  test("returns 401 when auth is enabled and no token provided", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: "test-token" });
+    const res = await app.request("/api/costs");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("GET /api/costs/daily", () => {
+  test("returns dailyCosts array with default 30 days", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const app = createApp(state);
+    const res = await app.request("/api/costs/daily");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { dailyCosts: unknown[] };
+    expect(Array.isArray(json.dailyCosts)).toBe(true);
+    db.close();
+  });
+
+  test("respects ?days query parameter", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-5",
+      issueTitle: "Issue",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.1,
+      durationMs: 60000,
+      numTurns: 1,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/costs/daily?days=7");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      dailyCosts: Array<{
+        date: string;
+        totalCostUsd: number;
+        runCount: number;
+      }>;
+    };
+    expect(Array.isArray(json.dailyCosts)).toBe(true);
+    expect(json.dailyCosts.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  test("clamps days below 1 to 1", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/costs/daily?days=0");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { dailyCosts: unknown[] };
+    expect(Array.isArray(json.dailyCosts)).toBe(true);
+  });
+
+  test("clamps days above 365 to 365", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/costs/daily?days=400");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { dailyCosts: unknown[] };
+    expect(Array.isArray(json.dailyCosts)).toBe(true);
+  });
+
+  test("returns 401 when auth is enabled and no token provided", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: "test-token" });
+    const res = await app.request("/api/costs/daily");
     expect(res.status).toBe(401);
   });
 });
@@ -2112,5 +2279,312 @@ describe("POST /auth/linear/disconnect", () => {
       method: "POST",
     });
     expect(res.status).toBe(302);
+  });
+});
+
+describe("webhook endpoints", () => {
+  const LINEAR_SECRET = "linear-test-secret";
+  const GITHUB_SECRET = "github-test-secret";
+  const READY_STATE = "Ready";
+
+  function linearSig(body: string): string {
+    return createHmac("sha256", LINEAR_SECRET)
+      .update(body, "utf-8")
+      .digest("hex");
+  }
+
+  function githubSig(body: string): string {
+    return (
+      "sha256=" +
+      createHmac("sha256", GITHUB_SECRET).update(body, "utf-8").digest("hex")
+    );
+  }
+
+  let state: AppState;
+  let trigger: WebhookTrigger;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    state = new AppState();
+    trigger = new WebhookTrigger();
+    app = createApp(state, undefined, {
+      trigger,
+      linearSecret: LINEAR_SECRET,
+      githubSecret: GITHUB_SECRET,
+      readyStateName: READY_STATE,
+    });
+  });
+
+  describe("/webhooks/linear", () => {
+    test("returns 401 when signature header is missing", async () => {
+      const body = JSON.stringify({ data: { state: { name: READY_STATE } } });
+      const res = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: { "x-linear-event": "Issue" },
+        body,
+      });
+      expect(res.status).toBe(401);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid signature");
+    });
+
+    test("returns 401 when signature is invalid", async () => {
+      const body = JSON.stringify({ data: { state: { name: READY_STATE } } });
+      const res = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": "deadbeef",
+        },
+        body,
+      });
+      expect(res.status).toBe(401);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid signature");
+    });
+
+    test("returns 400 for malformed JSON body", async () => {
+      const body = "not valid json {{{";
+      const res = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": linearSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid JSON");
+    });
+
+    test("valid issue_ready event fires trigger and returns ok", async () => {
+      const body = JSON.stringify({ data: { state: { name: READY_STATE } } });
+      const waitPromise = trigger.wait();
+      const res = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": linearSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean };
+      expect(json.ok).toBe(true);
+      await waitPromise;
+    });
+
+    test("delivery deduplication returns ok without re-firing trigger", async () => {
+      const body = JSON.stringify({ data: { state: { name: READY_STATE } } });
+      const deliveryId = "linear-delivery-abc123";
+
+      const firstWait = trigger.wait();
+      await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": linearSig(body),
+          "x-linear-delivery": deliveryId,
+        },
+        body,
+      });
+      await firstWait;
+
+      let firedAgain = false;
+      trigger.wait().then(() => {
+        firedAgain = true;
+      });
+
+      const res2 = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": linearSig(body),
+          "x-linear-delivery": deliveryId,
+        },
+        body,
+      });
+      expect(res2.status).toBe(200);
+      const json2 = (await res2.json()) as { ok: boolean };
+      expect(json2.ok).toBe(true);
+      expect(firedAgain).toBe(false);
+    });
+
+    test("non-actionable event returns ok without firing trigger", async () => {
+      const body = JSON.stringify({ data: { state: { name: "In Progress" } } });
+      let fired = false;
+      trigger.wait().then(() => {
+        fired = true;
+      });
+      const res = await app.request("/webhooks/linear", {
+        method: "POST",
+        headers: {
+          "x-linear-event": "Issue",
+          "x-linear-signature": linearSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean };
+      expect(json.ok).toBe(true);
+      expect(fired).toBe(false);
+    });
+  });
+
+  describe("/webhooks/github", () => {
+    test("returns 401 when signature header is missing", async () => {
+      const body = JSON.stringify({
+        action: "completed",
+        check_suite: { conclusion: "failure" },
+      });
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: { "x-github-event": "check_suite" },
+        body,
+      });
+      expect(res.status).toBe(401);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid signature");
+    });
+
+    test("returns 401 when signature is invalid", async () => {
+      const body = JSON.stringify({
+        action: "completed",
+        check_suite: { conclusion: "failure" },
+      });
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": "sha256=deadbeef",
+        },
+        body,
+      });
+      expect(res.status).toBe(401);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid signature");
+    });
+
+    test("returns 400 for malformed JSON body", async () => {
+      const body = "not valid json {{{";
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": githubSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Invalid JSON");
+    });
+
+    test("valid ci_failure event fires trigger and returns ok", async () => {
+      const body = JSON.stringify({
+        action: "completed",
+        check_suite: { conclusion: "failure" },
+      });
+      const waitPromise = trigger.wait();
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": githubSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean };
+      expect(json.ok).toBe(true);
+      await waitPromise;
+    });
+
+    test("delivery deduplication returns ok without re-firing trigger", async () => {
+      const body = JSON.stringify({
+        action: "completed",
+        check_suite: { conclusion: "failure" },
+      });
+      const deliveryId = "github-delivery-xyz789";
+
+      const firstWait = trigger.wait();
+      await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": githubSig(body),
+          "x-github-delivery": deliveryId,
+        },
+        body,
+      });
+      await firstWait;
+
+      let firedAgain = false;
+      trigger.wait().then(() => {
+        firedAgain = true;
+      });
+
+      const res2 = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": githubSig(body),
+          "x-github-delivery": deliveryId,
+        },
+        body,
+      });
+      expect(res2.status).toBe(200);
+      const json2 = (await res2.json()) as { ok: boolean };
+      expect(json2.ok).toBe(true);
+      expect(firedAgain).toBe(false);
+    });
+
+    test("check_suite with success conclusion returns ok without firing trigger", async () => {
+      const body = JSON.stringify({
+        action: "completed",
+        check_suite: { conclusion: "success" },
+      });
+      let fired = false;
+      trigger.wait().then(() => {
+        fired = true;
+      });
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "x-github-event": "check_suite",
+          "x-hub-signature-256": githubSig(body),
+        },
+        body,
+      });
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean };
+      expect(json.ok).toBe(true);
+      expect(fired).toBe(false);
+    });
+  });
+
+  describe("webhooks not configured", () => {
+    test("/webhooks/linear returns 404 with error message", async () => {
+      const unconfiguredApp = createApp(new AppState());
+      const res = await unconfiguredApp.request("/webhooks/linear", {
+        method: "POST",
+        body: "{}",
+      });
+      expect(res.status).toBe(404);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Webhooks not configured");
+    });
+
+    test("/webhooks/github returns 404 with error message", async () => {
+      const unconfiguredApp = createApp(new AppState());
+      const res = await unconfiguredApp.request("/webhooks/github", {
+        method: "POST",
+        body: "{}",
+      });
+      expect(res.status).toBe(404);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toBe("Webhooks not configured");
+    });
   });
 });
