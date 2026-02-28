@@ -764,3 +764,90 @@ describe("AppState — planningHistory persistence", () => {
     db.close();
   });
 });
+
+describe("AppState — spendLog reconstruction from DB", () => {
+  function insertRun(
+    db: ReturnType<typeof openDb>,
+    id: string,
+    finishedAt: number,
+    costUsd: number | null,
+  ) {
+    db.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at, cost_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, "ISSUE-1", "Test", "completed", finishedAt, finishedAt, costUsd],
+    );
+  }
+
+  test("setDb reconstructs getDailySpend from agent_runs within last 24h", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, 2.5); // 1h ago — within daily window
+    insertRun(db, "run-2", now - 25 * 3_600_000, 10.0); // 25h ago — outside daily window
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(2.5);
+    db.close();
+  });
+
+  test("setDb reconstructs getMonthlySpend from agent_runs within current UTC calendar month", () => {
+    const db = openDb(":memory:");
+    const now = new Date();
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const withinMonthMs = monthStart + 3_600_000; // 1h after month start
+    const prevMonthMs = monthStart - 24 * 3_600_000; // 1 day before month start
+
+    insertRun(db, "run-1", withinMonthMs, 5.0);
+    insertRun(db, "run-2", prevMonthMs, 20.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getMonthlySpend()).toBeCloseTo(5.0);
+    db.close();
+  });
+
+  test("setDb ignores agent_runs with NULL cost_usd", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, null);
+    insertRun(db, "run-2", now - 3_600_000, 1.5);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(1.5);
+    db.close();
+  });
+
+  test("setDb ignores agent_runs with cost_usd = 0", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    insertRun(db, "run-1", now - 3_600_000, 0);
+    insertRun(db, "run-2", now - 3_600_000, 3.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(3.0);
+    db.close();
+  });
+
+  test("setDb does not load agent_runs older than 32 days", () => {
+    const db = openDb(":memory:");
+    const now = Date.now();
+    const oldMs = now - 33 * 24 * 3_600_000;
+
+    insertRun(db, "run-1", oldMs, 100.0);
+    insertRun(db, "run-2", now - 3_600_000, 2.0);
+
+    const state = new AppState();
+    state.setDb(db);
+
+    expect(state.getDailySpend()).toBeCloseTo(2.0);
+    expect((state as any).spendLog).toHaveLength(1);
+    db.close();
+  });
+});

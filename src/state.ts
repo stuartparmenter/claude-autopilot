@@ -25,6 +25,7 @@ import {
   getRecentPlanningSessions,
   getRecentRuns,
   getRepeatFailures,
+  getSpendLogEntries,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
@@ -167,6 +168,8 @@ export class AppState {
     this.db = db;
     this.history = getRecentRuns(db, MAX_HISTORY);
     this.planningHistory = getRecentPlanningSessions(db, 20);
+    const cutoffMs = Date.now() - 32 * 24 * 60 * 60 * 1000;
+    this.spendLog = getSpendLogEntries(db, cutoffMs);
   }
 
   addAgent(
