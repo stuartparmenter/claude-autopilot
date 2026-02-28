@@ -21,16 +21,19 @@ import {
   getDailyCostTrend,
   getFailuresByType,
   getFailureTrend,
+  getIssueFailureCounts,
   getPerIssueCosts,
   getRecentPlanningSessions,
   getRecentRuns,
   getRepeatFailures,
+  getSpendLogEntries,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
   insertPlanningSession,
+  insertStateTransition,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -108,6 +111,17 @@ export interface PlanningSession {
   costUsd?: number;
 }
 
+export interface StateTransition {
+  id: string;
+  issueId: string;
+  issueIdentifier: string;
+  fromState?: string;
+  toState: string;
+  timestamp: number;
+  agentId?: string;
+  reason?: string;
+}
+
 export interface ApiHealthStatus {
   linear: CircuitState;
   github: CircuitState;
@@ -156,6 +170,12 @@ export class AppState {
     this.db = db;
     this.history = getRecentRuns(db, MAX_HISTORY);
     this.planningHistory = getRecentPlanningSessions(db, 20);
+    const counts = getIssueFailureCounts(db, MAX_FAILURE_ENTRIES);
+    for (const [issueId, count] of counts) {
+      this.issueFailureCount.set(issueId, count);
+    }
+    const cutoffMs = Date.now() - 32 * 24 * 60 * 60 * 1000;
+    this.spendLog = getSpendLogEntries(db, cutoffMs);
   }
 
   addAgent(
@@ -362,6 +382,12 @@ export class AppState {
     }
     if (this.db) {
       void insertPlanningSession(this.db, session);
+    }
+  }
+
+  logStateTransition(transition: StateTransition): void {
+    if (this.db) {
+      void insertStateTransition(this.db, transition);
     }
   }
 

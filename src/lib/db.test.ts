@@ -1,6 +1,11 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
+import type {
+  ActivityEntry,
+  AgentResult,
+  PlanningSession,
+  StateTransition,
+} from "../state";
 import {
   deleteOAuthToken,
   getActivityLogs,
@@ -19,12 +24,14 @@ import {
   getRepeatFailingIssues,
   getRepeatFailures,
   getRunWithTranscript,
+  getStateTransitions,
   getUnreviewedRuns,
   getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
   insertPlanningSession,
+  insertStateTransition,
   isSqliteBusy,
   markRunsReviewed,
   openDb,
@@ -2450,5 +2457,129 @@ describe("getRepeatFailingIssues", () => {
     );
 
     expect(getRepeatFailingIssues(db)).toHaveLength(0);
+  });
+});
+
+describe("insertStateTransition and getStateTransitions", () => {
+  function makeTransition(
+    id: string,
+    overrides?: Partial<StateTransition>,
+  ): StateTransition {
+    return {
+      id,
+      issueId: "issue-1",
+      issueIdentifier: "ENG-1",
+      toState: "In Progress",
+      timestamp: Date.now(),
+      ...overrides,
+    };
+  }
+
+  test("inserts and retrieves a state transition round-trip", async () => {
+    const transition = makeTransition("st-1", {
+      fromState: "Ready",
+      toState: "In Progress",
+      timestamp: 1000,
+      agentId: "agent-abc",
+      reason: "Started work",
+    });
+    await insertStateTransition(db, transition);
+    const transitions = getStateTransitions(db, "issue-1");
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0].id).toBe("st-1");
+    expect(transitions[0].issueId).toBe("issue-1");
+    expect(transitions[0].issueIdentifier).toBe("ENG-1");
+    expect(transitions[0].fromState).toBe("Ready");
+    expect(transitions[0].toState).toBe("In Progress");
+    expect(transitions[0].timestamp).toBe(1000);
+    expect(transitions[0].agentId).toBe("agent-abc");
+    expect(transitions[0].reason).toBe("Started work");
+  });
+
+  test("returns transitions in chronological order (timestamp ASC)", async () => {
+    await insertStateTransition(
+      db,
+      makeTransition("st-3", { timestamp: 3000, toState: "In Review" }),
+    );
+    await insertStateTransition(
+      db,
+      makeTransition("st-1", { timestamp: 1000, toState: "In Progress" }),
+    );
+    await insertStateTransition(
+      db,
+      makeTransition("st-2", { timestamp: 2000, toState: "Blocked" }),
+    );
+    const transitions = getStateTransitions(db, "issue-1");
+    expect(transitions).toHaveLength(3);
+    expect(transitions[0].id).toBe("st-1");
+    expect(transitions[1].id).toBe("st-2");
+    expect(transitions[2].id).toBe("st-3");
+  });
+
+  test("filters by issue_id, returning only matching transitions", async () => {
+    await insertStateTransition(
+      db,
+      makeTransition("st-a", { issueId: "issue-1", issueIdentifier: "ENG-1" }),
+    );
+    await insertStateTransition(
+      db,
+      makeTransition("st-b", { issueId: "issue-2", issueIdentifier: "ENG-2" }),
+    );
+    await insertStateTransition(
+      db,
+      makeTransition("st-c", { issueId: "issue-1", issueIdentifier: "ENG-1" }),
+    );
+    const issue1Transitions = getStateTransitions(db, "issue-1");
+    expect(issue1Transitions).toHaveLength(2);
+    expect(issue1Transitions.every((t) => t.issueId === "issue-1")).toBe(true);
+
+    const issue2Transitions = getStateTransitions(db, "issue-2");
+    expect(issue2Transitions).toHaveLength(1);
+    expect(issue2Transitions[0].id).toBe("st-b");
+  });
+
+  test("optional fields are undefined when not set", async () => {
+    await insertStateTransition(
+      db,
+      makeTransition("st-1", { timestamp: 1000 }),
+    );
+    const transition = getStateTransitions(db, "issue-1")[0];
+    expect(transition.fromState).toBeUndefined();
+    expect(transition.agentId).toBeUndefined();
+    expect(transition.reason).toBeUndefined();
+  });
+
+  test("optional fields round-trip correctly when set", async () => {
+    await insertStateTransition(
+      db,
+      makeTransition("st-1", {
+        timestamp: 1000,
+        fromState: "Ready",
+        agentId: "agent-xyz",
+        reason: "Auto-moved by executor",
+      }),
+    );
+    const transition = getStateTransitions(db, "issue-1")[0];
+    expect(transition.fromState).toBe("Ready");
+    expect(transition.agentId).toBe("agent-xyz");
+    expect(transition.reason).toBe("Auto-moved by executor");
+  });
+
+  test("returns empty array for nonexistent issueId", () => {
+    expect(getStateTransitions(db, "nonexistent-issue")).toEqual([]);
+  });
+
+  test("returns all transitions for an issue with many entries", async () => {
+    for (let i = 1; i <= 5; i++) {
+      await insertStateTransition(
+        db,
+        makeTransition(`st-${i}`, {
+          timestamp: i * 1000,
+          toState: `State-${i}`,
+        }),
+      );
+    }
+    const transitions = getStateTransitions(db, "issue-1");
+    expect(transitions).toHaveLength(5);
   });
 });

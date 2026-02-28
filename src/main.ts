@@ -206,6 +206,14 @@ const app = createApp(
     },
     retryIssue: async (linearIssueId: string) => {
       await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+      state.logStateTransition({
+        id: crypto.randomUUID(),
+        issueId: linearIssueId,
+        issueIdentifier: "unknown",
+        toState: config.linear.states.ready,
+        timestamp: Date.now(),
+        reason: "Dashboard retry",
+      });
     },
     triageIssues: async () => {
       const issues = await getTriageIssues(linearIds);
@@ -218,9 +226,27 @@ const app = createApp(
     },
     approveTriageIssue: async (issueId: string) => {
       await updateIssue(issueId, { stateId: linearIds.states.ready });
+      state.logStateTransition({
+        id: crypto.randomUUID(),
+        issueId: issueId,
+        issueIdentifier: "unknown",
+        fromState: config.linear.states.triage,
+        toState: config.linear.states.ready,
+        timestamp: Date.now(),
+        reason: "Dashboard triage approval",
+      });
     },
     rejectTriageIssue: async (issueId: string) => {
       await updateIssue(issueId, { stateId: linearIds.states.blocked });
+      state.logStateTransition({
+        id: crypto.randomUUID(),
+        issueId: issueId,
+        issueIdentifier: "unknown",
+        fromState: config.linear.states.triage,
+        toState: config.linear.states.blocked,
+        timestamp: Date.now(),
+        reason: "Dashboard triage rejection",
+      });
     },
   },
   webhookTrigger && config.webhooks
@@ -480,6 +506,15 @@ while (!shuttingDown) {
           comment:
             "Auto-promoted from Triage to Ready (label-first mode — no project owner to triage).",
         });
+        state.logStateTransition({
+          id: crypto.randomUUID(),
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          fromState: config.linear.states.triage,
+          toState: config.linear.states.ready,
+          timestamp: Date.now(),
+          reason: "Auto-promoted from Triage (label-first mode)",
+        });
       }
     }
 
@@ -571,7 +606,11 @@ if (drainablePromises.length > 0) {
 const issueCount = agentsAtShutdown.filter((a) => a.linearIssueId).length;
 if (issueCount > 0) {
   info(`Recovering ${issueCount} In Progress issue(s) back to Ready...`);
-  await recoverAgentsOnShutdown(agentsAtShutdown, linearIds.states.ready);
+  await recoverAgentsOnShutdown(
+    agentsAtShutdown,
+    linearIds.states.ready,
+    state,
+  );
 }
 
 server.stop();

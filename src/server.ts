@@ -532,6 +532,13 @@ export function createApp(
                   hx-trigger="load, every 30s"
                   hx-swap="innerHTML"
                 ></div>
+                <div class="section-title">Cost Tracking</div>
+                <div
+                  id="cost-section"
+                  hx-get="/partials/costs"
+                  hx-trigger="load, every 30s"
+                  hx-swap="innerHTML"
+                ></div>
               </div>
               <div class="main" id="main-panel">
                 <div class="empty-state">
@@ -581,6 +588,28 @@ export function createApp(
       return c.json({ enabled: false });
     }
     return c.json({ enabled: true, ...trends });
+  });
+
+  app.get("/api/costs", (c) => {
+    const analytics = state.getAnalytics();
+    if (!analytics) {
+      return c.json({ enabled: false });
+    }
+    const dailyCosts = state.getDailyCosts(30);
+    const perIssueCosts = state.getPerIssueCosts(50);
+    return c.json({
+      enabled: true,
+      totalCostUsd: analytics.totalCostUsd,
+      dailyCosts,
+      perIssueCosts,
+    });
+  });
+
+  app.get("/api/costs/daily", (c) => {
+    const days = parseInt(c.req.query("days") ?? "30", 10);
+    const safeDays = Math.min(Math.max(days, 1), 365);
+    const dailyCosts = state.getDailyCosts(safeDays);
+    return c.json({ dailyCosts });
   });
 
   app.get("/api/planning/history", (c) => {
@@ -1250,6 +1279,71 @@ export function createApp(
         ${
           statusLine
             ? html`<div class="cost-trends-summary">${statusLine}</div>`
+            : ""
+        }
+      </div>
+    `);
+  });
+
+  app.get("/partials/costs", (c) => {
+    const dailyCosts = state.getDailyCosts(7);
+    const perIssueCosts = state.getPerIssueCosts(10);
+
+    if (dailyCosts.length === 0 && perIssueCosts.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No cost data available yet
+        </div>`,
+      );
+    }
+
+    const maxDailyCost = Math.max(
+      ...dailyCosts.map((d) => d.totalCostUsd),
+      0.01,
+    );
+
+    return c.html(html`
+      <div class="cost-section">
+        ${
+          dailyCosts.length > 0
+            ? html`
+              <div class="cost-subtitle">Last 7 Days</div>
+              ${raw(
+                dailyCosts
+                  .map((d) => {
+                    const pct = Math.round(
+                      (d.totalCostUsd / maxDailyCost) * 100,
+                    );
+                    return `<div class="cost-day-row">
+                  <span class="cost-date">${escapeHtml(d.date.slice(5))}</span>
+                  <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:${pct}%"></div></div>
+                  <span class="cost-amount">$${d.totalCostUsd.toFixed(2)}</span>
+                  <span class="cost-runs">${d.runCount}r</span>
+                </div>`;
+                  })
+                  .join(""),
+              )}
+            `
+            : ""
+        }
+        ${
+          perIssueCosts.length > 0
+            ? html`
+              <div class="cost-subtitle">Top Issues by Cost</div>
+              ${raw(
+                perIssueCosts
+                  .map((i) => {
+                    return `<div class="cost-issue-row">
+                  <span class="issue-id">${escapeHtml(i.issueId)}</span>
+                  <span class="cost-amount">$${i.totalCostUsd.toFixed(2)}</span>
+                  <span class="cost-runs">${i.runCount}r</span>
+                </div>`;
+                  })
+                  .join(""),
+              )}
+            `
             : ""
         }
       </div>

@@ -454,4 +454,59 @@ export const DASHBOARD_CSS = `
     font-weight: 600;
     font-size: 11px;
   }
+  .cost-section {
+    padding: 8px 16px;
+  }
+  .cost-subtitle {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin: 12px 0 6px;
+    letter-spacing: 0.5px;
+  }
+  .cost-day-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+  }
+  .cost-date {
+    width: 40px;
+    color: var(--text-dim);
+  }
+  .cost-bar-bg {
+    flex: 1;
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .cost-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+  .cost-amount {
+    width: 60px;
+    text-align: right;
+    color: var(--green);
+  }
+  .cost-runs {
+    width: 30px;
+    text-align: right;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .cost-issue-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+  }
+  .cost-issue-row .issue-id {
+    flex: 1;
+  }
 `;

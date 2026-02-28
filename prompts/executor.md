@@ -69,15 +69,22 @@ Run the project's validation commands. Check CLAUDE.md for the specific commands
 **Validation loop** (max 3 attempts):
 1. Run **type checking** (e.g., `tsc --noEmit` or equivalent). Fix any type errors
 2. Run **linting** (e.g., `biome check` or equivalent). Fix all lint errors in your code
-3. Run **formatting** (e.g., `biome format --write` or equivalent). Always run the formatter with the auto-fix/write flag so it corrects files in place
-4. Run **tests**. If they fail, analyze the failure, fix your code, and restart from step 1
-5. If after 3 full attempts any check still fails, STOP. Move to Phase 6 with a failure report
+3. Run **tests**. If they fail, analyze the failure, fix your code, and restart from step 1
+4. If after 3 full attempts any check still fails, STOP. Move to Phase 7 with a failure report
 
-**IMPORTANT**: ALL FOUR checks must pass before you proceed to Phase 5. Do NOT skip any step. Do NOT proceed to commit/push if any check has errors.
+**IMPORTANT**: All three checks must pass before you proceed to Phase 5. Do NOT skip any step.
 
 ---
 
-## Phase 5: Commit and Push
+## Phase 5: Simplify
+
+Run `/simplify` to review your changes for code reuse, quality, and efficiency issues. This self-review step examines your diff and fixes problems like duplicated utilities, copy-paste patterns, unnecessary work, and missed concurrency.
+
+After `/simplify` completes, run the full validation suite — type checking, linting, formatting (with auto-fix/write flag), and tests. If any check fails, fix the issue and re-validate before proceeding.
+
+---
+
+## Phase 6: Commit and Push
 
 Create a clean commit and PR.
 
@@ -108,7 +115,7 @@ Create a clean commit and PR.
 
 ---
 
-## Phase 6: Update Linear
+## Phase 7: Update Linear
 
 Use the Linear MCP to update the issue.
 

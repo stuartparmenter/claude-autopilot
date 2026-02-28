@@ -103,7 +103,7 @@ const AGENT_ENV_ALLOWLIST = [
   "PATH",
   "SSH_AUTH_SOCK",
   "ANTHROPIC_API_KEY",
-  "CLAUDE_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
   "GITHUB_TOKEN",
 ];
 
@@ -142,9 +142,10 @@ export function buildSandboxConfig(
         // is writable even if the SDK/sandbox layer drops the broad "/tmp".
         "/tmp",
         agentTmpDir,
-        // Teams need write access to these dirs for coordination files
-        resolve(homedir(), ".claude/teams"),
-        resolve(homedir(), ".claude/tasks"),
+        // The SDK checks allowWrite for internal Write/Edit permissions
+        // (not just bwrap). Without ~/.claude, the SDK's internal features
+        // (skill improvement, etc.) fail with "Stream closed" errors.
+        resolve(homedir(), ".claude"),
       ],
     },
   };
@@ -205,18 +206,11 @@ export function buildSandboxGuardHook(
         return {};
       }
     }
-    // Allow: ~/.claude/teams and ~/.claude/tasks (team coordination)
-    const claudeTeams = resolve(homedir(), ".claude/teams");
-    const claudeTasks = resolve(homedir(), ".claude/tasks");
-    if (
-      resolved.startsWith(`${claudeTeams}/`) ||
-      resolved === claudeTeams ||
-      resolved.startsWith(`${claudeTasks}/`) ||
-      resolved === claudeTasks
-    ) {
+    // Allow: ~/.claude (SDK internal bookkeeping — skills, teams, tasks, etc.)
+    const claudeDir = resolve(homedir(), ".claude");
+    if (resolved.startsWith(`${claudeDir}/`) || resolved === claudeDir) {
       return {};
     }
-
     warn(
       `[sandbox-guard] DENIED ${pre.tool_name} to '${filePath}' (cwd: ${agentCwd})`,
     );
