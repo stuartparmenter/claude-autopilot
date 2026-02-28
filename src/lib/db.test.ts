@@ -1,16 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ActivityEntry, AgentResult } from "../state";
+import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
 import {
   getActivityLogs,
   getAnalytics,
   getConversationLog,
+  getRecentPlanningSessions,
   getRecentRuns,
   getRunWithTranscript,
   getUnreviewedRuns,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
+  insertPlanningSession,
   isSqliteBusy,
   markRunsReviewed,
   openDb,
@@ -861,5 +863,136 @@ describe("transcript redaction before storage", () => {
     expect(parsed[0].content).not.toContain(
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
     );
+  });
+});
+
+describe("insertPlanningSession and getRecentPlanningSessions", () => {
+  function makeSession(
+    id: string,
+    overrides?: Partial<PlanningSession>,
+  ): PlanningSession {
+    return {
+      id,
+      agentRunId: `run-${id}`,
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 0,
+      ...overrides,
+    };
+  }
+
+  test("inserts and retrieves a planning session", async () => {
+    await insertPlanningSession(db, makeSession("ps-1"));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("ps-1");
+    expect(sessions[0].agentRunId).toBe("run-ps-1");
+    expect(sessions[0].status).toBe("completed");
+    expect(sessions[0].issuesFiledCount).toBe(0);
+  });
+
+  test("retrieves sessions in newest-first order by finished_at", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { startedAt: 1000, finishedAt: 2000 }),
+    );
+    await insertPlanningSession(
+      db,
+      makeSession("ps-2", { startedAt: 3000, finishedAt: 4000 }),
+    );
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].id).toBe("ps-2");
+    expect(sessions[1].id).toBe("ps-1");
+  });
+
+  test("respects the limit parameter", async () => {
+    for (let i = 0; i < 5; i++) {
+      await insertPlanningSession(
+        db,
+        makeSession(`ps-${i}`, {
+          startedAt: i * 1000,
+          finishedAt: i * 1000 + 500,
+        }),
+      );
+    }
+    const sessions = getRecentPlanningSessions(db, 3);
+    expect(sessions).toHaveLength(3);
+  });
+
+  test("default limit is 20", async () => {
+    for (let i = 0; i < 25; i++) {
+      await insertPlanningSession(
+        db,
+        makeSession(`ps-${i}`, {
+          startedAt: i * 1000,
+          finishedAt: i * 1000 + 500,
+        }),
+      );
+    }
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(20);
+  });
+
+  test("issuesFiled JSON field serializes and deserializes correctly", async () => {
+    const issuesFiled = [
+      { identifier: "ENG-1", title: "Fix the bug" },
+      { identifier: "ENG-2", title: "Add the feature" },
+    ];
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { issuesFiled, issuesFiledCount: 2 }),
+    );
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].issuesFiled).toEqual(issuesFiled);
+    expect(sessions[0].issuesFiledCount).toBe(2);
+  });
+
+  test("findingsRejected JSON field serializes and deserializes correctly", async () => {
+    const findingsRejected = [
+      { finding: "Use better logging", reason: "Out of scope" },
+    ];
+    await insertPlanningSession(db, makeSession("ps-1", { findingsRejected }));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].findingsRejected).toEqual(findingsRejected);
+  });
+
+  test("optional fields are undefined when not set", async () => {
+    await insertPlanningSession(db, makeSession("ps-1"));
+    const session = getRecentPlanningSessions(db)[0];
+    expect(session.summary).toBeUndefined();
+    expect(session.issuesFiled).toBeUndefined();
+    expect(session.findingsRejected).toBeUndefined();
+    expect(session.costUsd).toBeUndefined();
+  });
+
+  test("stores and retrieves optional fields when set", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", {
+        summary: "Planning complete",
+        costUsd: 0.15,
+        issuesFiledCount: 3,
+      }),
+    );
+    const session = getRecentPlanningSessions(db)[0];
+    expect(session.summary).toBe("Planning complete");
+    expect(session.costUsd).toBe(0.15);
+    expect(session.issuesFiledCount).toBe(3);
+  });
+
+  test("OR REPLACE upserts a session with the same id", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { status: "completed" }),
+    );
+    await insertPlanningSession(db, makeSession("ps-1", { status: "failed" }));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+  });
+
+  test("returns empty array when no sessions exist", () => {
+    expect(getRecentPlanningSessions(db)).toEqual([]);
   });
 });

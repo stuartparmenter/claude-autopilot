@@ -13,12 +13,14 @@ import {
   getAnalytics,
   getCostByStatus,
   getDailyCostTrend,
+  getRecentPlanningSessions,
   getRecentRuns,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
+  insertPlanningSession,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -141,6 +143,7 @@ export class AppState {
   setDb(db: Database): void {
     this.db = db;
     this.history = getRecentRuns(db, MAX_HISTORY);
+    this.planningHistory = getRecentPlanningSessions(db, 20);
   }
 
   addAgent(
@@ -317,6 +320,9 @@ export class AppState {
     this.planningHistory.unshift(session);
     if (this.planningHistory.length > 20) {
       this.planningHistory = this.planningHistory.slice(0, 20);
+    }
+    if (this.db) {
+      void insertPlanningSession(this.db, session);
     }
   }
 
