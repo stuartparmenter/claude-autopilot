@@ -399,4 +399,59 @@ export const DASHBOARD_CSS = `
     text-overflow: ellipsis;
     max-width: 200px;
   }
+  .planning-card {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .planning-card:hover {
+    background: var(--bg-card);
+  }
+  .planning-card.selected {
+    background: var(--bg-card);
+    border-left: 2px solid var(--purple);
+    padding-left: 14px;
+  }
+  .planning-card .summary {
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .planning-detail {
+    padding: 0;
+  }
+  .planning-findings {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .planning-findings li {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .planning-findings li .reason {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .planning-issues-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .planning-issues-list li {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .planning-issues-list li .issue-id {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 11px;
+  }
 `;

@@ -596,6 +596,11 @@ export function createApp(
     return c.json({ enabled: true, ...analysis });
   });
 
+  app.get("/api/planning-history", (c) => {
+    const sessions = state.getPlanningHistory();
+    return c.json({ sessions });
+  });
+
   app.get("/health", (c) => {
     const health = computeHealth(state);
     const httpStatus = health.status === "fail" ? 503 : 200;
@@ -907,7 +912,7 @@ export function createApp(
               durationSec >= 60
                 ? `${Math.floor(durationSec / 60)}m`
                 : `${durationSec}s`;
-            const costStr = s.costUsd ? `$${s.costUsd.toFixed(4)}` : "";
+            const costStr = s.costUsd ? ` \u00b7 $${s.costUsd.toFixed(4)}` : "";
             const dateStr = new Date(s.finishedAt).toLocaleDateString("en-US", {
               month: "short",
               day: "numeric",
@@ -917,18 +922,99 @@ export function createApp(
               hour: "2-digit",
               minute: "2-digit",
             });
-            return `<div class="history-card">
+            const summaryText = s.summary
+              ? s.summary.slice(0, 80) + (s.summary.length > 80 ? "\u2026" : "")
+              : "";
+            const dotClass =
+              s.status === "completed"
+                ? "completed"
+                : s.status === "failed"
+                  ? "failed"
+                  : "timed_out";
+            return `<div class="planning-card" hx-get="/partials/planning-session/${escapeHtml(s.id)}" hx-target="#main-panel" hx-swap="innerHTML">
             <div style="display:flex;align-items:center;justify-content:space-between">
-              <span><span class="status-dot ${escapeHtml(s.status)}"></span>Planning</span>
+              <span><span class="status-dot ${dotClass}"></span>Planning</span>
               <span style="font-size:11px;color:var(--text-dim)">${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</span>
             </div>
-            <div class="meta">${escapeHtml(durationStr)}${costStr ? ` &middot; ${escapeHtml(costStr)}` : ""}${s.issuesFiledCount > 0 ? ` &middot; ${s.issuesFiledCount} issues filed` : ""}</div>
-            ${s.summary ? `<div class="title">${escapeHtml(s.summary)}</div>` : ""}
+            <div class="meta">${escapeHtml(durationStr)}${s.issuesFiledCount > 0 ? ` \u00b7 ${String(s.issuesFiledCount)} issues filed` : ""}${escapeHtml(costStr)}</div>
+            ${summaryText ? `<div class="summary">${escapeHtml(summaryText)}</div>` : ""}
           </div>`;
           })
           .join(""),
       )}`,
     );
+  });
+
+  app.get("/partials/planning-session/:id", (c) => {
+    const id = c.req.param("id");
+    const sessions = state.getPlanningHistory();
+    const session = sessions.find((s) => s.id === id);
+    if (!session) {
+      return c.html(html`<div class="empty-state">Session not found</div>`);
+    }
+    const durationMs = session.finishedAt - session.startedAt;
+    const durationStr = `${Math.round(durationMs / 1000)}s`;
+    const costStr = session.costUsd ? `$${session.costUsd.toFixed(4)}` : "";
+    const dateStr = new Date(session.startedAt).toLocaleString("en-US", {
+      hour12: false,
+    });
+
+    const issuesHtml =
+      session.issuesFiled && session.issuesFiled.length > 0
+        ? `<ul class="planning-issues-list">${session.issuesFiled
+            .map(
+              (i) =>
+                `<li><span class="issue-id">${escapeHtml(i.identifier)}</span> ${escapeHtml(i.title)}</li>`,
+            )
+            .join("")}</ul>`
+        : `<div style="color:var(--text-dim);font-size:11px">None</div>`;
+
+    const findingsHtml =
+      session.findingsRejected && session.findingsRejected.length > 0
+        ? `<ul class="planning-findings">${session.findingsRejected
+            .map(
+              (f) =>
+                `<li>${escapeHtml(f.finding)}<div class="reason">${escapeHtml(f.reason)}</div></li>`,
+            )
+            .join("")}</ul>`
+        : `<div style="color:var(--text-dim);font-size:11px">None</div>`;
+
+    return c.html(html`
+      <div class="planning-detail">
+        <div
+          style="display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--border)"
+        >
+          <div>
+            <span class="status-dot ${session.status}"></span>
+            <strong>Planning Session</strong>
+          </div>
+          <div class="meta">
+            ${escapeHtml(dateStr)} &middot; ${durationStr}${
+              costStr ? html` &middot; ${costStr}` : ""
+            }
+          </div>
+        </div>
+        ${
+          session.summary
+            ? html`<div style="margin-top:12px;font-size:12px">
+              ${session.summary}
+            </div>`
+            : ""
+        }
+        <div
+          style="font-size:12px;font-weight:600;color:var(--purple);margin-top:12px;margin-bottom:6px"
+        >
+          Issues Filed (${String(session.issuesFiledCount)})
+        </div>
+        ${raw(issuesHtml)}
+        <div
+          style="font-size:12px;font-weight:600;color:var(--purple);margin-top:12px;margin-bottom:6px"
+        >
+          Findings Rejected
+        </div>
+        ${raw(findingsHtml)}
+      </div>
+    `);
   });
 
   // --- Webhook endpoints ---
@@ -1216,6 +1302,14 @@ export function createApp(
   });
 
   return app;
+}
+
+export function formatRelativeTime(ms: number): string {
+  const diff = Math.round((Date.now() - ms) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 export function formatDuration(seconds: number): string {
