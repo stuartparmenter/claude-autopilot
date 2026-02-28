@@ -163,6 +163,7 @@ interface AgentRunRow {
   linear_issue_id: string | null;
   session_id: string | null;
   reviewed_at: number | null;
+  run_type: string | null;
 }
 
 interface AnalyticsRow {
@@ -214,6 +215,11 @@ export function openDb(dbFilePath: string): Database {
   } catch {
     // Column already exists — safe to ignore
   }
+  try {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN run_type TEXT");
+  } catch {
+    // Column already exists — safe to ignore
+  }
   return db;
 }
 
@@ -225,8 +231,8 @@ export async function insertAgentRun(
     () =>
       db.run(
         `INSERT OR REPLACE INTO agent_runs
-         (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, issue_id, issue_title, status, started_at, finished_at, cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, run_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           result.id,
           result.issueId,
@@ -240,6 +246,7 @@ export async function insertAgentRun(
           result.error ?? null,
           result.linearIssueId ?? null,
           result.sessionId ?? null,
+          result.runType ?? null,
         ],
       ),
     "insertAgentRun",
@@ -262,6 +269,7 @@ function rowToResult(row: AgentRunRow): AgentResult {
     linearIssueId: row.linear_issue_id ?? undefined,
     sessionId: row.session_id ?? undefined,
     reviewedAt: row.reviewed_at ?? undefined,
+    runType: row.run_type ?? undefined,
   };
 }
 
@@ -269,7 +277,7 @@ export function getRecentRuns(db: Database, limit = 50): AgentResult[] {
   const rows = db
     .query<AgentRunRow, [number]>(
       `SELECT id, issue_id, issue_title, status, started_at, finished_at,
-              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at
+              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at, run_type
        FROM agent_runs
        ORDER BY finished_at DESC
        LIMIT ?`,
@@ -581,7 +589,7 @@ export function getUnreviewedRuns(db: Database, limit = 100): AgentResult[] {
   const rows = db
     .query<AgentRunRow, [number]>(
       `SELECT id, issue_id, issue_title, status, started_at, finished_at,
-              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at
+              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at, run_type
        FROM agent_runs
        WHERE reviewed_at IS NULL AND status IN ('completed', 'failed', 'timed_out')
        ORDER BY finished_at ASC
@@ -598,7 +606,7 @@ export function getRunWithTranscript(
   const runRow = db
     .query<AgentRunRow, [string]>(
       `SELECT id, issue_id, issue_title, status, started_at, finished_at,
-              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at
+              cost_usd, duration_ms, num_turns, error, linear_issue_id, session_id, reviewed_at, run_type
        FROM agent_runs WHERE id = ?`,
     )
     .get(agentRunId);

@@ -61,6 +61,7 @@ export interface AgentResult {
   sessionId?: string;
   error?: string;
   reviewedAt?: number;
+  runType?: string;
 }
 
 export interface QueueInfo {
@@ -181,6 +182,7 @@ export class AppState {
       numTurns?: number;
       sessionId?: string;
       error?: string;
+      runType?: string;
     },
     rawMessages?: unknown[],
   ): Promise<void> {
@@ -209,6 +211,7 @@ export class AppState {
       numTurns: agent.numTurns,
       sessionId: meta?.sessionId,
       error: agent.error,
+      runType: meta?.runType,
     };
 
     // Update in-memory state synchronously (before any awaits) so callers

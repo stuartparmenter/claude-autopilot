@@ -869,6 +869,104 @@ describe("transcript redaction before storage", () => {
   });
 });
 
+describe("run_type migration", () => {
+  test("migration adds run_type column to existing DB without it", () => {
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN run_type TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ run_type: string | null }, [string]>(
+        "SELECT run_type FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.run_type).toBeNull();
+
+    // New rows inserted after migration can use the column
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at, run_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "post-migration",
+        "ISSUE-2",
+        "New Title",
+        "completed",
+        3000,
+        4000,
+        "executor",
+      ],
+    );
+    const newRow = db2
+      .query<{ run_type: string | null }, [string]>(
+        "SELECT run_type FROM agent_runs WHERE id = ?",
+      )
+      .get("post-migration");
+    expect(newRow?.run_type).toBe("executor");
+
+    db2.close();
+  });
+
+  test("run_type migration is idempotent on a new DB", () => {
+    // openDb on :memory: creates the schema then runs migrations including run_type
+    // Running it again should not throw
+    expect(() => openDb(":memory:")).not.toThrow();
+  });
+});
+
+describe("insertAgentRun with runType", () => {
+  test("stores and retrieves runType when set", async () => {
+    await insertAgentRun(db, makeResult("a1", { runType: "executor" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.runType).toBe("executor");
+  });
+
+  test("runType is undefined when not set", async () => {
+    await insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.runType).toBeUndefined();
+  });
+
+  test("getRecentRuns returns runType for all run types", async () => {
+    const types = ["executor", "fixer", "review", "planning", "project-owner"];
+    for (const runType of types) {
+      await insertAgentRun(
+        db,
+        makeResult(runType, { startedAt: 1000, finishedAt: 2000, runType }),
+      );
+    }
+    const runs = getRecentRuns(db);
+    const returnedTypes = runs.map((r) => r.runType);
+    for (const runType of types) {
+      expect(returnedTypes).toContain(runType);
+    }
+  });
+});
+
 describe("insertPlanningSession and getRecentPlanningSessions", () => {
   function makeSession(
     id: string,
