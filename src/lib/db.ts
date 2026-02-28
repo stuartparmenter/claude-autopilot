@@ -1,7 +1,12 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
+import type {
+  ActivityEntry,
+  AgentResult,
+  PlanningSession,
+  StateTransition,
+} from "../state";
 import { error, warn } from "./logger";
 
 const SCHEMA = `
@@ -64,6 +69,17 @@ CREATE TABLE IF NOT EXISTS planning_sessions (
   cost_usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_planning_sessions_finished_at ON planning_sessions(finished_at);
+CREATE TABLE IF NOT EXISTS state_transitions (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  issue_identifier TEXT NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  agent_id TEXT,
+  reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_state_transitions_issue_id ON state_transitions(issue_id);
 `;
 
 // ---- SQLITE_BUSY retry logic ----
@@ -1039,5 +1055,66 @@ export function getRecentPlanningSessions(
         }>)
       : undefined,
     costUsd: row.cost_usd ?? undefined,
+  }));
+}
+
+interface StateTransitionRow {
+  id: string;
+  issue_id: string;
+  issue_identifier: string;
+  from_state: string | null;
+  to_state: string;
+  timestamp: number;
+  agent_id: string | null;
+  reason: string | null;
+}
+
+export async function insertStateTransition(
+  db: Database,
+  transition: StateTransition,
+): Promise<void> {
+  await withDbRetry(
+    () =>
+      db.run(
+        `INSERT OR REPLACE INTO state_transitions
+         (id, issue_id, issue_identifier, from_state, to_state, timestamp, agent_id, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          transition.id,
+          transition.issueId,
+          transition.issueIdentifier,
+          transition.fromState ?? null,
+          transition.toState,
+          transition.timestamp,
+          transition.agentId ?? null,
+          transition.reason ?? null,
+        ],
+      ),
+    "insertStateTransition",
+    transition,
+  );
+}
+
+export function getStateTransitions(
+  db: Database,
+  issueId: string,
+): StateTransition[] {
+  const rows = db
+    .query<StateTransitionRow, [string]>(
+      `SELECT id, issue_id, issue_identifier, from_state, to_state, timestamp, agent_id, reason
+       FROM state_transitions
+       WHERE issue_id = ?
+       ORDER BY timestamp ASC`,
+    )
+    .all(issueId);
+  return rows.map((row) => ({
+    id: row.id,
+    issueId: row.issue_id,
+    issueIdentifier: row.issue_identifier,
+    fromState: row.from_state ?? undefined,
+    toState: row.to_state,
+    timestamp: row.timestamp,
+    agentId: row.agent_id ?? undefined,
+    reason: row.reason ?? undefined,
   }));
 }
