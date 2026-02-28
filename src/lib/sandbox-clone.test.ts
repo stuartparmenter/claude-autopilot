@@ -506,7 +506,11 @@ describe("sweepClones", () => {
   });
 
   test("preserves non-autopilot directories alongside stale autopilot ones", async () => {
-    readdirSyncSpy.mockReturnValue(["ap-ENG-1", "my-feature", "ap-fix-ENG-2"] as any);
+    readdirSyncSpy.mockReturnValue([
+      "ap-ENG-1",
+      "my-feature",
+      "ap-fix-ENG-2",
+    ] as any);
 
     await sweepClones(PROJECT);
 
@@ -532,7 +536,11 @@ describe("sweepClones", () => {
   });
 
   test("active autopilot clones are preserved even among non-autopilot entries", async () => {
-    readdirSyncSpy.mockReturnValue(["ap-ENG-1", "ap-ENG-2", "my-feature"] as any);
+    readdirSyncSpy.mockReturnValue([
+      "ap-ENG-1",
+      "ap-ENG-2",
+      "my-feature",
+    ] as any);
 
     await sweepClones(PROJECT, new Set(["ap-ENG-1"]));
 
