@@ -8,6 +8,7 @@ import { getLinearClient } from "./lib/linear";
 import { info, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import { withRetry } from "./lib/retry";
+import { AUTOPILOT_PREFIX } from "./lib/sandbox-clone";
 import type { AppState } from "./state";
 
 // Track issue IDs with active fixers to prevent duplicates
@@ -307,7 +308,7 @@ async function respondToReview(opts: {
     BLOCKED_STATE: config.linear.states.blocked,
   });
 
-  const cloneName = `review-${issueIdentifier}`;
+  const cloneName = `${AUTOPILOT_PREFIX}review-${issueIdentifier}`;
   const timeoutMs = config.monitor.review_responder_timeout_minutes * 60 * 1000;
   const plugins: SdkPluginConfig[] = [
     {
@@ -388,7 +389,7 @@ async function fixPR(opts: {
     projectPath,
   );
 
-  const cloneName = `fix-${issueIdentifier}`;
+  const cloneName = `${AUTOPILOT_PREFIX}fix-${issueIdentifier}`;
   const timeoutMs = config.executor.fixer_timeout_minutes * 60 * 1000;
   const plugins: SdkPluginConfig[] = [
     {

@@ -11,6 +11,7 @@ import {
 } from "./lib/linear";
 import { info, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
+import { AUTOPILOT_PREFIX } from "./lib/sandbox-clone";
 import { sanitizeMessage } from "./lib/sanitize";
 import type { AppState } from "./state";
 
@@ -70,7 +71,7 @@ export async function executeIssue(opts: {
       projectPath,
     );
 
-  const cloneName = issue.identifier;
+  const cloneName = `${AUTOPILOT_PREFIX}${issue.identifier}`;
   const timeoutMs = config.executor.timeout_minutes * 60 * 1000;
   const plugins: SdkPluginConfig[] = [
     {

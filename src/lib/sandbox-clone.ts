@@ -2,6 +2,11 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { info, warn } from "./logger";
 
+/** Prefix applied to all autopilot-managed clone names. Used to namespace
+ * autopilot clones and restrict sweepClones() to only remove autopilot-owned
+ * directories, leaving human-created clones untouched. */
+export const AUTOPILOT_PREFIX = "ap-";
+
 function clonePath(projectPath: string, name: string): string {
   return resolve(projectPath, ".claude", "clones", name);
 }
@@ -287,25 +292,8 @@ export async function sweepClones(
     return;
   }
 
-  // Only sweep clones that match autopilot naming conventions.
-  // This prevents destroying clone directories created by human Claude Code
-  // sessions or other tools sharing the .claude/clones/ directory.
-  const isAutopilotClone = (name: string): boolean => {
-    // Executor clones are named by issue identifier (e.g., "ENG-123")
-    // Fixer clones are prefixed with "fix-" (e.g., "fix-ENG-123")
-    // Review clones are prefixed with "review-" (e.g., "review-ENG-123")
-    return /^(fix-|review-)?[A-Za-z]+-\d+$/.test(name);
-  };
-
-  const skipped = entries.filter((name) => !isAutopilotClone(name));
-  if (skipped.length > 0) {
-    info(
-      `Skipping ${skipped.length} non-autopilot director(ies) during sweep: ${skipped.join(", ")}`,
-    );
-  }
-
   const stale = entries.filter(
-    (name) => !activeNames.has(name) && isAutopilotClone(name),
+    (name) => name.startsWith(AUTOPILOT_PREFIX) && !activeNames.has(name),
   );
   if (stale.length > 0) {
     info(`Sweeping ${stale.length} stale clone(s): ${stale.join(", ")}`);
