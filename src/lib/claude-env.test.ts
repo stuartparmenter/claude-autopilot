@@ -38,7 +38,7 @@ describe("buildAgentEnv", () => {
       "PATH",
       "SSH_AUTH_SOCK",
       "ANTHROPIC_API_KEY",
-      "CLAUDE_API_KEY",
+      "CLAUDE_CODE_OAUTH_TOKEN",
       "GITHUB_TOKEN",
       "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
       "GIT_CONFIG_NOSYSTEM",
