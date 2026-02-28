@@ -6,7 +6,10 @@ import type {
   CostByStatusEntry,
   DailyCostEntry,
   DailyCostRow,
+  FailuresByTypeEntry,
+  FailureTrendEntry,
   PerIssueCostRow,
+  RepeatFailureEntry,
   TodayAnalyticsResult,
   WeeklyCostEntry,
 } from "./lib/db";
@@ -16,9 +19,12 @@ import {
   getCostByStatus,
   getDailyCosts,
   getDailyCostTrend,
+  getFailuresByType,
+  getFailureTrend,
   getPerIssueCosts,
   getRecentPlanningSessions,
   getRecentRuns,
+  getRepeatFailures,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
@@ -65,6 +71,7 @@ export interface AgentResult {
   sessionId?: string;
   error?: string;
   reviewedAt?: number;
+  runType?: string;
 }
 
 export interface QueueInfo {
@@ -185,6 +192,7 @@ export class AppState {
       numTurns?: number;
       sessionId?: string;
       error?: string;
+      runType?: string;
     },
     rawMessages?: unknown[],
   ): Promise<void> {
@@ -213,6 +221,7 @@ export class AppState {
       numTurns: agent.numTurns,
       sessionId: meta?.sessionId,
       error: agent.error,
+      runType: meta?.runType,
     };
 
     // Update in-memory state synchronously (before any awaits) so callers
@@ -304,6 +313,19 @@ export class AppState {
       daily: getDailyCostTrend(this.db),
       weekly: getWeeklyCostTrend(this.db),
       byStatus: getCostByStatus(this.db),
+    };
+  }
+
+  getFailureAnalysis(): {
+    byType: FailuresByTypeEntry[];
+    trend: FailureTrendEntry[];
+    repeatFailures: RepeatFailureEntry[];
+  } | null {
+    if (!this.db) return null;
+    return {
+      byType: getFailuresByType(this.db),
+      trend: getFailureTrend(this.db),
+      repeatFailures: getRepeatFailures(this.db),
     };
   }
 

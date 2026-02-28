@@ -122,6 +122,7 @@ export async function runPlanning(opts: {
       state,
       agentId,
       "Planning",
+      "planning",
     );
     state.updatePlanning({
       running: false,
@@ -140,7 +141,10 @@ export async function runPlanning(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Planning agent crashed: ${msg}`);
-    void state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", {
+      error: msg,
+      runType: "planning",
+    });
     state.updatePlanning({
       running: false,
       lastRunAt: Date.now(),

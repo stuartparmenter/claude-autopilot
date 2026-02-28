@@ -20,21 +20,38 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
  * Return the current Linear access token without attempting a refresh.
  * Checks the SQLite DB for a stored OAuth token first; falls back to
  * the LINEAR_API_KEY environment variable.
+ *
+ * If the OAuth token exists but is expired, falls through to LINEAR_API_KEY.
+ * Expired token refresh is handled by ensureFreshToken().
  */
 export function getLinearAccessToken(db?: Database): string {
   if (db) {
     const token = getOAuthToken(db, "linear");
-    if (token) return token.accessToken;
+    if (token && token.expiresAt > Date.now() + 60_000) {
+      return token.accessToken;
+    }
+    // Token missing or expired — fall through to LINEAR_API_KEY
   }
   const apiKey = process.env.LINEAR_API_KEY;
   if (!apiKey) {
     throw new Error(
       "No Linear authentication configured.\n" +
-        "Option 1: Set LINEAR_API_KEY (https://linear.app/settings/api)\n" +
-        "Option 2: Configure linear.oauth and complete the OAuth flow at /auth/linear",
+        "Either complete OAuth setup at /auth/linear or set LINEAR_API_KEY.\n" +
+        "Create an API key at: https://linear.app/settings/api",
     );
   }
   return apiKey;
+}
+
+/**
+ * Returns true if any Linear auth method is available (valid OAuth token or LINEAR_API_KEY).
+ */
+export function hasLinearAuth(db?: Database): boolean {
+  if (db) {
+    const token = getOAuthToken(db, "linear");
+    if (token && token.expiresAt > Date.now() + 60_000) return true;
+  }
+  return !!process.env.LINEAR_API_KEY;
 }
 
 /**

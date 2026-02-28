@@ -24,6 +24,7 @@ export function handleAgentResult(
   state: AppState,
   agentId: string,
   label: string,
+  runType?: string,
 ): AgentResultHandled {
   const metrics: {
     costUsd?: number;
@@ -42,9 +43,12 @@ export function handleAgentResult(
   const rawMessages =
     result.rawMessages !== undefined ? result.rawMessages : undefined;
 
+  const withRunType = <T extends object>(base: T): T & { runType?: string } =>
+    runType !== undefined ? { ...base, runType } : base;
+
   if (result.inactivityTimedOut) {
     warn(`${label} inactive, timed out`);
-    const meta = { ...metrics, error: "Inactivity timeout" };
+    const meta = withRunType({ ...metrics, error: "Inactivity timeout" });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
@@ -55,7 +59,7 @@ export function handleAgentResult(
 
   if (result.timedOut) {
     warn(`${label} timed out`);
-    const meta = { ...metrics, error: "Timed out" };
+    const meta = withRunType({ ...metrics, error: "Timed out" });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
@@ -66,7 +70,7 @@ export function handleAgentResult(
 
   if (result.error) {
     warn(`${label} failed: ${result.error}`);
-    const meta = { ...metrics, error: result.error };
+    const meta = withRunType({ ...metrics, error: result.error });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "failed", meta, rawMessages);
     } else {
@@ -77,10 +81,11 @@ export function handleAgentResult(
 
   ok(`${label} completed successfully`);
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
+  const meta = withRunType(metrics);
   if (rawMessages !== undefined) {
-    void state.completeAgent(agentId, "completed", metrics, rawMessages);
+    void state.completeAgent(agentId, "completed", meta, rawMessages);
   } else {
-    void state.completeAgent(agentId, "completed", metrics);
+    void state.completeAgent(agentId, "completed", meta);
   }
   return { status: "completed", metrics };
 }

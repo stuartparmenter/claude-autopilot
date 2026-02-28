@@ -341,6 +341,7 @@ async function respondToReview(opts: {
     state,
     agentId,
     `Review responder for ${issueIdentifier}`,
+    "review",
   );
   return status === "completed";
 }
@@ -423,12 +424,16 @@ async function fixPR(opts: {
       state,
       agentId,
       `Fixer for ${issueIdentifier}`,
+      "fixer",
     );
     return status === "completed";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Fixer agent for ${issueIdentifier} crashed: ${msg}`);
-    void state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", {
+      error: msg,
+      runType: "fixer",
+    });
     return false;
   } finally {
     activeFixerIssues.delete(issueId);

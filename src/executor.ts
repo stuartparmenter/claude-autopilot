@@ -95,6 +95,7 @@ export async function executeIssue(opts: {
       state,
       agentId,
       issue.identifier,
+      "executor",
     );
 
     if (status === "timed_out") {
@@ -129,7 +130,10 @@ export async function executeIssue(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     warn(`Executor agent for ${issue.identifier} crashed: ${msg}`);
-    void state.completeAgent(agentId, "failed", { error: msg });
+    void state.completeAgent(agentId, "failed", {
+      error: msg,
+      runType: "executor",
+    });
     return false;
   } finally {
     activeIssueIds.delete(issue.id);
