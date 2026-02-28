@@ -1629,3 +1629,60 @@ describe("GET /partials/stats — planning count", () => {
     expect(body).toContain(">2<");
   });
 });
+
+describe("GET /api/planning/history", () => {
+  test("returns empty sessions array when no planning history", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/planning/history");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { sessions: unknown[] };
+    expect(json.sessions).toEqual([]);
+  });
+
+  test("returns planning sessions when history exists", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 3,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/planning/history");
+    const json = (await res.json()) as { sessions: Array<{ id: string }> };
+    expect(json.sessions).toHaveLength(1);
+    expect(json.sessions[0].id).toBe("ps-1");
+  });
+});
+
+describe("GET /partials/planning-history", () => {
+  test("returns 'No planning sessions' message when empty", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("No planning sessions");
+  });
+
+  test("renders session cards when history exists", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 61000,
+      status: "completed",
+      issuesFiledCount: 2,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    const text = await res.text();
+    expect(text).toContain("Planning");
+    expect(text).toContain("1m");
+    expect(text).toContain("2 issues filed");
+  });
+});

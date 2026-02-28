@@ -486,6 +486,13 @@ export function createApp(
                   hx-trigger="load, every 10s"
                   hx-swap="innerHTML"
                 ></div>
+                <div class="section-title">Planning History</div>
+                <div
+                  id="planning-history-list"
+                  hx-get="/partials/planning-history"
+                  hx-trigger="load, every 30s"
+                  hx-swap="innerHTML"
+                ></div>
               </div>
               <div class="main" id="main-panel">
                 <div class="empty-state">
@@ -535,6 +542,11 @@ export function createApp(
       return c.json({ enabled: false });
     }
     return c.json({ enabled: true, ...trends });
+  });
+
+  app.get("/api/planning/history", (c) => {
+    const history = state.getPlanningHistory();
+    return c.json({ sessions: history });
   });
 
   app.get("/health", (c) => {
@@ -820,6 +832,51 @@ export function createApp(
             return `<div class="history-card" hx-get="/partials/activity/${escapeHtml(h.id)}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
             <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</span>${retryBtn}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
+          </div>`;
+          })
+          .join(""),
+      )}`,
+    );
+  });
+
+  app.get("/partials/planning-history", (c) => {
+    const sessions = state.getPlanningHistory();
+    if (sessions.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No planning sessions yet
+        </div>`,
+      );
+    }
+    return c.html(
+      html`${raw(
+        sessions
+          .slice(0, 10)
+          .map((s) => {
+            const durationSec = Math.round((s.finishedAt - s.startedAt) / 1000);
+            const durationStr =
+              durationSec >= 60
+                ? `${Math.floor(durationSec / 60)}m`
+                : `${durationSec}s`;
+            const costStr = s.costUsd ? `$${s.costUsd.toFixed(4)}` : "";
+            const dateStr = new Date(s.finishedAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            });
+            const timeStr = new Date(s.finishedAt).toLocaleTimeString("en-US", {
+              hour12: false,
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            return `<div class="history-card">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span><span class="status-dot ${escapeHtml(s.status)}"></span>Planning</span>
+              <span style="font-size:11px;color:var(--text-dim)">${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</span>
+            </div>
+            <div class="meta">${escapeHtml(durationStr)}${costStr ? ` &middot; ${escapeHtml(costStr)}` : ""}${s.issuesFiledCount > 0 ? ` &middot; ${s.issuesFiledCount} issues filed` : ""}</div>
+            ${s.summary ? `<div class="title">${escapeHtml(s.summary)}</div>` : ""}
           </div>`;
           })
           .join(""),
