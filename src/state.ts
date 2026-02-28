@@ -5,6 +5,9 @@ import type {
   AnalyticsResult,
   CostByStatusEntry,
   DailyCostEntry,
+  FailuresByTypeEntry,
+  FailureTrendEntry,
+  RepeatFailureEntry,
   TodayAnalyticsResult,
   WeeklyCostEntry,
 } from "./lib/db";
@@ -13,8 +16,11 @@ import {
   getAnalytics,
   getCostByStatus,
   getDailyCostTrend,
+  getFailuresByType,
+  getFailureTrend,
   getRecentPlanningSessions,
   getRecentRuns,
+  getRepeatFailures,
   getTodayAnalytics,
   getWeeklyCostTrend,
   insertActivityLogs,
@@ -303,6 +309,19 @@ export class AppState {
       daily: getDailyCostTrend(this.db),
       weekly: getWeeklyCostTrend(this.db),
       byStatus: getCostByStatus(this.db),
+    };
+  }
+
+  getFailureAnalysis(): {
+    byType: FailuresByTypeEntry[];
+    trend: FailureTrendEntry[];
+    repeatFailures: RepeatFailureEntry[];
+  } | null {
+    if (!this.db) return null;
+    return {
+      byType: getFailuresByType(this.db),
+      trend: getFailureTrend(this.db),
+      repeatFailures: getRepeatFailures(this.db),
     };
   }
 

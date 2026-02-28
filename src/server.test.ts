@@ -1011,6 +1011,196 @@ describe("GET /api/cost-trends", () => {
   });
 });
 
+describe("GET /api/failure-analysis", () => {
+  test("returns enabled:false when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { enabled: boolean };
+    expect(body.enabled).toBe(false);
+  });
+
+  test("returns enabled:true with empty arrays for empty database", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const app = createApp(state);
+    const res = await app.request("/api/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      enabled: boolean;
+      byType: unknown[];
+      trend: unknown[];
+      repeatFailures: unknown[];
+    };
+    expect(body.enabled).toBe(true);
+    expect(body.byType).toEqual([]);
+    expect(body.trend).toEqual([]);
+    expect(body.repeatFailures).toEqual([]);
+    db.close();
+  });
+
+  test("returns failure data when DB has failed runs", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "r1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue 1",
+      status: "failed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      error: "test fail",
+    });
+    await insertAgentRun(db, {
+      id: "r2",
+      issueId: "ENG-2",
+      issueTitle: "Test issue 2",
+      status: "completed",
+      startedAt: now - 30000,
+      finishedAt: now - 1000,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      enabled: boolean;
+      byType: Array<{ status: string; count: number }>;
+      trend: unknown[];
+      repeatFailures: unknown[];
+    };
+    expect(body.enabled).toBe(true);
+    expect(body.byType).toBeDefined();
+    expect(body.trend).toBeDefined();
+    expect(body.repeatFailures).toBeDefined();
+    expect(body.byType.some((b) => b.status === "failed")).toBe(true);
+    db.close();
+  });
+});
+
+describe("dashboard HTML includes failure-analysis partial div", () => {
+  test("includes failure-analysis-bar div with /partials/failure-analysis and 60s poll", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("/partials/failure-analysis");
+    expect(body).toContain("failure-analysis-bar");
+    expect(body).toContain("every 60s");
+  });
+});
+
+describe("GET /partials/failure-analysis", () => {
+  test("returns empty div when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("returns empty div when DB has no failures", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "r1",
+      issueId: "ENG-1",
+      issueTitle: "Test",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+    db.close();
+  });
+
+  test("returns failure stats HTML when DB has failed runs", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "r1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue",
+      status: "failed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      error: "some error",
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Failed");
+    expect(body).toContain("failure-analysis-section");
+    db.close();
+  });
+
+  test("includes repeat-failure-item for issues with multiple failures", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "r1",
+      issueId: "ENG-42",
+      issueTitle: "Repeat issue",
+      status: "failed",
+      startedAt: now - 120000,
+      finishedAt: now - 60000,
+      error: "first failure",
+    });
+    await insertAgentRun(db, {
+      id: "r2",
+      issueId: "ENG-42",
+      issueTitle: "Repeat issue",
+      status: "failed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      error: "second failure",
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/failure-analysis");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("repeat-failure-item");
+    expect(body).toContain("ENG-42");
+    expect(body).toContain("2x");
+    db.close();
+  });
+
+  test("failure trend bars use var(--red) color", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "r1",
+      issueId: "ENG-1",
+      issueTitle: "Test",
+      status: "failed",
+      startedAt: now - 60000,
+      finishedAt: now,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/failure-analysis");
+    const body = await res.text();
+    expect(body).toContain("var(--red)");
+    db.close();
+  });
+});
+
 describe("dashboard HTML includes cost-trends partial div", () => {
   test("includes cost-trends-bar div with /partials/cost-trends and 60s poll", async () => {
     const state = new AppState();

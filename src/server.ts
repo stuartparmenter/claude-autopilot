@@ -462,6 +462,12 @@ export function createApp(
                 hx-trigger="load, every 60s"
                 hx-swap="innerHTML"
               ></div>
+              <div
+                class="failure-analysis-bar"
+                hx-get="/partials/failure-analysis"
+                hx-trigger="load, every 60s"
+                hx-swap="innerHTML"
+              ></div>
             </header>
             <div class="layout">
               <div class="sidebar">
@@ -535,6 +541,14 @@ export function createApp(
       return c.json({ enabled: false });
     }
     return c.json({ enabled: true, ...trends });
+  });
+
+  app.get("/api/failure-analysis", (c) => {
+    const analysis = state.getFailureAnalysis();
+    if (!analysis) {
+      return c.json({ enabled: false });
+    }
+    return c.json({ enabled: true, ...analysis });
   });
 
   app.get("/health", (c) => {
@@ -1062,6 +1076,51 @@ export function createApp(
             ? html`<div class="cost-trends-summary">${statusLine}</div>`
             : ""
         }
+      </div>
+    `);
+  });
+
+  app.get("/partials/failure-analysis", (c) => {
+    const analysis = state.getFailureAnalysis();
+    if (!analysis) {
+      return c.html(html`<div></div>`);
+    }
+
+    const typeParts = analysis.byType.map(
+      (b) =>
+        `${escapeHtml(b.status === "timed_out" ? "Timed Out" : "Failed")}: ${b.count}`,
+    );
+    const typeLine = typeParts.join(" | ");
+
+    if (!typeLine) {
+      return c.html(html`<div></div>`);
+    }
+
+    const recentDays = analysis.trend.slice(-7);
+    const maxRate = Math.max(...recentDays.map((d) => d.failureRate), 0.01);
+    const dayRows = recentDays
+      .map((d) => {
+        const pct = Math.round((d.failureRate / maxRate) * 100);
+        const dateLabel = escapeHtml(d.date.slice(5)); // "MM-DD"
+        const rateLabel = escapeHtml(`${Math.round(d.failureRate * 100)}%`);
+        return `<div class="cost-trend-row"><span class="cost-trend-date">${dateLabel}</span><div class="cost-trend-bar-track"><div class="cost-trend-bar-fill" style="width:${pct}%;background:var(--red)"></div></div><span class="cost-trend-amount">${rateLabel}</span></div>`;
+      })
+      .join("");
+
+    const repeatRows = analysis.repeatFailures
+      .map((r) => {
+        const issueId = escapeHtml(r.issueId);
+        const issueTitle = escapeHtml(r.issueTitle);
+        const lastError = r.lastError ? escapeHtml(r.lastError) : "";
+        return `<div class="repeat-failure-item"><span class="repeat-failure-count">${r.failureCount}x</span><span title="${issueTitle}">${issueId}</span>${lastError ? `<span class="repeat-failure-error">${lastError}</span>` : ""}</div>`;
+      })
+      .join("");
+
+    return c.html(html`
+      <div class="failure-analysis-section">
+        <div class="cost-trends-summary">${typeLine}</div>
+        ${recentDays.length > 0 ? raw(dayRows) : ""}
+        ${repeatRows ? raw(repeatRows) : ""}
       </div>
     `);
   });

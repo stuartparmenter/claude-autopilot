@@ -371,4 +371,32 @@ export const DASHBOARD_CSS = `
     color: var(--text-dim);
     margin-top: 2px;
   }
+  .failure-analysis-bar {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .failure-analysis-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .repeat-failure-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    padding: 2px 0;
+  }
+  .repeat-failure-count {
+    color: var(--red);
+    font-weight: 600;
+    min-width: 20px;
+  }
+  .repeat-failure-error {
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
 `;

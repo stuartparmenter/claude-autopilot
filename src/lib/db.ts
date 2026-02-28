@@ -627,25 +627,8 @@ export function getRunWithTranscript(
   };
 }
 
-export async function markRunsReviewed(
-  db: Database,
-  agentRunIds: string[],
-): Promise<void> {
-  if (agentRunIds.length === 0) return;
-  const stmt = db.prepare(`UPDATE agent_runs SET reviewed_at = ? WHERE id = ?`);
-  const updateMany = db.transaction((ids: string[]) => {
-    const now = Date.now();
-    for (const id of ids) {
-      stmt.run(now, id);
-    }
-  });
-  await withDbRetry(() => updateMany(agentRunIds), "markRunsReviewed", {
-    ids: agentRunIds,
-  });
-}
-
 export interface FailuresByTypeEntry {
-  status: string;
+  status: string; // "failed" | "timed_out"
   count: number;
 }
 
@@ -675,7 +658,7 @@ interface FailureTrendRow {
   failure_count: number;
 }
 
-interface RepeatFailuresRow {
+interface RepeatFailureRow {
   issue_id: string;
   issue_title: string;
   failure_count: number;
@@ -732,15 +715,17 @@ export function getRepeatFailures(
 ): RepeatFailureEntry[] {
   const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const rows = db
-    .query<RepeatFailuresRow, [number, number]>(
+    .query<RepeatFailureRow, [number, number]>(
       `SELECT
          issue_id,
          issue_title,
          COUNT(*) AS failure_count,
          MAX(finished_at) AS last_failed_at,
          (SELECT error FROM agent_runs ar2
-          WHERE ar2.issue_id = agent_runs.issue_id AND ar2.status != 'completed'
-          ORDER BY ar2.finished_at DESC LIMIT 1) AS last_error
+          WHERE ar2.issue_id = agent_runs.issue_id
+            AND ar2.status != 'completed'
+          ORDER BY ar2.finished_at DESC
+          LIMIT 1) AS last_error
        FROM agent_runs
        WHERE status != 'completed' AND finished_at >= ?
        GROUP BY issue_id
@@ -755,6 +740,23 @@ export function getRepeatFailures(
     lastFailedAt: row.last_failed_at,
     lastError: row.last_error,
   }));
+}
+
+export async function markRunsReviewed(
+  db: Database,
+  agentRunIds: string[],
+): Promise<void> {
+  if (agentRunIds.length === 0) return;
+  const stmt = db.prepare(`UPDATE agent_runs SET reviewed_at = ? WHERE id = ?`);
+  const updateMany = db.transaction((ids: string[]) => {
+    const now = Date.now();
+    for (const id of ids) {
+      stmt.run(now, id);
+    }
+  });
+  await withDbRetry(() => updateMany(agentRunIds), "markRunsReviewed", {
+    ids: agentRunIds,
+  });
 }
 
 interface PlanningSessionRow {
