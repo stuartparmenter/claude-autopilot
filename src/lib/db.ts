@@ -308,7 +308,7 @@ export interface DailyCostEntry {
 }
 
 export interface WeeklyCostEntry {
-  weekStart: string; // "YYYY-WW" (ISO year-week)
+  weekStart: string; // "YYYY-MM-DD" (earliest date of runs in the week)
   totalCost: number;
   runCount: number;
 }
@@ -327,6 +327,7 @@ interface DailyCostRow {
 
 interface WeeklyCostRow {
   week: string;
+  week_start: string;
   total_cost: number;
   run_count: number;
 }
@@ -358,12 +359,16 @@ export function getDailyCostTrend(db: Database, days = 30): DailyCostEntry[] {
   }));
 }
 
-export function getWeeklyCostTrend(db: Database, weeks = 8): WeeklyCostEntry[] {
+export function getWeeklyCostTrend(
+  db: Database,
+  weeks = 12,
+): WeeklyCostEntry[] {
   const cutoffMs = Date.now() - weeks * 7 * 24 * 60 * 60 * 1000;
   const rows = db
     .query<WeeklyCostRow, [number]>(
       `SELECT
-         strftime('%Y-%W', datetime(finished_at/1000, 'unixepoch')) AS week,
+         strftime('%Y-%W', finished_at/1000, 'unixepoch') AS week,
+         MIN(strftime('%Y-%m-%d', finished_at/1000, 'unixepoch')) AS week_start,
          SUM(COALESCE(cost_usd, 0)) AS total_cost,
          COUNT(*) AS run_count
        FROM agent_runs
@@ -373,24 +378,26 @@ export function getWeeklyCostTrend(db: Database, weeks = 8): WeeklyCostEntry[] {
     )
     .all(cutoffMs);
   return rows.map((row) => ({
-    weekStart: row.week,
+    weekStart: row.week_start,
     totalCost: row.total_cost,
     runCount: row.run_count,
   }));
 }
 
-export function getCostByStatus(db: Database): CostByStatusEntry[] {
+export function getCostByStatus(db: Database, days = 30): CostByStatusEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const rows = db
-    .query<CostByStatusRow, []>(
+    .query<CostByStatusRow, [number]>(
       `SELECT
          status,
          SUM(COALESCE(cost_usd, 0)) AS total_cost,
          COUNT(*) AS run_count
        FROM agent_runs
+       WHERE finished_at >= ?
        GROUP BY status
        ORDER BY status ASC`,
     )
-    .all();
+    .all(cutoffMs);
   return rows.map((row) => ({
     status: row.status,
     totalCost: row.total_cost,

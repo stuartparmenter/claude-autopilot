@@ -5,6 +5,8 @@ import {
   getActivityLogs,
   getAnalytics,
   getConversationLog,
+  getCostByStatus,
+  getDailyCostTrend,
   getFailuresByType,
   getFailureTrend,
   getRecentPlanningSessions,
@@ -12,6 +14,7 @@ import {
   getRepeatFailures,
   getRunWithTranscript,
   getUnreviewedRuns,
+  getWeeklyCostTrend,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
@@ -1354,5 +1357,240 @@ describe("getRepeatFailures", () => {
 
     const result = getRepeatFailures(db);
     expect(result[0].lastError).toBeNull();
+  });
+});
+
+describe("getDailyCostTrend", () => {
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  test("returns empty array for empty database", () => {
+    expect(getDailyCostTrend(db)).toEqual([]);
+  });
+
+  test("single day with multiple runs aggregates cost and count", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("d1", { finishedAt: now, costUsd: 0.1 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("d2", { finishedAt: now + 1000, costUsd: 0.2 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("d3", { finishedAt: now + 2000, costUsd: 0.05 }),
+    );
+    const result = getDailyCostTrend(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].runCount).toBe(3);
+    expect(result[0].totalCost).toBeCloseTo(0.35);
+  });
+
+  test("multiple days are returned in ascending date order", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("d1", { finishedAt: now - 2 * dayMs, costUsd: 0.1 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("d2", { finishedAt: now - dayMs, costUsd: 0.2 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("d3", { finishedAt: now, costUsd: 0.15 }),
+    );
+    const result = getDailyCostTrend(db, 30);
+    expect(result.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i].date > result[i - 1].date).toBe(true);
+    }
+  });
+
+  test("runs with null cost_usd are counted but contribute 0 cost", async () => {
+    const now = Date.now();
+    await insertAgentRun(db, makeResult("d1", { finishedAt: now })); // no costUsd
+    await insertAgentRun(
+      db,
+      makeResult("d2", { finishedAt: now + 1000, costUsd: 0.1 }),
+    );
+    const result = getDailyCostTrend(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].runCount).toBe(2);
+    expect(result[0].totalCost).toBeCloseTo(0.1);
+  });
+
+  test("days parameter limits the time window", async () => {
+    const now = Date.now();
+    const fiftyDaysAgo = now - 50 * dayMs;
+    await insertAgentRun(
+      db,
+      makeResult("d1", { finishedAt: fiftyDaysAgo, costUsd: 1.0 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("d2", { finishedAt: now, costUsd: 0.1 }),
+    );
+    const result = getDailyCostTrend(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalCost).toBeCloseTo(0.1);
+  });
+
+  test("date field has YYYY-MM-DD format", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("d1", { finishedAt: now, costUsd: 0.1 }),
+    );
+    const result = getDailyCostTrend(db, 30);
+    expect(result[0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("getWeeklyCostTrend", () => {
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  test("returns empty array for empty database", () => {
+    expect(getWeeklyCostTrend(db)).toEqual([]);
+  });
+
+  test("weekly aggregation groups runs from the same week together", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("w1", { finishedAt: now, costUsd: 0.1 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("w2", { finishedAt: now + 3600000, costUsd: 0.2 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("w3", { finishedAt: now + 7200000, costUsd: 0.15 }),
+    );
+    const result = getWeeklyCostTrend(db, 12);
+    expect(result).toHaveLength(1);
+    expect(result[0].runCount).toBe(3);
+    expect(result[0].totalCost).toBeCloseTo(0.45);
+  });
+
+  test("weeks parameter limits the time window", async () => {
+    const now = Date.now();
+    const twentyWeeksAgo = now - 20 * 7 * dayMs;
+    await insertAgentRun(
+      db,
+      makeResult("w1", { finishedAt: twentyWeeksAgo, costUsd: 5.0 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("w2", { finishedAt: now, costUsd: 0.1 }),
+    );
+    const result = getWeeklyCostTrend(db, 12);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalCost).toBeCloseTo(0.1);
+  });
+
+  test("weekStart field is a YYYY-MM-DD date string", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("w1", { finishedAt: now, costUsd: 0.1 }),
+    );
+    const result = getWeeklyCostTrend(db, 12);
+    expect(result[0].weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("runs with null cost_usd contribute 0 cost but are counted", async () => {
+    const now = Date.now();
+    await insertAgentRun(db, makeResult("w1", { finishedAt: now })); // no costUsd
+    const result = getWeeklyCostTrend(db, 12);
+    expect(result).toHaveLength(1);
+    expect(result[0].runCount).toBe(1);
+    expect(result[0].totalCost).toBe(0);
+  });
+});
+
+describe("getCostByStatus", () => {
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  test("returns empty array for empty database", () => {
+    expect(getCostByStatus(db)).toEqual([]);
+  });
+
+  test("groups cost and count by status", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("s1", { finishedAt: now, status: "completed", costUsd: 0.1 }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("s2", {
+        finishedAt: now + 1000,
+        status: "completed",
+        costUsd: 0.2,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("s3", {
+        finishedAt: now + 2000,
+        status: "failed",
+        costUsd: 0.05,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("s4", {
+        finishedAt: now + 3000,
+        status: "timed_out",
+        costUsd: 0.15,
+      }),
+    );
+    const result = getCostByStatus(db, 30);
+    expect(result).toHaveLength(3);
+    const completed = result.find((r) => r.status === "completed");
+    expect(completed?.runCount).toBe(2);
+    expect(completed?.totalCost).toBeCloseTo(0.3);
+    const failed = result.find((r) => r.status === "failed");
+    expect(failed?.runCount).toBe(1);
+    expect(failed?.totalCost).toBeCloseTo(0.05);
+    const timedOut = result.find((r) => r.status === "timed_out");
+    expect(timedOut?.runCount).toBe(1);
+    expect(timedOut?.totalCost).toBeCloseTo(0.15);
+  });
+
+  test("days parameter limits the time window", async () => {
+    const now = Date.now();
+    const fiftyDaysAgo = now - 50 * dayMs;
+    await insertAgentRun(
+      db,
+      makeResult("s1", {
+        finishedAt: fiftyDaysAgo,
+        status: "completed",
+        costUsd: 1.0,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("s2", { finishedAt: now, status: "completed", costUsd: 0.1 }),
+    );
+    const result = getCostByStatus(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalCost).toBeCloseTo(0.1);
+    expect(result[0].runCount).toBe(1);
+  });
+
+  test("runs with null cost_usd contribute 0 cost but are counted", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("s1", { finishedAt: now, status: "completed" }),
+    ); // no costUsd
+    const result = getCostByStatus(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].runCount).toBe(1);
+    expect(result[0].totalCost).toBe(0);
   });
 });
