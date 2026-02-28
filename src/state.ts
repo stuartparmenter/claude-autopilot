@@ -6,7 +6,7 @@ import type {
   CostByStatusEntry,
   DailyCostEntry,
   DailyCostRow,
-  FailuresByTypeEntry,
+  FailureByTypeEntry,
   FailureTrendEntry,
   PerIssueCostRow,
   RepeatFailureEntry,
@@ -320,7 +320,7 @@ export class AppState {
   }
 
   getFailureAnalysis(): {
-    byType: FailuresByTypeEntry[];
+    byType: FailureByTypeEntry[];
     trend: FailureTrendEntry[];
     repeatFailures: RepeatFailureEntry[];
   } | null {

@@ -729,9 +729,25 @@ export function getRunWithTranscript(
   };
 }
 
-export interface FailuresByTypeEntry {
-  status: string; // "failed" | "timed_out"
+export interface FailureByTypeEntry {
+  status: string;
+  failureType: string;
   count: number;
+}
+
+export interface DailyFailureRateEntry {
+  date: string; // "YYYY-MM-DD"
+  totalRuns: number;
+  failureCount: number;
+  failureRate: number; // computed: failureCount / totalRuns
+}
+
+export interface RepeatFailingIssueEntry {
+  issueId: string;
+  issueTitle: string;
+  failureCount: number;
+  lastError: string | undefined;
+  lastFailureAt: number;
 }
 
 export interface FailureTrendEntry {
@@ -749,9 +765,24 @@ export interface RepeatFailureEntry {
   lastError: string | null;
 }
 
-interface FailuresByTypeRow {
+interface FailureByTypeRow {
   status: string;
+  failure_type: string;
   count: number;
+}
+
+interface DailyFailureRateRow {
+  date: string;
+  total_runs: number;
+  failure_count: number;
+}
+
+interface RepeatFailingIssueRow {
+  issue_id: string;
+  issue_title: string;
+  failure_count: number;
+  last_error: string | null;
+  last_failure_at: number;
 }
 
 interface FailureTrendRow {
@@ -771,20 +802,90 @@ interface RepeatFailureRow {
 export function getFailuresByType(
   db: Database,
   days = 30,
-): FailuresByTypeEntry[] {
+): FailureByTypeEntry[] {
   const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const rows = db
-    .query<FailuresByTypeRow, [number]>(
-      `SELECT status, COUNT(*) AS count
+    .query<FailureByTypeRow, [number]>(
+      `SELECT
+         status,
+         CASE
+           WHEN error LIKE '%timeout%' OR error LIKE '%Timed out%' THEN 'timeout'
+           WHEN error LIKE '%test%' OR error LIKE '%failing%' THEN 'test_failure'
+           WHEN error LIKE '%lint%' OR error LIKE '%biome%' OR error LIKE '%format%' THEN 'lint_failure'
+           WHEN error LIKE '%type%check%' OR error LIKE '%tsc%' THEN 'type_error'
+           WHEN error LIKE '%merge conflict%' THEN 'merge_conflict'
+           WHEN error IS NULL OR error = '' THEN 'unknown'
+           ELSE 'other'
+         END AS failure_type,
+         COUNT(*) AS count
        FROM agent_runs
-       WHERE status != 'completed' AND finished_at >= ?
-       GROUP BY status
+       WHERE status != 'completed'
+         AND finished_at >= ?
+       GROUP BY status, failure_type
        ORDER BY count DESC`,
     )
     .all(cutoffMs);
   return rows.map((row) => ({
     status: row.status,
+    failureType: row.failure_type,
     count: row.count,
+  }));
+}
+
+export function getDailyFailureRate(
+  db: Database,
+  days = 30,
+): DailyFailureRateEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<DailyFailureRateRow, [number]>(
+      `SELECT
+         DATE(finished_at/1000, 'unixepoch') AS date,
+         COUNT(*) AS total_runs,
+         SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) AS failure_count
+       FROM agent_runs
+       WHERE finished_at >= ?
+       GROUP BY date
+       ORDER BY date ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    date: row.date,
+    totalRuns: row.total_runs,
+    failureCount: row.failure_count,
+    failureRate: row.total_runs > 0 ? row.failure_count / row.total_runs : 0,
+  }));
+}
+
+export function getRepeatFailingIssues(
+  db: Database,
+  days = 30,
+  limit = 20,
+): RepeatFailingIssueEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<RepeatFailingIssueRow, [number, number]>(
+      `SELECT
+         issue_id,
+         issue_title,
+         COUNT(*) AS failure_count,
+         MAX(error) AS last_error,
+         MAX(finished_at) AS last_failure_at
+       FROM agent_runs
+       WHERE status != 'completed'
+         AND finished_at >= ?
+       GROUP BY issue_id
+       HAVING COUNT(*) >= 2
+       ORDER BY failure_count DESC
+       LIMIT ?`,
+    )
+    .all(cutoffMs, limit);
+  return rows.map((row) => ({
+    issueId: row.issue_id,
+    issueTitle: row.issue_title,
+    failureCount: row.failure_count,
+    lastError: row.last_error ?? undefined,
+    lastFailureAt: row.last_failure_at,
   }));
 }
 
