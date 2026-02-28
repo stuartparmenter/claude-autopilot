@@ -32,6 +32,7 @@ import {
   insertAgentRun,
   insertConversationLog,
   insertPlanningSession,
+  insertStateTransition,
 } from "./lib/db";
 import { sanitizeMessage } from "./lib/sanitize";
 
@@ -376,6 +377,12 @@ export class AppState {
     }
     if (this.db) {
       void insertPlanningSession(this.db, session);
+    }
+  }
+
+  logStateTransition(transition: StateTransition): void {
+    if (this.db) {
+      void insertStateTransition(this.db, transition);
     }
   }
 

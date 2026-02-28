@@ -43,6 +43,16 @@ export async function executeIssue(opts: {
 
   // Move to In Progress immediately so it's not picked up again
   await updateIssue(issue.id, { stateId: linearIds.states.in_progress });
+  state.logStateTransition({
+    id: crypto.randomUUID(),
+    issueId: issue.id,
+    issueIdentifier: issue.identifier,
+    fromState: config.linear.states.ready,
+    toState: config.linear.states.in_progress,
+    timestamp: Date.now(),
+    agentId,
+    reason: "Executor picked up issue",
+  });
 
   const promptBuilder = (branch: string) =>
     buildPrompt(
@@ -101,10 +111,30 @@ export async function executeIssue(opts: {
     if (status === "timed_out") {
       if (result.inactivityTimedOut) {
         await updateIssue(issue.id, { stateId: linearIds.states.ready });
+        state.logStateTransition({
+          id: crypto.randomUUID(),
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          fromState: config.linear.states.in_progress,
+          toState: config.linear.states.ready,
+          timestamp: Date.now(),
+          agentId,
+          reason: "Inactivity timeout — returning to Ready for retry",
+        });
       } else {
         await updateIssue(issue.id, {
           stateId: linearIds.states.blocked,
           comment: `Executor timed out after ${config.executor.timeout_minutes} minutes.\n\nThe implementation may be partially complete. Check the agent's branch for any progress.`,
+        });
+        state.logStateTransition({
+          id: crypto.randomUUID(),
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          fromState: config.linear.states.in_progress,
+          toState: config.linear.states.blocked,
+          timestamp: Date.now(),
+          agentId,
+          reason: `Executor timed out after ${config.executor.timeout_minutes} minutes`,
         });
       }
       return false;
@@ -117,10 +147,30 @@ export async function executeIssue(opts: {
           stateId: linearIds.states.blocked,
           comment: `Executor failed after ${failureCount} total attempt(s) — moving to Blocked.\n\nLast error:\n\`\`\`\n${sanitizeMessage(result.error ?? "")}\n\`\`\``,
         });
+        state.logStateTransition({
+          id: crypto.randomUUID(),
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          fromState: config.linear.states.in_progress,
+          toState: config.linear.states.blocked,
+          timestamp: Date.now(),
+          agentId,
+          reason: `Failed after ${failureCount} attempts — max retries exhausted`,
+        });
         state.clearIssueFailures(issue.id);
       } else {
         // Move back to Ready so it can be retried on next loop
         await updateIssue(issue.id, { stateId: linearIds.states.ready });
+        state.logStateTransition({
+          id: crypto.randomUUID(),
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          fromState: config.linear.states.in_progress,
+          toState: config.linear.states.ready,
+          timestamp: Date.now(),
+          agentId,
+          reason: "Executor failed — returning to Ready for retry",
+        });
       }
       return false;
     }
@@ -181,6 +231,15 @@ export async function recoverStaleIssues(opts: {
       stateId: linearIds.states.ready,
       comment: `Autopilot detected this issue as stale (In Progress with no active agent for >${config.executor.stale_timeout_minutes} minutes). Moving back to Ready for re-execution.`,
     });
+    state.logStateTransition({
+      id: crypto.randomUUID(),
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      fromState: config.linear.states.in_progress,
+      toState: config.linear.states.ready,
+      timestamp: Date.now(),
+      reason: `Stale recovery — no active agent for >${config.executor.stale_timeout_minutes} minutes`,
+    });
     recovered++;
   }
 
@@ -193,19 +252,21 @@ export async function recoverStaleIssues(opts: {
  * updateIssue. Returns the count of issues recovered.
  */
 export async function recoverAgentsOnShutdown(
-  agents: Array<{ linearIssueId?: string }>,
+  agents: Array<{ linearIssueId?: string; issueId: string }>,
   readyStateId: string,
+  state?: AppState,
 ): Promise<number> {
-  const ids = agents
-    .map((a) => a.linearIssueId)
-    .filter((id): id is string => id !== undefined);
+  const agentsWithId = agents.filter(
+    (a): a is { linearIssueId: string; issueId: string } =>
+      a.linearIssueId !== undefined,
+  );
 
-  if (ids.length === 0) return 0;
+  if (agentsWithId.length === 0) return 0;
 
   await Promise.race([
     Promise.allSettled(
-      ids.map((id) =>
-        updateIssue(id, {
+      agentsWithId.map((a) =>
+        updateIssue(a.linearIssueId, {
           stateId: readyStateId,
           comment:
             "Autopilot process was interrupted (SIGINT/SIGTERM). Moving issue back to Ready for re-execution.",
@@ -215,7 +276,20 @@ export async function recoverAgentsOnShutdown(
     Bun.sleep(10_000),
   ]);
 
-  return ids.length;
+  if (state) {
+    for (const a of agentsWithId) {
+      state.logStateTransition({
+        id: crypto.randomUUID(),
+        issueId: a.linearIssueId,
+        issueIdentifier: a.issueId,
+        toState: "Ready",
+        timestamp: Date.now(),
+        reason: "Process interrupted (SIGINT/SIGTERM)",
+      });
+    }
+  }
+
+  return agentsWithId.length;
 }
 
 /**
