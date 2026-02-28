@@ -74,7 +74,8 @@ export async function runPlanning(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<void> {
   const { config, projectPath, state } = opts;
-  const agentId = `planning-${Date.now()}`;
+  const startedAt = Date.now();
+  const agentId = `planning-${startedAt}`;
 
   state.addAgent(agentId, "planning", "Codebase planning");
   state.updatePlanning({ running: true });
@@ -116,11 +117,25 @@ export async function runPlanning(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
-    const { status } = handleAgentResult(result, state, agentId, "Planning");
+    const { status, metrics } = handleAgentResult(
+      result,
+      state,
+      agentId,
+      "Planning",
+    );
     state.updatePlanning({
       running: false,
       lastRunAt: Date.now(),
       lastResult: status,
+    });
+    state.addPlanningSession({
+      id: `ps-${startedAt}`,
+      agentRunId: agentId,
+      startedAt,
+      finishedAt: Date.now(),
+      status,
+      issuesFiledCount: 0,
+      costUsd: metrics.costUsd,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -130,6 +145,14 @@ export async function runPlanning(opts: {
       running: false,
       lastRunAt: Date.now(),
       lastResult: "failed",
+    });
+    state.addPlanningSession({
+      id: `ps-${startedAt}`,
+      agentRunId: agentId,
+      startedAt,
+      finishedAt: Date.now(),
+      status: "failed",
+      issuesFiledCount: 0,
     });
   }
 }
