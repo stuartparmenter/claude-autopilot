@@ -514,6 +514,24 @@ describe("runPlanning — success path", () => {
     expect(planning.running).toBe(false);
     expect(planning.lastResult).toBe("completed");
   });
+
+  test("records planning session in history on success", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("completed");
+    expect(sessions[0].costUsd).toBe(0.5);
+    expect(sessions[0].issuesFiledCount).toBe(0);
+    expect(sessions[0].startedAt).toBeDefined();
+    expect(sessions[0].finishedAt).toBeDefined();
+    expect(sessions[0].agentRunId).toMatch(/^planning-/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -556,6 +574,19 @@ describe("runPlanning — timeout path", () => {
     });
 
     expect(state.getPlanningStatus().running).toBe(false);
+  });
+
+  test("records planning session with timed_out status", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("timed_out");
   });
 });
 
@@ -600,6 +631,19 @@ describe("runPlanning — error path", () => {
 
     expect(state.getPlanningStatus().running).toBe(false);
   });
+
+  test("records planning session with failed status on error result", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -625,6 +669,21 @@ describe("runPlanning — crash path (runClaude rejects)", () => {
     expect(state.getPlanningStatus().running).toBe(false);
     expect(state.getPlanningStatus().lastResult).toBe("failed");
     expect(state.getHistory()[0].status).toBe("failed");
+  });
+
+  test("records planning session with failed status when runClaude rejects", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+    expect(sessions[0].issuesFiledCount).toBe(0);
+    expect(sessions[0].agentRunId).toMatch(/^planning-/);
   });
 });
 
