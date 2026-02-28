@@ -636,6 +636,119 @@ export async function markRunsReviewed(
   });
 }
 
+export interface FailuresByTypeEntry {
+  status: string;
+  count: number;
+}
+
+export interface FailureTrendEntry {
+  date: string; // "YYYY-MM-DD"
+  totalRuns: number;
+  failureCount: number;
+  failureRate: number; // 0.0 - 1.0
+}
+
+export interface RepeatFailureEntry {
+  issueId: string;
+  issueTitle: string;
+  failureCount: number;
+  lastFailedAt: number; // ms timestamp
+  lastError: string | null;
+}
+
+interface FailuresByTypeRow {
+  status: string;
+  count: number;
+}
+
+interface FailureTrendRow {
+  date: string;
+  total_runs: number;
+  failure_count: number;
+}
+
+interface RepeatFailuresRow {
+  issue_id: string;
+  issue_title: string;
+  failure_count: number;
+  last_failed_at: number;
+  last_error: string | null;
+}
+
+export function getFailuresByType(
+  db: Database,
+  days = 30,
+): FailuresByTypeEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<FailuresByTypeRow, [number]>(
+      `SELECT status, COUNT(*) AS count
+       FROM agent_runs
+       WHERE status != 'completed' AND finished_at >= ?
+       GROUP BY status
+       ORDER BY count DESC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    status: row.status,
+    count: row.count,
+  }));
+}
+
+export function getFailureTrend(db: Database, days = 30): FailureTrendEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<FailureTrendRow, [number]>(
+      `SELECT
+         DATE(finished_at/1000, 'unixepoch') AS date,
+         COUNT(*) AS total_runs,
+         SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) AS failure_count
+       FROM agent_runs
+       WHERE finished_at >= ?
+       GROUP BY date
+       ORDER BY date ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    date: row.date,
+    totalRuns: row.total_runs,
+    failureCount: row.failure_count,
+    failureRate: row.total_runs > 0 ? row.failure_count / row.total_runs : 0,
+  }));
+}
+
+export function getRepeatFailures(
+  db: Database,
+  minFailures = 2,
+  days = 30,
+): RepeatFailureEntry[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<RepeatFailuresRow, [number, number]>(
+      `SELECT
+         issue_id,
+         issue_title,
+         COUNT(*) AS failure_count,
+         MAX(finished_at) AS last_failed_at,
+         (SELECT error FROM agent_runs ar2
+          WHERE ar2.issue_id = agent_runs.issue_id AND ar2.status != 'completed'
+          ORDER BY ar2.finished_at DESC LIMIT 1) AS last_error
+       FROM agent_runs
+       WHERE status != 'completed' AND finished_at >= ?
+       GROUP BY issue_id
+       HAVING COUNT(*) >= ?
+       ORDER BY failure_count DESC`,
+    )
+    .all(cutoffMs, minFailures);
+  return rows.map((row) => ({
+    issueId: row.issue_id,
+    issueTitle: row.issue_title,
+    failureCount: row.failure_count,
+    lastFailedAt: row.last_failed_at,
+    lastError: row.last_error,
+  }));
+}
+
 interface PlanningSessionRow {
   id: string;
   agent_run_id: string;
