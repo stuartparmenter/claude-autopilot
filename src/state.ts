@@ -108,6 +108,17 @@ export interface PlanningSession {
   costUsd?: number;
 }
 
+export interface StateTransition {
+  id: string;
+  issueId: string;
+  issueIdentifier: string;
+  fromState?: string;
+  toState: string;
+  timestamp: number;
+  agentId?: string;
+  reason?: string;
+}
+
 export interface ApiHealthStatus {
   linear: CircuitState;
   github: CircuitState;
