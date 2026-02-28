@@ -12,6 +12,7 @@
     "test": "bun test",
     "check": "bunx biome check ./src",
     "typecheck": "bunx tsc --noEmit",
+    "test:coverage": "bun test --coverage",
     "test:watch": "bun test --watch"
   },
   "dependencies": {
