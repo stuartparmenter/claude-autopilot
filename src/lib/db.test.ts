@@ -7,10 +7,12 @@ import {
   getAnalytics,
   getConversationLog,
   getCostByStatus,
+  getDailyCosts,
   getDailyCostTrend,
   getFailuresByType,
   getFailureTrend,
   getOAuthToken,
+  getPerIssueCosts,
   getRecentPlanningSessions,
   getRecentRuns,
   getRepeatFailures,
@@ -1458,6 +1460,242 @@ describe("getRepeatFailures", () => {
 
     const result = getRepeatFailures(db);
     expect(result[0].lastError).toBeNull();
+  });
+});
+
+describe("getDailyCosts", () => {
+  test("returns empty array when no runs exist", () => {
+    expect(getDailyCosts(db)).toEqual([]);
+  });
+
+  test("returns empty array when runs have null cost", async () => {
+    await insertAgentRun(db, makeResult("a1", { finishedAt: Date.now() }));
+    expect(getDailyCosts(db)).toEqual([]);
+  });
+
+  test("returns empty array when runs have zero cost", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { costUsd: 0, finishedAt: Date.now() }),
+    );
+    expect(getDailyCosts(db)).toEqual([]);
+  });
+
+  test("groups runs by UTC day and returns in ascending date order", async () => {
+    const day1 = new Date("2026-01-01T12:00:00Z").getTime();
+    const day2 = new Date("2026-01-02T12:00:00Z").getTime();
+    await insertAgentRun(
+      db,
+      makeResult("a1", {
+        costUsd: 0.1,
+        finishedAt: day1,
+        startedAt: day1 - 1000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", {
+        costUsd: 0.2,
+        finishedAt: day1,
+        startedAt: day1 - 2000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a3", {
+        costUsd: 0.3,
+        finishedAt: day2,
+        startedAt: day2 - 1000,
+      }),
+    );
+    const rows = getDailyCosts(db, 365);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].date).toBe("2026-01-01");
+    expect(rows[0].totalCostUsd).toBeCloseTo(0.3);
+    expect(rows[0].runCount).toBe(2);
+    expect(rows[1].date).toBe("2026-01-02");
+    expect(rows[1].totalCostUsd).toBeCloseTo(0.3);
+    expect(rows[1].runCount).toBe(1);
+  });
+
+  test("excludes runs older than the days cutoff", async () => {
+    const now = Date.now();
+    const sixtyDaysAgo = now - 60 * 24 * 60 * 60 * 1000;
+    await insertAgentRun(
+      db,
+      makeResult("a1", {
+        costUsd: 0.1,
+        finishedAt: sixtyDaysAgo,
+        startedAt: sixtyDaysAgo - 1000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", {
+        costUsd: 0.2,
+        finishedAt: now,
+        startedAt: now - 1000,
+      }),
+    );
+    const rows = getDailyCosts(db, 30);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].totalCostUsd).toBeCloseTo(0.2);
+  });
+
+  test("result rows have date, totalCostUsd, and runCount fields", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("a1", { costUsd: 0.05, finishedAt: now }),
+    );
+    const rows = getDailyCosts(db, 30);
+    expect(rows).toHaveLength(1);
+    expect(typeof rows[0].date).toBe("string");
+    expect(typeof rows[0].totalCostUsd).toBe("number");
+    expect(typeof rows[0].runCount).toBe("number");
+  });
+});
+
+describe("getPerIssueCosts", () => {
+  test("returns empty array when no runs exist", () => {
+    expect(getPerIssueCosts(db)).toEqual([]);
+  });
+
+  test("returns empty array when runs have null cost", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { issueId: "ENG-1", issueTitle: "Issue 1" }),
+    );
+    expect(getPerIssueCosts(db)).toEqual([]);
+  });
+
+  test("returns rows ordered by total cost descending", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("a1", {
+        issueId: "ENG-1",
+        issueTitle: "Issue One",
+        costUsd: 0.1,
+        finishedAt: now,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", {
+        issueId: "ENG-2",
+        issueTitle: "Issue Two",
+        costUsd: 0.5,
+        finishedAt: now,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a3", {
+        issueId: "ENG-1",
+        issueTitle: "Issue One",
+        costUsd: 0.2,
+        finishedAt: now + 1,
+      }),
+    );
+    const rows = getPerIssueCosts(db);
+    expect(rows).toHaveLength(2);
+    // ENG-2 has 0.5, ENG-1 has 0.3 (sum of 0.1 + 0.2)
+    expect(rows[0].issueId).toBe("ENG-2");
+    expect(rows[0].totalCostUsd).toBeCloseTo(0.5);
+    expect(rows[0].runCount).toBe(1);
+    expect(rows[1].issueId).toBe("ENG-1");
+    expect(rows[1].totalCostUsd).toBeCloseTo(0.3);
+    expect(rows[1].runCount).toBe(2);
+  });
+
+  test("includes issueTitle and lastRunAt in results", async () => {
+    const ts1 = 1_000_000;
+    const ts2 = 2_000_000;
+    await insertAgentRun(
+      db,
+      makeResult("a1", {
+        issueId: "ENG-42",
+        issueTitle: "Fix the bug",
+        costUsd: 0.1,
+        finishedAt: ts1,
+        startedAt: ts1 - 1000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", {
+        issueId: "ENG-42",
+        issueTitle: "Fix the bug",
+        costUsd: 0.2,
+        finishedAt: ts2,
+        startedAt: ts2 - 1000,
+      }),
+    );
+    const rows = getPerIssueCosts(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].issueTitle).toBe("Fix the bug");
+    expect(rows[0].lastRunAt).toBe(ts2);
+  });
+
+  test("respects the limit parameter", async () => {
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) {
+      await insertAgentRun(
+        db,
+        makeResult(`a${i}`, {
+          issueId: `ENG-${i}`,
+          issueTitle: `Issue ${i}`,
+          costUsd: 0.1,
+          finishedAt: now + i,
+        }),
+      );
+    }
+    const rows = getPerIssueCosts(db, 5);
+    expect(rows).toHaveLength(5);
+  });
+
+  test("default limit is 50", async () => {
+    const now = Date.now();
+    for (let i = 0; i < 60; i++) {
+      await insertAgentRun(
+        db,
+        makeResult(`a${i}`, {
+          issueId: `ENG-${i}`,
+          issueTitle: `Issue ${i}`,
+          costUsd: 0.1,
+          finishedAt: now + i,
+        }),
+      );
+    }
+    const rows = getPerIssueCosts(db);
+    expect(rows).toHaveLength(50);
+  });
+
+  test("aggregates multiple runs for the same issue", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("a1", {
+        issueId: "ENG-99",
+        issueTitle: "Big Issue",
+        costUsd: 0.1,
+        finishedAt: now,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("a2", {
+        issueId: "ENG-99",
+        issueTitle: "Big Issue",
+        costUsd: 0.3,
+        finishedAt: now + 1,
+      }),
+    );
+    const rows = getPerIssueCosts(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].totalCostUsd).toBeCloseTo(0.4);
+    expect(rows[0].runCount).toBe(2);
   });
 });
 

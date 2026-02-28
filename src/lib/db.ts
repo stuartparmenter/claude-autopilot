@@ -343,7 +343,7 @@ export interface CostByStatusEntry {
   runCount: number;
 }
 
-interface DailyCostRow {
+interface DailyCostSqlRow {
   date: string;
   total_cost: number;
   run_count: number;
@@ -365,7 +365,7 @@ interface CostByStatusRow {
 export function getDailyCostTrend(db: Database, days = 30): DailyCostEntry[] {
   const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const rows = db
-    .query<DailyCostRow, [number]>(
+    .query<DailyCostSqlRow, [number]>(
       `SELECT
          DATE(finished_at/1000, 'unixepoch') AS date,
          SUM(COALESCE(cost_usd, 0)) AS total_cost,
@@ -426,6 +426,80 @@ export function getCostByStatus(db: Database, days = 30): CostByStatusEntry[] {
     status: row.status,
     totalCost: row.total_cost,
     runCount: row.run_count,
+  }));
+}
+
+export interface DailyCostRow {
+  date: string; // "YYYY-MM-DD" in UTC
+  totalCostUsd: number;
+  runCount: number;
+}
+
+export interface PerIssueCostRow {
+  issueId: string;
+  issueTitle: string;
+  totalCostUsd: number;
+  runCount: number;
+  lastRunAt: number;
+}
+
+interface DailyCostQueryRow {
+  date: string;
+  total_cost_usd: number;
+  run_count: number;
+}
+
+interface PerIssueCostQueryRow {
+  issue_id: string;
+  issue_title: string;
+  total_cost_usd: number;
+  run_count: number;
+  last_run_at: number;
+}
+
+export function getDailyCosts(db: Database, days = 30): DailyCostRow[] {
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = db
+    .query<DailyCostQueryRow, [number]>(
+      `SELECT
+         DATE(finished_at/1000, 'unixepoch') AS date,
+         SUM(cost_usd) AS total_cost_usd,
+         COUNT(*) AS run_count
+       FROM agent_runs
+       WHERE finished_at >= ? AND cost_usd IS NOT NULL AND cost_usd > 0
+       GROUP BY date
+       ORDER BY date ASC`,
+    )
+    .all(cutoffMs);
+  return rows.map((row) => ({
+    date: row.date,
+    totalCostUsd: row.total_cost_usd,
+    runCount: row.run_count,
+  }));
+}
+
+export function getPerIssueCosts(db: Database, limit = 50): PerIssueCostRow[] {
+  const rows = db
+    .query<PerIssueCostQueryRow, [number]>(
+      `SELECT
+         issue_id,
+         issue_title,
+         SUM(cost_usd) AS total_cost_usd,
+         COUNT(*) AS run_count,
+         MAX(finished_at) AS last_run_at
+       FROM agent_runs
+       WHERE cost_usd IS NOT NULL AND cost_usd > 0
+       GROUP BY issue_id
+       ORDER BY total_cost_usd DESC
+       LIMIT ?`,
+    )
+    .all(limit);
+  return rows.map((row) => ({
+    issueId: row.issue_id,
+    issueTitle: row.issue_title,
+    totalCostUsd: row.total_cost_usd,
+    runCount: row.run_count,
+    lastRunAt: row.last_run_at,
   }));
 }
 
