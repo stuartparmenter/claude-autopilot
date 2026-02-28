@@ -24,16 +24,18 @@ import {
   resolveLinearIds,
   updateIssue,
 } from "./lib/linear";
-import { getCurrentLinearToken, initLinearAuth } from "./lib/linear-oauth";
+import { initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sweepClones, sweepLegacyWorktrees } from "./lib/sandbox-clone";
 import { sanitizeMessage } from "./lib/sanitize";
+import { WebhookTrigger } from "./lib/webhooks";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
 import { runReviewer, shouldRunReviewer } from "./reviewer";
 import { createApp } from "./server";
 import { type AgentState, AppState } from "./state";
+import { runPreflight } from "./validate";
 
 // --- Parse args ---
 
@@ -81,44 +83,38 @@ const authDbPath = resolve(projectPath, config.persistence.db_path);
 const authDb = openDb(authDbPath);
 await initLinearAuth(authDb);
 
-if (!getCurrentLinearToken()) {
+// Configure async client with OAuth auto-refresh support.
+// Must happen before runPreflight() which calls checkLinear() -> getLinearClientAsync().
+configureLinearAuth(
+  authDb,
+  config.linear.oauth
+    ? {
+        clientId: config.linear.oauth.client_id,
+        clientSecret: config.linear.oauth.client_secret,
+      }
+    : undefined,
+);
+
+// --- Preflight validation ---
+const preflight = await runPreflight(projectPath, config);
+for (const result of preflight.results) {
+  if (result.pass) {
+    ok(`${result.name}: ${result.detail}`);
+  } else {
+    error(`${result.name}: ${result.detail}`);
+  }
+}
+for (const result of preflight.warnings) {
+  if (result.pass) {
+    ok(`${result.name}: ${result.detail}`);
+  } else {
+    warn(`${result.name}: ${result.detail}`);
+  }
+}
+if (!preflight.passed) {
   fatal(
-    "No Linear authentication configured.\n" +
-      "Option 1: Set LINEAR_API_KEY environment variable.\n" +
-      "  Create one at: https://linear.app/settings/api\n" +
-      "  Then: export LINEAR_API_KEY=lin_api_...\n" +
-      "Option 2: Connect via OAuth at the dashboard (/auth/linear).\n" +
-      "  Required: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET env vars.",
+    "Preflight checks failed. Fix the issues above and try again.\nRun 'bun run validate <project-path>' for detailed diagnostics.",
   );
-}
-
-if (!process.env.GITHUB_TOKEN) {
-  error(
-    "GITHUB_TOKEN environment variable is not set.\n" +
-      "Create one at: https://github.com/settings/tokens\n" +
-      "Required scopes: repo (for PR monitoring and GitHub MCP).\n" +
-      "Then: export GITHUB_TOKEN=ghp_...",
-  );
-}
-
-// The Agent SDK accepts ANTHROPIC_API_KEY or Claude Code subscription auth.
-// Check common env vars so the user gets a clear message instead of a cryptic
-// failure minutes into the run when the first agent spawns.
-if (
-  !process.env.ANTHROPIC_API_KEY &&
-  !process.env.CLAUDE_API_KEY &&
-  !process.env.CLAUDE_CODE_USE_BEDROCK &&
-  !process.env.CLAUDE_CODE_USE_VERTEX
-) {
-  info(
-    "WARNING: No Anthropic API key found (ANTHROPIC_API_KEY or CLAUDE_API_KEY).",
-  );
-  info(
-    "If you are using Claude Code subscription auth, this is fine. Otherwise,",
-  );
-  info("agents will fail when they try to make API calls.");
-  info("Set: export ANTHROPIC_API_KEY=sk-ant-...");
-  console.log();
 }
 
 const dashboardToken = process.env.AUTOPILOT_DASHBOARD_TOKEN || undefined;
@@ -181,18 +177,6 @@ ok(
 
 const state = new AppState(config.executor.parallel);
 
-// Configure ENG-107's async client with OAuth auto-refresh support.
-// Must happen before resolveLinearIds() which calls getLinearClientAsync().
-configureLinearAuth(
-  authDb,
-  config.linear.oauth
-    ? {
-        clientId: config.linear.oauth.client_id,
-        clientSecret: config.linear.oauth.client_secret,
-      }
-    : undefined,
-);
-
 if (config.persistence.enabled) {
   // Reuse the already-opened authDb (same file) for persistence
   state.setDb(authDb);
@@ -201,39 +185,53 @@ if (config.persistence.enabled) {
   ok(`Persistence: ${authDbPath}`);
 }
 
-const app = createApp(state, {
-  authToken: dashboardToken,
-  secureCookie: !isLocalhost,
-  config,
-  db: authDb,
-  triggerPlanning: () => {
-    runPlanning({
-      config,
-      projectPath,
-      linearIds,
-      state,
-      shutdownSignal: shutdownController.signal,
-    });
+const webhookTrigger = config.webhooks?.enabled
+  ? new WebhookTrigger()
+  : undefined;
+const app = createApp(
+  state,
+  {
+    authToken: dashboardToken,
+    secureCookie: !isLocalhost,
+    config,
+    db: authDb,
+    triggerPlanning: () => {
+      runPlanning({
+        config,
+        projectPath,
+        linearIds,
+        state,
+        shutdownSignal: shutdownController.signal,
+      });
+    },
+    retryIssue: async (linearIssueId: string) => {
+      await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+    },
+    triageIssues: async () => {
+      const issues = await getTriageIssues(linearIds);
+      return issues.map((i) => ({
+        id: i.id,
+        identifier: i.identifier,
+        title: i.title,
+        priority: i.priority ?? 4,
+      }));
+    },
+    approveTriageIssue: async (issueId: string) => {
+      await updateIssue(issueId, { stateId: linearIds.states.ready });
+    },
+    rejectTriageIssue: async (issueId: string) => {
+      await updateIssue(issueId, { stateId: linearIds.states.blocked });
+    },
   },
-  retryIssue: async (linearIssueId: string) => {
-    await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
-  },
-  triageIssues: async () => {
-    const issues = await getTriageIssues(linearIds);
-    return issues.map((i) => ({
-      id: i.id,
-      identifier: i.identifier,
-      title: i.title,
-      priority: i.priority ?? 4,
-    }));
-  },
-  approveTriageIssue: async (issueId: string) => {
-    await updateIssue(issueId, { stateId: linearIds.states.ready });
-  },
-  rejectTriageIssue: async (issueId: string) => {
-    await updateIssue(issueId, { stateId: linearIds.states.blocked });
-  },
-});
+  webhookTrigger && config.webhooks
+    ? {
+        trigger: webhookTrigger,
+        linearSecret: config.webhooks.linear_secret,
+        githubSecret: config.webhooks.github_secret,
+        readyStateName: config.linear.states.ready,
+      }
+    : undefined,
+);
 
 if (!isLocalhost) {
   warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);
@@ -488,18 +486,27 @@ while (!shuttingDown) {
     // Reset failure counter after a successful iteration
     consecutiveFailures = 0;
 
-    // Wait for any agent to finish or poll interval to elapse
+    // Wait for any agent to finish, poll interval, or webhook trigger
     if (running.size > 0) {
       const pollTimer = interruptibleSleep(
         POLL_INTERVAL_MS,
         shutdownController.signal,
       ).then(() => "poll" as const);
-      await Promise.race([pollTimer, ...running]);
+      const racers: Promise<unknown>[] = [pollTimer, ...running];
+      if (webhookTrigger) racers.push(webhookTrigger.wait());
+      await Promise.race(racers);
     } else {
       info(
         `No agents running. Polling again in ${POLL_INTERVAL_MS / 1000}s...`,
       );
-      await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      if (webhookTrigger) {
+        await Promise.race([
+          interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal),
+          webhookTrigger.wait(),
+        ]);
+      } else {
+        await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      }
     }
   } catch (e) {
     const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);

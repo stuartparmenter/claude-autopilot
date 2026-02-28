@@ -165,6 +165,12 @@ export async function createClone(
     );
   }
 
+  // Disable commit/tag signing in the clone — the sandbox may not have
+  // access to GPG/SSH signing keys and we don't need signed commits.
+  // This overrides any global config (e.g. commit.gpgsign=true).
+  gitSync(dest, ["config", "commit.gpgsign", "false"]);
+  gitSync(dest, ["config", "tag.gpgsign", "false"]);
+
   // Set bot identity in the clone's local config.
   if (gitIdentity) {
     const nameErr = gitSync(dest, [
@@ -281,7 +287,26 @@ export async function sweepClones(
     return;
   }
 
-  const stale = entries.filter((name) => !activeNames.has(name));
+  // Only sweep clones that match autopilot naming conventions.
+  // This prevents destroying clone directories created by human Claude Code
+  // sessions or other tools sharing the .claude/clones/ directory.
+  const isAutopilotClone = (name: string): boolean => {
+    // Executor clones are named by issue identifier (e.g., "ENG-123")
+    // Fixer clones are prefixed with "fix-" (e.g., "fix-ENG-123")
+    // Review clones are prefixed with "review-" (e.g., "review-ENG-123")
+    return /^(fix-|review-)?[A-Za-z]+-\d+$/.test(name);
+  };
+
+  const skipped = entries.filter((name) => !isAutopilotClone(name));
+  if (skipped.length > 0) {
+    info(
+      `Skipping ${skipped.length} non-autopilot director(ies) during sweep: ${skipped.join(", ")}`,
+    );
+  }
+
+  const stale = entries.filter(
+    (name) => !activeNames.has(name) && isAutopilotClone(name),
+  );
   if (stale.length > 0) {
     info(`Sweeping ${stale.length} stale clone(s): ${stale.join(", ")}`);
   }

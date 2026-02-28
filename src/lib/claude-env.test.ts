@@ -14,10 +14,12 @@ describe("buildAgentEnv", () => {
     expect(env.PATH).toBe(String(process.env.PATH));
   });
 
-  test("blocks global and system git config", () => {
+  test("blocks system git config but preserves global", () => {
     const env = buildAgentEnv();
     expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
-    expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
+    // GIT_CONFIG_GLOBAL is NOT set — global config may contain
+    // essential settings like core.sshCommand for SSH push.
+    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
   });
 
   test("does not include non-allowlisted process.env vars", () => {
@@ -37,9 +39,9 @@ describe("buildAgentEnv", () => {
       "SSH_AUTH_SOCK",
       "ANTHROPIC_API_KEY",
       "CLAUDE_API_KEY",
+      "GITHUB_TOKEN",
       "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
       "GIT_CONFIG_NOSYSTEM",
-      "GIT_CONFIG_GLOBAL",
     ]);
     for (const key of keys) {
       expect(allowed.has(key)).toBe(true);

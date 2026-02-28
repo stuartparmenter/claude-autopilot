@@ -15,7 +15,7 @@ import type { AutopilotConfig } from "./lib/config";
 import { loadConfig, resolveProjectPath } from "./lib/config";
 import { detectRepo, getGitHubClient } from "./lib/github";
 import { resolveLinearIds } from "./lib/linear";
-import { error, header, info, ok } from "./lib/logger";
+import { error, header, info, ok, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, loadPrompt } from "./lib/prompt";
 import { withRetry } from "./lib/retry";
 
@@ -33,7 +33,9 @@ export async function checkConfig(projectPath: string): Promise<string> {
 /**
  * Check 2: Verify required environment variables are present.
  * LINEAR_API_KEY or OAuth must be configured, GITHUB_TOKEN is required.
- * ANTHROPIC_API_KEY (or equivalent) is required for agents to run.
+ * Note: ANTHROPIC_API_KEY is checked separately by checkAnthropicAuth()
+ * because the Agent SDK can inherit auth from a Claude Code subscription,
+ * making it a soft warning rather than a hard requirement.
  */
 export async function checkEnvVars(opts?: {
   hasOAuth?: boolean;
@@ -43,20 +45,35 @@ export async function checkEnvVars(opts?: {
     missing.push("LINEAR_API_KEY (or configure OAuth)");
   if (!process.env.GITHUB_TOKEN) missing.push("GITHUB_TOKEN");
 
-  const hasAnthropicKey =
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.CLAUDE_API_KEY ||
-    process.env.CLAUDE_CODE_USE_BEDROCK ||
-    process.env.CLAUDE_CODE_USE_VERTEX;
-  if (!hasAnthropicKey) missing.push("ANTHROPIC_API_KEY (or CLAUDE_API_KEY)");
-
   if (missing.length > 0) {
     throw new Error(`Missing environment variables: ${missing.join(", ")}`);
   }
   const linearAuth = process.env.LINEAR_API_KEY
     ? "LINEAR_API_KEY"
     : "Linear OAuth";
-  return `${linearAuth}, GITHUB_TOKEN, ANTHROPIC_API_KEY — all set`;
+  return `${linearAuth}, GITHUB_TOKEN — all set`;
+}
+
+/**
+ * Check 2b: Check for Anthropic API key (non-blocking).
+ * The Agent SDK can inherit auth from a Claude Code subscription plan,
+ * so a missing key is a warning, not a hard failure. Agents will fail at
+ * runtime if there is truly no auth available.
+ */
+export async function checkAnthropicAuth(): Promise<string> {
+  const hasKey =
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.CLAUDE_API_KEY ||
+    process.env.CLAUDE_CODE_USE_BEDROCK ||
+    process.env.CLAUDE_CODE_USE_VERTEX;
+  if (!hasKey) {
+    throw new Error(
+      "No ANTHROPIC_API_KEY or CLAUDE_API_KEY found. " +
+        "If using Claude Code subscription auth, this is fine. " +
+        "Otherwise, set: export ANTHROPIC_API_KEY=sk-ant-...",
+    );
+  }
+  return "ANTHROPIC_API_KEY — set";
 }
 
 /**
@@ -213,12 +230,17 @@ async function runCheck(
 /**
  * Run all preflight checks for the system to function.
  * Runs every check regardless of earlier failures and returns a summary.
+ * Non-blocking checks (like Anthropic auth) are returned as warnings.
  * Intended for use in main.ts before starting the main loop.
  */
 export async function runPreflight(
   projectPath: string,
   config: AutopilotConfig,
-): Promise<{ passed: boolean; results: CheckResult[] }> {
+): Promise<{
+  passed: boolean;
+  results: CheckResult[];
+  warnings: CheckResult[];
+}> {
   const hasOAuth = !!config.linear.oauth;
   const checks: Array<[string, () => Promise<string>]> = [
     ["Environment variables", () => checkEnvVars({ hasOAuth })],
@@ -233,7 +255,18 @@ export async function runPreflight(
     results.push(await runCheck(name, fn));
   }
 
-  return { passed: results.every((r) => r.pass), results };
+  // Non-blocking checks — failures here are warnings, not fatal errors.
+  // Anthropic auth can be inherited from a Claude Code subscription plan.
+  const warnChecks: Array<[string, () => Promise<string>]> = [
+    ["Anthropic auth", () => checkAnthropicAuth()],
+  ];
+
+  const warnings: CheckResult[] = [];
+  for (const [name, fn] of warnChecks) {
+    warnings.push(await runCheck(name, fn));
+  }
+
+  return { passed: results.every((r) => r.pass), results, warnings };
 }
 
 if (import.meta.main) {
@@ -292,9 +325,19 @@ if (import.meta.main) {
     ["Prompt templates", () => checkPromptTemplates(projectPath)],
   ];
 
+  // Non-blocking checks — failures are warnings, not errors
+  const warnChecks: Array<[string, () => Promise<string>]> = [
+    ["Anthropic auth", () => checkAnthropicAuth()],
+  ];
+
   const results: CheckResult[] = [];
   for (const [name, fn] of checks) {
     results.push(await runCheck(name, fn));
+  }
+
+  const warnings: CheckResult[] = [];
+  for (const [name, fn] of warnChecks) {
+    warnings.push(await runCheck(name, fn));
   }
 
   console.log();
@@ -308,6 +351,13 @@ if (import.meta.main) {
     } else {
       error(`${result.name}: ${result.detail}`);
       anyFailed = true;
+    }
+  }
+  for (const result of warnings) {
+    if (result.pass) {
+      ok(`${result.name}: ${result.detail}`);
+    } else {
+      warn(`${result.name}: ${result.detail}`);
     }
   }
 

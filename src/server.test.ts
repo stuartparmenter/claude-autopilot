@@ -938,6 +938,168 @@ describe("GET /partials/analytics", () => {
   });
 });
 
+describe("GET /api/cost-trends", () => {
+  test("returns { enabled: false } when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/cost-trends");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { enabled: boolean };
+    expect(json.enabled).toBe(false);
+  });
+
+  test("returns enabled: true with empty arrays for empty database", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const app = createApp(state);
+    const res = await app.request("/api/cost-trends");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      daily: unknown[];
+      weekly: unknown[];
+      byStatus: unknown[];
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.daily).toEqual([]);
+    expect(json.weekly).toEqual([]);
+    expect(json.byStatus).toEqual([]);
+  });
+
+  test("returns populated data when runs exist with costs", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.5,
+      durationMs: 60000,
+      numTurns: 5,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/cost-trends");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      daily: Array<{ date: string; totalCost: number; runCount: number }>;
+      byStatus: Array<{
+        status: string;
+        totalCost: number;
+        runCount: number;
+      }>;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.daily.length).toBeGreaterThan(0);
+    expect(json.daily[0].totalCost).toBeCloseTo(0.5);
+    expect(json.byStatus.length).toBe(1);
+    expect(json.byStatus[0].status).toBe("completed");
+    expect(json.byStatus[0].totalCost).toBeCloseTo(0.5);
+  });
+
+  test("returns 401 when auth is enabled and no token provided", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: "test-token" });
+    const res = await app.request("/api/cost-trends");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("dashboard HTML includes cost-trends partial div", () => {
+  test("includes cost-trends-bar div with /partials/cost-trends and 60s poll", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("/partials/cost-trends");
+    expect(body).toContain("cost-trends-bar");
+    expect(body).toContain("every 60s");
+  });
+});
+
+describe("GET /partials/cost-trends", () => {
+  test("returns empty div when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/cost-trends");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("returns empty div when DB has no runs", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const app = createApp(state);
+    const res = await app.request("/partials/cost-trends");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<div></div>");
+  });
+
+  test("renders daily cost bars when DB has cost data", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.75,
+      durationMs: 60000,
+      numTurns: 5,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/cost-trends");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("cost-trend-row");
+    expect(body).toContain("cost-trend-bar-fill");
+    expect(body).toContain("$0.75");
+  });
+
+  test("renders cost-by-status summary line", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-1",
+      issueTitle: "Test issue",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.5,
+      durationMs: 60000,
+      numTurns: 5,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/cost-trends");
+    const body = await res.text();
+    expect(body).toContain("Completed:");
+    expect(body).toContain("cost-trends-summary");
+  });
+
+  test("returns 401 when auth is enabled and no token provided", async () => {
+    const state = new AppState();
+    const app = createApp(state, { authToken: "test-token" });
+    const res = await app.request("/partials/cost-trends");
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("GET /api/analytics", () => {
   test("returns { enabled: false } when no DB connected", async () => {
     const state = new AppState();

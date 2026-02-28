@@ -18,6 +18,9 @@ node_modules/
 .claude/worktrees/
 .claude/clones/
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # Editor
 .idea
 .idea/

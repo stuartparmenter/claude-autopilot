@@ -86,6 +86,13 @@ Consider the second and third-order effects of this change on the broader system
 - Will existing integrations, data flows, or state machines still work after this change?
 - Could this break assumptions made by code that *calls into* or *is called by* the affected area?
 
+**Chesterton's Fence**: Before treating any apparent inconsistency as a bug, ask: *could this be intentional?* When code handles similar things differently (different severity levels, different code paths, different error handling), the original developer may have had a reason. Look for:
+- Comments explaining why cases are treated differently
+- Commit messages that introduced the divergent behavior
+- Fundamental differences between the cases that justify different treatment (e.g., one has a fallback mechanism and another doesn't)
+
+If you cannot find evidence that the inconsistency is accidental, **do not file an issue to "fix" it**. Homogenizing intentionally different behavior is a regression, not an improvement.
+
 If you identify downstream effects:
 - **Include them in the issue description** under a "Systemic Impact" section so the executor is aware
 - **Note required compensating changes** — if this issue can't ship safely without another change, add that as an acceptance criterion or flag it as a dependency

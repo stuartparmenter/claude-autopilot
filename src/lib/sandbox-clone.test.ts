@@ -455,4 +455,54 @@ describe("sweepClones", () => {
 
     expect(rmSyncSpy).not.toHaveBeenCalled();
   });
+
+  test("preserves non-autopilot directories even when not in activeNames", async () => {
+    readdirSyncSpy.mockReturnValue([
+      "my-feature",
+      "some-uuid-1234",
+      "human-session",
+    ] as any);
+
+    await sweepClones(PROJECT);
+
+    // None of these match autopilot patterns, so none should be removed
+    expect(rmSyncSpy).not.toHaveBeenCalled();
+  });
+
+  test("preserves non-autopilot directories alongside stale autopilot ones", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1", "my-feature", "fix-ENG-2"] as any);
+
+    await sweepClones(PROJECT);
+
+    // ENG-1 and fix-ENG-2 are stale autopilot clones — removed
+    // my-feature is non-autopilot — preserved
+    expect(rmSyncSpy).toHaveBeenCalledTimes(2);
+    const removedPaths = rmSyncSpy.mock.calls.map((c) => c[0] as string);
+    expect(removedPaths.some((p) => p.includes("ENG-1"))).toBe(true);
+    expect(removedPaths.some((p) => p.includes("fix-ENG-2"))).toBe(true);
+    expect(removedPaths.some((p) => p.includes("my-feature"))).toBe(false);
+  });
+
+  test("sweeps all three autopilot naming patterns when stale", async () => {
+    readdirSyncSpy.mockReturnValue([
+      "ENG-123",
+      "fix-ENG-123",
+      "review-ENG-123",
+    ] as any);
+
+    await sweepClones(PROJECT);
+
+    expect(rmSyncSpy).toHaveBeenCalledTimes(3);
+  });
+
+  test("active autopilot clones are preserved even among non-autopilot entries", async () => {
+    readdirSyncSpy.mockReturnValue(["ENG-1", "ENG-2", "my-feature"] as any);
+
+    await sweepClones(PROJECT, new Set(["ENG-1"]));
+
+    // ENG-1 is active — preserved; ENG-2 is stale autopilot — removed; my-feature is non-autopilot — preserved
+    expect(rmSyncSpy).toHaveBeenCalledTimes(1);
+    const removedPath = rmSyncSpy.mock.calls[0][0] as string;
+    expect(removedPath).toContain("ENG-2");
+  });
 });

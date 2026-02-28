@@ -30,6 +30,7 @@ export interface LinearIds {
   teamKey: string;
   initiativeId?: string;
   initiativeName?: string;
+  managedLabelId: string;
   states: {
     triage: string;
     ready: string;
@@ -73,6 +74,16 @@ export interface MonitorConfig {
 export interface GithubConfig {
   repo: string; // "owner/repo" override — empty = auto-detect from git remote
   automerge: boolean; // Enable auto-merge on PRs created by the executor
+}
+
+export interface ProjectConfig {
+  name: string;
+}
+
+export interface WebhooksConfig {
+  enabled: boolean;
+  linear_secret: string;
+  github_secret: string;
 }
 
 export interface SandboxConfig {
@@ -126,6 +137,8 @@ export interface AutopilotConfig {
   reviewer: ReviewerConfig;
   monitor: MonitorConfig;
   github: GithubConfig;
+  project: ProjectConfig;
+  webhooks?: WebhooksConfig;
   git: GitConfig;
   persistence: PersistenceConfig;
   sandbox: SandboxConfig;
@@ -178,6 +191,14 @@ export const DEFAULTS: AutopilotConfig = {
   github: {
     repo: "",
     automerge: false,
+  },
+  project: {
+    name: "",
+  },
+  webhooks: {
+    enabled: false,
+    linear_secret: "",
+    github_secret: "",
   },
   git: {
     user_name: "autopilot[bot]",

@@ -11,6 +11,13 @@ import {
   exchangeCodeForToken,
   saveStoredToken,
 } from "./lib/linear-oauth";
+import {
+  parseGitHubEventType,
+  parseLinearEventType,
+  verifyGitHubSignature,
+  verifyLinearSignature,
+  type WebhookTrigger,
+} from "./lib/webhooks";
 import type { AppState } from "./state";
 
 const ACTIVITY_SAYINGS = [
@@ -28,6 +35,13 @@ const ACTIVITY_SAYINGS = [
 
 function randomSaying(): string {
   return ACTIVITY_SAYINGS[Math.floor(Math.random() * ACTIVITY_SAYINGS.length)];
+}
+
+export interface WebhookOptions {
+  trigger: WebhookTrigger;
+  linearSecret: string;
+  githubSecret: string;
+  readyStateName: string;
 }
 
 export interface DashboardOptions {
@@ -236,7 +250,11 @@ export function computeHealth(
   };
 }
 
-export function createApp(state: AppState, options?: DashboardOptions): Hono {
+export function createApp(
+  state: AppState,
+  options?: DashboardOptions,
+  webhooks?: WebhookOptions,
+): Hono {
   const app = new Hono();
 
   app.onError((e, c) => {
@@ -438,6 +456,12 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
                 hx-trigger="load, every 30s"
                 hx-swap="innerHTML"
               ></div>
+              <div
+                class="cost-trends-bar"
+                hx-get="/partials/cost-trends"
+                hx-trigger="load, every 60s"
+                hx-swap="innerHTML"
+              ></div>
             </header>
             <div class="layout">
               <div class="sidebar">
@@ -503,6 +527,14 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     }
     const snapshot = state.getBudgetSnapshot(options.config);
     return c.json({ enabled: true, ...snapshot });
+  });
+
+  app.get("/api/cost-trends", (c) => {
+    const trends = state.getCostTrends();
+    if (!trends) {
+      return c.json({ enabled: false });
+    }
+    return c.json({ enabled: true, ...trends });
   });
 
   app.get("/health", (c) => {
@@ -795,6 +827,86 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
     );
   });
 
+  // --- Webhook endpoints ---
+
+  if (webhooks) {
+    const { trigger, linearSecret, githubSecret, readyStateName } = webhooks;
+    // Track delivery IDs to deduplicate retried webhook deliveries
+    const processedDeliveries = new Set<string>();
+
+    app.post("/webhooks/linear", async (c) => {
+      const rawBody = await c.req.text();
+      const signature = c.req.header("x-linear-signature") ?? "";
+      if (!verifyLinearSignature(linearSecret, rawBody, signature)) {
+        return c.json({ error: "Invalid signature" }, 401);
+      }
+
+      const deliveryId =
+        c.req.header("x-linear-delivery") ?? crypto.randomUUID();
+      if (processedDeliveries.has(deliveryId)) {
+        return c.json({ ok: true });
+      }
+      processedDeliveries.add(deliveryId);
+
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const eventType = parseLinearEventType(
+        { event: c.req.header("x-linear-event") },
+        body,
+        readyStateName,
+      );
+      if (eventType === "issue_ready") {
+        trigger.fire();
+      }
+
+      return c.json({ ok: true });
+    });
+
+    app.post("/webhooks/github", async (c) => {
+      const rawBody = await c.req.text();
+      const signature = c.req.header("x-hub-signature-256") ?? "";
+      if (!verifyGitHubSignature(githubSecret, rawBody, signature)) {
+        return c.json({ error: "Invalid signature" }, 401);
+      }
+
+      const deliveryId =
+        c.req.header("x-github-delivery") ?? crypto.randomUUID();
+      if (processedDeliveries.has(deliveryId)) {
+        return c.json({ ok: true });
+      }
+      processedDeliveries.add(deliveryId);
+
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const eventType = parseGitHubEventType(
+        { event: c.req.header("x-github-event") },
+        body,
+      );
+      if (eventType === "ci_failure") {
+        trigger.fire();
+      }
+
+      return c.json({ ok: true });
+    });
+  } else {
+    app.post("/webhooks/linear", (c) =>
+      c.json({ error: "Webhooks not configured" }, 404),
+    );
+    app.post("/webhooks/github", (c) =>
+      c.json({ error: "Webhooks not configured" }, 404),
+    );
+  }
+
   app.get("/partials/budget", (c) => {
     if (!options?.config) {
       return c.html(html`<div></div>`);
@@ -899,6 +1011,57 @@ export function createApp(state: AppState, options?: DashboardOptions): Hono {
       <div class="stat">
         <div class="value">${totalCost}</div>
         <div class="label">Total Cost</div>
+      </div>
+    `);
+  });
+
+  app.get("/partials/cost-trends", (c) => {
+    const trends = state.getCostTrends();
+    if (!trends) {
+      return c.html(html`<div></div>`);
+    }
+    const recentDays = trends.daily.slice(-7);
+    if (recentDays.length === 0) {
+      return c.html(html`<div></div>`);
+    }
+    const maxCost = Math.max(...recentDays.map((d) => d.totalCost), 0.01);
+    const dayRows = recentDays
+      .map((d) => {
+        const pct = Math.round((d.totalCost / maxCost) * 100);
+        const dateLabel = escapeHtml(d.date.slice(5)); // "MM-DD"
+        const amount = escapeHtml(`$${d.totalCost.toFixed(2)}`);
+        return `<div class="cost-trend-row"><span class="cost-trend-date">${dateLabel}</span><div class="cost-trend-bar-track"><div class="cost-trend-bar-fill" style="width:${pct}%"></div></div><span class="cost-trend-amount">${amount}</span></div>`;
+      })
+      .join("");
+
+    const statusParts = trends.byStatus.map(
+      (b) =>
+        `${escapeHtml(b.status.charAt(0).toUpperCase() + b.status.slice(1))}: $${b.totalCost.toFixed(2)}`,
+    );
+    const statusLine = statusParts.join(" | ");
+
+    let weekLine = "";
+    if (trends.weekly.length >= 2) {
+      const thisWeek = trends.weekly[trends.weekly.length - 1];
+      const lastWeek = trends.weekly[trends.weekly.length - 2];
+      weekLine = `This wk: $${thisWeek.totalCost.toFixed(2)}  Last wk: $${lastWeek.totalCost.toFixed(2)}`;
+    } else if (trends.weekly.length === 1) {
+      weekLine = `This wk: $${trends.weekly[0].totalCost.toFixed(2)}`;
+    }
+
+    return c.html(html`
+      <div class="cost-trends-section">
+        ${raw(dayRows)}
+        ${
+          weekLine
+            ? html`<div class="cost-trends-summary">${weekLine}</div>`
+            : ""
+        }
+        ${
+          statusLine
+            ? html`<div class="cost-trends-summary">${statusLine}</div>`
+            : ""
+        }
       </div>
     `);
   });
