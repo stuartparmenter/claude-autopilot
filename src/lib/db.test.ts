@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
 import {
+  deleteOAuthToken,
   getActivityLogs,
   getAnalytics,
   getConversationLog,
@@ -9,6 +10,7 @@ import {
   getDailyCostTrend,
   getFailuresByType,
   getFailureTrend,
+  getOAuthToken,
   getRecentPlanningSessions,
   getRecentRuns,
   getRepeatFailures,
@@ -24,6 +26,7 @@ import {
   openDb,
   pruneActivityLogs,
   pruneConversationLogs,
+  saveOAuthToken,
 } from "./db";
 import { sanitizeMessage } from "./sanitize";
 
@@ -1690,5 +1693,77 @@ describe("getCostByStatus", () => {
     expect(result).toHaveLength(1);
     expect(result[0].runCount).toBe(1);
     expect(result[0].totalCost).toBe(0);
+  });
+});
+
+describe("OAuth token CRUD", () => {
+  function makeToken(overrides?: {
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+  }) {
+    return {
+      accessToken: overrides?.accessToken ?? "access-tok",
+      refreshToken: overrides?.refreshToken ?? "refresh-tok",
+      expiresAt: overrides?.expiresAt ?? Date.now() + 3600_000,
+      tokenType: "Bearer",
+    };
+  }
+
+  test("saveOAuthToken stores a token and getOAuthToken retrieves it", async () => {
+    await saveOAuthToken(db, "linear", makeToken({ accessToken: "my-tok" }));
+    const result = getOAuthToken(db, "linear");
+    expect(result).not.toBeNull();
+    expect(result?.accessToken).toBe("my-tok");
+    expect(result?.refreshToken).toBe("refresh-tok");
+    expect(result?.tokenType).toBe("Bearer");
+  });
+
+  test("getOAuthToken returns null when no token exists", () => {
+    expect(getOAuthToken(db, "linear")).toBeNull();
+    expect(getOAuthToken(db, "github")).toBeNull();
+  });
+
+  test("saveOAuthToken upserts (INSERT OR REPLACE) on same service", async () => {
+    await saveOAuthToken(db, "linear", makeToken({ accessToken: "first" }));
+    await saveOAuthToken(db, "linear", makeToken({ accessToken: "second" }));
+    const result = getOAuthToken(db, "linear");
+    expect(result?.accessToken).toBe("second");
+  });
+
+  test("deleteOAuthToken removes the token", async () => {
+    await saveOAuthToken(db, "linear", makeToken());
+    expect(getOAuthToken(db, "linear")).not.toBeNull();
+    deleteOAuthToken(db, "linear");
+    expect(getOAuthToken(db, "linear")).toBeNull();
+  });
+
+  test("deleteOAuthToken is a no-op when token does not exist", () => {
+    expect(() => deleteOAuthToken(db, "nonexistent")).not.toThrow();
+  });
+
+  test("tokens are scoped by service key", async () => {
+    await saveOAuthToken(db, "linear", makeToken({ accessToken: "lin-tok" }));
+    await saveOAuthToken(db, "github", makeToken({ accessToken: "gh-tok" }));
+    expect(getOAuthToken(db, "linear")?.accessToken).toBe("lin-tok");
+    expect(getOAuthToken(db, "github")?.accessToken).toBe("gh-tok");
+  });
+
+  test("scope and actor are optional and default to undefined", async () => {
+    await saveOAuthToken(db, "linear", makeToken());
+    const result = getOAuthToken(db, "linear");
+    expect(result?.scope).toBeUndefined();
+    expect(result?.actor).toBeUndefined();
+  });
+
+  test("scope and actor are stored and retrieved when provided", async () => {
+    await saveOAuthToken(db, "linear", {
+      ...makeToken(),
+      scope: "read write",
+      actor: "application",
+    });
+    const result = getOAuthToken(db, "linear");
+    expect(result?.scope).toBe("read write");
+    expect(result?.actor).toBe("application");
   });
 });
