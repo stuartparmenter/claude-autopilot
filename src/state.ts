@@ -66,6 +66,7 @@ export interface AgentResult {
   numTurns?: number;
   sessionId?: string;
   error?: string;
+  exitReason?: string;
   reviewedAt?: number;
   runType?: string;
 }
@@ -188,6 +189,7 @@ export class AppState {
       numTurns?: number;
       sessionId?: string;
       error?: string;
+      exitReason?: string;
       runType?: string;
     },
     rawMessages?: unknown[],
@@ -217,6 +219,7 @@ export class AppState {
       numTurns: agent.numTurns,
       sessionId: meta?.sessionId,
       error: agent.error,
+      exitReason: meta?.exitReason,
       runType: meta?.runType,
     };
 

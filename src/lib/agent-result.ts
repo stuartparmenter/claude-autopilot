@@ -4,6 +4,8 @@ import { info, ok, warn } from "./logger";
 
 export type AgentResultStatus = "completed" | "timed_out" | "failed";
 
+export type ExitReason = "success" | "timeout" | "inactivity" | "error";
+
 export interface AgentResultHandled {
   status: AgentResultStatus;
   metrics: {
@@ -48,7 +50,11 @@ export function handleAgentResult(
 
   if (result.inactivityTimedOut) {
     warn(`${label} inactive, timed out`);
-    const meta = withRunType({ ...metrics, error: "Inactivity timeout" });
+    const meta = withRunType({
+      ...metrics,
+      error: "Inactivity timeout",
+      exitReason: "inactivity" as ExitReason,
+    });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
@@ -59,7 +65,11 @@ export function handleAgentResult(
 
   if (result.timedOut) {
     warn(`${label} timed out`);
-    const meta = withRunType({ ...metrics, error: "Timed out" });
+    const meta = withRunType({
+      ...metrics,
+      error: "Timed out",
+      exitReason: "timeout" as ExitReason,
+    });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "timed_out", meta, rawMessages);
     } else {
@@ -70,7 +80,11 @@ export function handleAgentResult(
 
   if (result.error) {
     warn(`${label} failed: ${result.error}`);
-    const meta = withRunType({ ...metrics, error: result.error });
+    const meta = withRunType({
+      ...metrics,
+      error: result.error,
+      exitReason: "error" as ExitReason,
+    });
     if (rawMessages !== undefined) {
       void state.completeAgent(agentId, "failed", meta, rawMessages);
     } else {
@@ -81,7 +95,7 @@ export function handleAgentResult(
 
   ok(`${label} completed successfully`);
   if (result.costUsd) info(`Cost: $${result.costUsd.toFixed(4)}`);
-  const meta = withRunType(metrics);
+  const meta = withRunType({ ...metrics, exitReason: "success" as ExitReason });
   if (rawMessages !== undefined) {
     void state.completeAgent(agentId, "completed", meta, rawMessages);
   } else {

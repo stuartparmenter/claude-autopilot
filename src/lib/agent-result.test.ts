@@ -84,6 +84,7 @@ describe("handleAgentResult — inactivity timeout", () => {
       durationMs: 1000,
       numTurns: 3,
       error: "Inactivity timeout",
+      exitReason: "inactivity",
     });
   });
 });
@@ -139,6 +140,7 @@ describe("handleAgentResult — overall timeout", () => {
       durationMs: 1800000,
       numTurns: 10,
       error: "Timed out",
+      exitReason: "timeout",
     });
   });
 });
@@ -194,6 +196,7 @@ describe("handleAgentResult — error", () => {
       durationMs: 500,
       numTurns: 1,
       error: "Claude crashed",
+      exitReason: "error",
     });
   });
 });
@@ -238,6 +241,7 @@ describe("handleAgentResult — success", () => {
       costUsd: 0.5,
       durationMs: 2000,
       numTurns: 5,
+      exitReason: "success",
     });
   });
 
