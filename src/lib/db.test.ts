@@ -1699,6 +1699,99 @@ describe("getPerIssueCosts", () => {
   });
 });
 
+describe("exit_reason migration", () => {
+  test("migration adds exit_reason column to existing DB without it", () => {
+    const db2 = new Database(":memory:", { create: true });
+    db2.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        issue_title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        cost_usd REAL,
+        duration_ms INTEGER,
+        num_turns INTEGER,
+        error TEXT
+      );
+    `);
+    db2.run(
+      `INSERT INTO agent_runs (id, issue_id, issue_title, status, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["pre-migration", "ISSUE-1", "Old Title", "completed", 1000, 2000],
+    );
+
+    // Run the migration
+    try {
+      db2.exec("ALTER TABLE agent_runs ADD COLUMN exit_reason TEXT");
+    } catch {
+      // ignore duplicate column
+    }
+
+    // Pre-migration row should have null for the new column
+    const row = db2
+      .query<{ exit_reason: string | null }, [string]>(
+        "SELECT exit_reason FROM agent_runs WHERE id = ?",
+      )
+      .get("pre-migration");
+    expect(row?.exit_reason).toBeNull();
+
+    db2.close();
+  });
+
+  test("exit_reason migration is idempotent on a new DB", () => {
+    expect(() => openDb(":memory:")).not.toThrow();
+  });
+});
+
+describe("insertAgentRun with exitReason", () => {
+  test("stores and retrieves exitReason when set", async () => {
+    await insertAgentRun(db, makeResult("a1", { exitReason: "success" }));
+    const run = getRecentRuns(db)[0];
+    expect(run.exitReason).toBe("success");
+  });
+
+  test("exitReason is undefined when not set", async () => {
+    await insertAgentRun(db, makeResult("a1"));
+    const run = getRecentRuns(db)[0];
+    expect(run.exitReason).toBeUndefined();
+  });
+
+  test("stores all ExitReason values correctly", async () => {
+    const reasons = ["success", "timeout", "inactivity", "error"] as const;
+    for (const reason of reasons) {
+      await insertAgentRun(
+        db,
+        makeResult(`run-${reason}`, { exitReason: reason }),
+      );
+    }
+    const runs = getRecentRuns(db, 10);
+    const storedReasons = runs.map((r) => r.exitReason);
+    for (const reason of reasons) {
+      expect(storedReasons).toContain(reason);
+    }
+  });
+
+  test("getUnreviewedRuns returns exitReason", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { status: "failed", exitReason: "error" }),
+    );
+    const runs = getUnreviewedRuns(db);
+    expect(runs[0].exitReason).toBe("error");
+  });
+
+  test("getRunWithTranscript returns exitReason", async () => {
+    await insertAgentRun(
+      db,
+      makeResult("a1", { exitReason: "inactivity", status: "timed_out" }),
+    );
+    const result = getRunWithTranscript(db, "a1");
+    expect(result.run.exitReason).toBe("inactivity");
+  });
+});
+
 describe("getDailyCostTrend", () => {
   const dayMs = 24 * 60 * 60 * 1000;
 

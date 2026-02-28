@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AutopilotConfig } from "./lib/config";
 import { DEFAULTS } from "./lib/config";
-import { insertAgentRun, openDb } from "./lib/db";
+import {
+  getOAuthToken,
+  insertAgentRun,
+  openDb,
+  saveOAuthToken,
+} from "./lib/db";
 import {
   computeHealth,
   createApp,
@@ -1817,5 +1822,295 @@ describe("GET /partials/stats — planning count", () => {
     const body = await res.text();
     expect(body).toContain("Plans");
     expect(body).toContain(">2<");
+  });
+});
+
+describe("GET /api/planning/history", () => {
+  test("returns empty sessions array when no planning history", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/api/planning/history");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { sessions: unknown[] };
+    expect(json.sessions).toEqual([]);
+  });
+
+  test("returns planning sessions when history exists", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 3,
+    });
+    const app = createApp(state);
+    const res = await app.request("/api/planning/history");
+    const json = (await res.json()) as { sessions: Array<{ id: string }> };
+    expect(json.sessions).toHaveLength(1);
+    expect(json.sessions[0].id).toBe("ps-1");
+  });
+});
+
+describe("GET /partials/planning-history", () => {
+  test("returns 'No planning sessions' message when empty", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("No planning sessions");
+  });
+
+  test("renders session cards when history exists", async () => {
+    const state = new AppState();
+    state.addPlanningSession({
+      id: "ps-1",
+      agentRunId: "run-1",
+      startedAt: 1000,
+      finishedAt: 61000,
+      status: "completed",
+      issuesFiledCount: 2,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/planning-history");
+    const text = await res.text();
+    expect(text).toContain("Planning");
+    expect(text).toContain("1m");
+    expect(text).toContain("2 issues filed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Linear OAuth routes
+// ---------------------------------------------------------------------------
+
+describe("GET /auth/linear", () => {
+  afterEach(() => {
+    delete process.env.LINEAR_CLIENT_ID;
+  });
+
+  test("returns 400 when LINEAR_CLIENT_ID is not set", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("http://localhost/auth/linear");
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("LINEAR_CLIENT_ID");
+  });
+
+  test("redirects to Linear OAuth authorize URL when LINEAR_CLIENT_ID is set", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-client-id";
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("http://localhost/auth/linear");
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toContain("https://linear.app/oauth/authorize");
+    expect(location).toContain("client_id=test-client-id");
+    expect(location).toContain("actor=app");
+  });
+
+  test("sets oauth_state cookie on redirect", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-client-id";
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("http://localhost/auth/linear");
+    expect(res.status).toBe(302);
+    const setCookieHeader = res.headers.get("Set-Cookie") ?? "";
+    expect(setCookieHeader).toContain("oauth_state=");
+    expect(setCookieHeader).toContain("HttpOnly");
+  });
+
+  test("includes state parameter in the authorization URL", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-client-id";
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("http://localhost/auth/linear");
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toContain("state=");
+  });
+
+  test("is accessible without auth even when dashboard auth is configured", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-client-id";
+    const state = new AppState();
+    const app = createApp(state, { authToken: "super-secret" });
+    const res = await app.request("http://localhost/auth/linear");
+    // Should redirect to Linear, not to login page
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toContain("linear.app");
+  });
+});
+
+describe("GET /auth/linear/callback", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.LINEAR_CLIENT_ID;
+    delete process.env.LINEAR_CLIENT_SECRET;
+  });
+
+  test("returns 400 when state cookie is missing", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request(
+      "http://localhost/auth/linear/callback?code=test-code&state=some-state",
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("state mismatch");
+  });
+
+  test("returns 400 when state param does not match stored cookie", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request(
+      "http://localhost/auth/linear/callback?code=test-code&state=wrong-state",
+      { headers: { Cookie: "oauth_state=correct-state" } },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("state mismatch");
+  });
+
+  test("returns 400 when state param is missing even with cookie present", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request(
+      "http://localhost/auth/linear/callback?code=test-code",
+      { headers: { Cookie: "oauth_state=some-state" } },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("state mismatch");
+  });
+
+  test("redirects to / on successful token exchange", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-cid";
+    process.env.LINEAR_CLIENT_SECRET = "test-secret";
+    const db = openDb(":memory:");
+
+    globalThis.fetch = mock(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: "oauth-access-token",
+        refresh_token: "oauth-refresh-token",
+        expires_in: 86400,
+      }),
+      text: async () => "",
+    })) as unknown as typeof fetch;
+
+    const appState = new AppState();
+    const app = createApp(appState, { db });
+    const res = await app.request(
+      "http://localhost/auth/linear/callback?code=auth-code&state=test-state",
+      { headers: { Cookie: "oauth_state=test-state" } },
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+    db.close();
+  });
+
+  test("stores token in oauth_tokens table after successful exchange", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-cid";
+    process.env.LINEAR_CLIENT_SECRET = "test-secret";
+    const db = openDb(":memory:");
+
+    globalThis.fetch = mock(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: "saved-access-token",
+        refresh_token: "saved-refresh-token",
+        expires_in: 3600,
+      }),
+      text: async () => "",
+    })) as unknown as typeof fetch;
+
+    const appState = new AppState();
+    const app = createApp(appState, { db });
+    await app.request(
+      "http://localhost/auth/linear/callback?code=auth-code&state=test-state",
+      { headers: { Cookie: "oauth_state=test-state" } },
+    );
+
+    const stored = getOAuthToken(db, "linear");
+    expect(stored).not.toBeNull();
+    expect(stored?.accessToken).toBe("saved-access-token");
+    db.close();
+  });
+
+  test("returns error HTML when token exchange fails", async () => {
+    process.env.LINEAR_CLIENT_ID = "test-cid";
+    process.env.LINEAR_CLIENT_SECRET = "test-secret";
+
+    globalThis.fetch = mock(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => "invalid_grant",
+    })) as unknown as typeof fetch;
+
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request(
+      "http://localhost/auth/linear/callback?code=bad-code&state=test-state",
+      { headers: { Cookie: "oauth_state=test-state" } },
+    );
+    expect(res.status).toBe(500);
+  });
+});
+
+describe("POST /auth/linear/disconnect", () => {
+  test("redirects to / after disconnect", async () => {
+    const appState = new AppState();
+    const app = createApp(appState);
+    const res = await app.request("/auth/linear/disconnect", {
+      method: "POST",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+  });
+
+  test("removes stored OAuth token from DB", async () => {
+    const db = openDb(":memory:");
+    saveOAuthToken(db, "linear", {
+      accessToken: "tok",
+      refreshToken: "refresh",
+      expiresAt: Date.now() + 3600000,
+      tokenType: "Bearer",
+      scope: "read write",
+      actor: "application",
+    });
+    expect(getOAuthToken(db, "linear")).not.toBeNull();
+
+    const appState = new AppState();
+    const app = createApp(appState, { db });
+    await app.request("/auth/linear/disconnect", { method: "POST" });
+    expect(getOAuthToken(db, "linear")).toBeNull();
+    db.close();
+  });
+
+  test("works gracefully when no DB is configured", async () => {
+    const appState = new AppState();
+    const app = createApp(appState);
+    const res = await app.request("/auth/linear/disconnect", {
+      method: "POST",
+    });
+    expect(res.status).toBe(302);
+  });
+
+  test("is accessible without dashboard auth token", async () => {
+    const TOKEN = "dashboard-secret";
+    const appState = new AppState();
+    const app = createApp(appState, { authToken: TOKEN });
+    // No auth cookie or bearer token — should still succeed (exempt from auth middleware)
+    const res = await app.request("/auth/linear/disconnect", {
+      method: "POST",
+    });
+    expect(res.status).toBe(302);
   });
 });

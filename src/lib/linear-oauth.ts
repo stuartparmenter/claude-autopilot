@@ -172,8 +172,13 @@ export async function refreshOAuthToken(
 
 /**
  * Build the Linear OAuth authorization URL with actor=app.
+ * Pass a random `state` value to enable CSRF verification in the callback.
  */
-export function buildOAuthUrl(clientId: string, redirectUri: string): string {
+export function buildOAuthUrl(
+  clientId: string,
+  redirectUri: string,
+  state?: string,
+): string {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -181,6 +186,7 @@ export function buildOAuthUrl(clientId: string, redirectUri: string): string {
     actor: "app",
     scope: "read,write,issues:create,comments:create",
   });
+  if (state) params.set("state", state);
   return `https://linear.app/oauth/authorize?${params.toString()}`;
 }
 

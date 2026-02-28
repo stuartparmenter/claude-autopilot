@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { html, raw } from "hono/html";
 import { DASHBOARD_CSS } from "./dashboard-styles";
 import type { AutopilotConfig } from "./lib/config";
+import { deleteOAuthToken, saveOAuthToken } from "./lib/db";
 import { resetClient } from "./lib/linear";
 import {
   buildOAuthUrl,
@@ -330,14 +331,27 @@ export function createApp(
         400,
       );
     }
+    const state = randomBytes(16).toString("hex");
+    setCookie(c, "oauth_state", state, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 600, // 10 minutes
+      secure: options?.secureCookie,
+    });
     const redirectUri = new URL("/auth/linear/callback", c.req.url).toString();
-    const url = buildOAuthUrl(clientId, redirectUri);
+    const url = buildOAuthUrl(clientId, redirectUri, state);
     return c.redirect(url);
   });
 
   app.get("/auth/linear/callback", async (c) => {
     const code = c.req.query("code");
+    const stateParam = c.req.query("state");
     const error = c.req.query("error");
+    const storedState = getCookie(c, "oauth_state");
+
+    // Clear the state cookie regardless of outcome
+    deleteCookie(c, "oauth_state", { path: "/" });
 
     if (error) {
       return c.html(
@@ -345,6 +359,15 @@ export function createApp(
         400,
       );
     }
+
+    // Verify state to prevent CSRF attacks
+    if (!storedState || !stateParam || !safeCompare(stateParam, storedState)) {
+      return c.html(
+        "<p>Error: OAuth state mismatch. Please try again.</p>",
+        400,
+      );
+    }
+
     if (!code) {
       return c.html("<p>Error: No authorization code received.</p>", 400);
     }
@@ -370,18 +393,21 @@ export function createApp(
         redirectUri,
       );
       if (options?.db) {
+        // Write to legacy table to update in-memory cache for getCurrentLinearToken()
         saveStoredToken(options.db, token);
+        // Also write to oauth_tokens table for ENG-107 auto-refresh client
+        saveOAuthToken(options.db, "linear", {
+          accessToken: token.accessToken,
+          refreshToken: token.refreshToken ?? "",
+          expiresAt: token.expiresAt,
+          tokenType: "Bearer",
+          scope: "read,write,issues:create,comments:create",
+          actor: "application",
+        });
       }
-      // Reset the Linear SDK client so it picks up the new OAuth token
+      // Force the Linear client to re-initialize with the new token
       resetClient();
-      return c.html(`<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"><title>Linear Connected</title></head>
-  <body>
-    <p>Linear OAuth connected successfully. The autopilot will now act as the app user.</p>
-    <p><a href="/">Back to dashboard</a></p>
-  </body>
-</html>`);
+      return c.redirect("/");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.html(
@@ -389,6 +415,13 @@ export function createApp(
         500,
       );
     }
+  });
+
+  app.post("/auth/linear/disconnect", (c) => {
+    if (options?.db) {
+      deleteOAuthToken(options.db, "linear");
+    }
+    return c.redirect("/");
   });
 
   // --- HTML Shell ---
@@ -492,6 +525,13 @@ export function createApp(
                   hx-trigger="load, every 10s"
                   hx-swap="innerHTML"
                 ></div>
+                <div class="section-title">Planning History</div>
+                <div
+                  id="planning-history-list"
+                  hx-get="/partials/planning-history"
+                  hx-trigger="load, every 30s"
+                  hx-swap="innerHTML"
+                ></div>
               </div>
               <div class="main" id="main-panel">
                 <div class="empty-state">
@@ -541,6 +581,11 @@ export function createApp(
       return c.json({ enabled: false });
     }
     return c.json({ enabled: true, ...trends });
+  });
+
+  app.get("/api/planning/history", (c) => {
+    const history = state.getPlanningHistory();
+    return c.json({ sessions: history });
   });
 
   app.get("/api/failure-analysis", (c) => {
@@ -834,6 +879,51 @@ export function createApp(
             return `<div class="history-card" hx-get="/partials/activity/${escapeHtml(h.id)}" hx-target="#main-panel" hx-swap="innerHTML" style="cursor:pointer">
             <div style="display:flex;align-items:center;justify-content:space-between"><span><span class="status-dot ${h.status}"></span><span class="issue-id">${escapeHtml(h.issueId)}</span> ${durationStr} ${costStr}</span>${retryBtn}</div>
             <div class="title">${escapeHtml(h.issueTitle)}</div>
+          </div>`;
+          })
+          .join(""),
+      )}`,
+    );
+  });
+
+  app.get("/partials/planning-history", (c) => {
+    const sessions = state.getPlanningHistory();
+    if (sessions.length === 0) {
+      return c.html(
+        html`<div
+          style="padding: 12px 16px; color: var(--text-dim); font-size: 12px"
+        >
+          No planning sessions yet
+        </div>`,
+      );
+    }
+    return c.html(
+      html`${raw(
+        sessions
+          .slice(0, 10)
+          .map((s) => {
+            const durationSec = Math.round((s.finishedAt - s.startedAt) / 1000);
+            const durationStr =
+              durationSec >= 60
+                ? `${Math.floor(durationSec / 60)}m`
+                : `${durationSec}s`;
+            const costStr = s.costUsd ? `$${s.costUsd.toFixed(4)}` : "";
+            const dateStr = new Date(s.finishedAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            });
+            const timeStr = new Date(s.finishedAt).toLocaleTimeString("en-US", {
+              hour12: false,
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            return `<div class="history-card">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span><span class="status-dot ${escapeHtml(s.status)}"></span>Planning</span>
+              <span style="font-size:11px;color:var(--text-dim)">${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</span>
+            </div>
+            <div class="meta">${escapeHtml(durationStr)}${costStr ? ` &middot; ${escapeHtml(costStr)}` : ""}${s.issuesFiledCount > 0 ? ` &middot; ${s.issuesFiledCount} issues filed` : ""}</div>
+            ${s.summary ? `<div class="title">${escapeHtml(s.summary)}</div>` : ""}
           </div>`;
           })
           .join(""),
