@@ -2588,3 +2588,103 @@ describe("webhook endpoints", () => {
     });
   });
 });
+
+describe("dashboard HTML includes cost-section partial div", () => {
+  test("includes cost-section div with /partials/costs and 30s poll", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/");
+    const body = await res.text();
+    expect(body).toContain("/partials/costs");
+    expect(body).toContain("cost-section");
+    expect(body).toContain("every 30s");
+    expect(body).toContain("Cost Tracking");
+  });
+});
+
+describe("GET /partials/costs", () => {
+  test("returns 'No cost data available yet' when no DB connected", async () => {
+    const state = new AppState();
+    const app = createApp(state);
+    const res = await app.request("/partials/costs");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("No cost data available yet");
+  });
+
+  test("returns 'No cost data available yet' when DB has no cost data", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-1",
+      issueTitle: "Test",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      // no costUsd
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/costs");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("No cost data available yet");
+    db.close();
+  });
+
+  test("returns cost section with daily bars and per-issue table when data exists", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-10",
+      issueTitle: "Feature A",
+      status: "completed",
+      startedAt: now - 60000,
+      finishedAt: now,
+      costUsd: 0.5,
+      durationMs: 60000,
+      numTurns: 3,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/costs");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("cost-section");
+    expect(body).toContain("Last 7 Days");
+    expect(body).toContain("cost-day-row");
+    expect(body).toContain("$0.50");
+    expect(body).toContain("Top Issues by Cost");
+    expect(body).toContain("cost-issue-row");
+    expect(body).toContain("ENG-10");
+    db.close();
+  });
+
+  test("formats cost amounts to 2 decimal places with $ prefix", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+    const now = Date.now();
+    await insertAgentRun(db, {
+      id: "run-1",
+      issueId: "ENG-5",
+      issueTitle: "Some issue",
+      status: "completed",
+      startedAt: now - 30000,
+      finishedAt: now,
+      costUsd: 1.234,
+      durationMs: 30000,
+      numTurns: 2,
+    });
+    const app = createApp(state);
+    const res = await app.request("/partials/costs");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("$1.23");
+    db.close();
+  });
+});
