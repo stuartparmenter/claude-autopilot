@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ActivityEntry, AgentResult } from "../state";
+import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
 import { error, warn } from "./logger";
 
 const SCHEMA = `
@@ -50,6 +50,19 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   scope TEXT NOT NULL,
   actor TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS planning_sessions (
+  id TEXT PRIMARY KEY,
+  agent_run_id TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  summary TEXT,
+  issues_filed_count INTEGER NOT NULL DEFAULT 0,
+  issues_filed_json TEXT,
+  findings_rejected_json TEXT,
+  cost_usd REAL
+);
+CREATE INDEX IF NOT EXISTS idx_planning_sessions_finished_at ON planning_sessions(finished_at);
 `;
 
 // ---- SQLITE_BUSY retry logic ----
@@ -736,4 +749,84 @@ export async function markRunsReviewed(
   await withDbRetry(() => updateMany(agentRunIds), "markRunsReviewed", {
     ids: agentRunIds,
   });
+}
+
+interface PlanningSessionRow {
+  id: string;
+  agent_run_id: string;
+  started_at: number;
+  finished_at: number;
+  status: "completed" | "failed" | "timed_out";
+  summary: string | null;
+  issues_filed_count: number;
+  issues_filed_json: string | null;
+  findings_rejected_json: string | null;
+  cost_usd: number | null;
+}
+
+export async function insertPlanningSession(
+  db: Database,
+  session: PlanningSession,
+): Promise<void> {
+  await withDbRetry(
+    () =>
+      db.run(
+        `INSERT OR REPLACE INTO planning_sessions
+         (id, agent_run_id, started_at, finished_at, status, summary, issues_filed_count, issues_filed_json, findings_rejected_json, cost_usd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          session.id,
+          session.agentRunId,
+          session.startedAt,
+          session.finishedAt,
+          session.status,
+          session.summary ?? null,
+          session.issuesFiledCount,
+          session.issuesFiled ? JSON.stringify(session.issuesFiled) : null,
+          session.findingsRejected
+            ? JSON.stringify(session.findingsRejected)
+            : null,
+          session.costUsd ?? null,
+        ],
+      ),
+    "insertPlanningSession",
+    session,
+  );
+}
+
+export function getRecentPlanningSessions(
+  db: Database,
+  limit = 20,
+): PlanningSession[] {
+  const rows = db
+    .query<PlanningSessionRow, [number]>(
+      `SELECT id, agent_run_id, started_at, finished_at, status, summary,
+              issues_filed_count, issues_filed_json, findings_rejected_json, cost_usd
+       FROM planning_sessions
+       ORDER BY finished_at DESC
+       LIMIT ?`,
+    )
+    .all(limit);
+  return rows.map((row) => ({
+    id: row.id,
+    agentRunId: row.agent_run_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    status: row.status,
+    summary: row.summary ?? undefined,
+    issuesFiledCount: row.issues_filed_count,
+    issuesFiled: row.issues_filed_json
+      ? (JSON.parse(row.issues_filed_json) as Array<{
+          identifier: string;
+          title: string;
+        }>)
+      : undefined,
+    findingsRejected: row.findings_rejected_json
+      ? (JSON.parse(row.findings_rejected_json) as Array<{
+          finding: string;
+          reason: string;
+        }>)
+      : undefined,
+    costUsd: row.cost_usd ?? undefined,
+  }));
 }

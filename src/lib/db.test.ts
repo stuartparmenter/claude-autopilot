@@ -1,16 +1,21 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ActivityEntry, AgentResult } from "../state";
+import type { ActivityEntry, AgentResult, PlanningSession } from "../state";
 import {
   getActivityLogs,
   getAnalytics,
   getConversationLog,
+  getFailuresByType,
+  getFailureTrend,
+  getRecentPlanningSessions,
   getRecentRuns,
+  getRepeatFailures,
   getRunWithTranscript,
   getUnreviewedRuns,
   insertActivityLogs,
   insertAgentRun,
   insertConversationLog,
+  insertPlanningSession,
   isSqliteBusy,
   markRunsReviewed,
   openDb,
@@ -861,5 +866,493 @@ describe("transcript redaction before storage", () => {
     expect(parsed[0].content).not.toContain(
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
     );
+  });
+});
+
+describe("insertPlanningSession and getRecentPlanningSessions", () => {
+  function makeSession(
+    id: string,
+    overrides?: Partial<PlanningSession>,
+  ): PlanningSession {
+    return {
+      id,
+      agentRunId: `run-${id}`,
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 0,
+      ...overrides,
+    };
+  }
+
+  test("inserts and retrieves a planning session", async () => {
+    await insertPlanningSession(db, makeSession("ps-1"));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("ps-1");
+    expect(sessions[0].agentRunId).toBe("run-ps-1");
+    expect(sessions[0].status).toBe("completed");
+    expect(sessions[0].issuesFiledCount).toBe(0);
+  });
+
+  test("retrieves sessions in newest-first order by finished_at", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { startedAt: 1000, finishedAt: 2000 }),
+    );
+    await insertPlanningSession(
+      db,
+      makeSession("ps-2", { startedAt: 3000, finishedAt: 4000 }),
+    );
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].id).toBe("ps-2");
+    expect(sessions[1].id).toBe("ps-1");
+  });
+
+  test("respects the limit parameter", async () => {
+    for (let i = 0; i < 5; i++) {
+      await insertPlanningSession(
+        db,
+        makeSession(`ps-${i}`, {
+          startedAt: i * 1000,
+          finishedAt: i * 1000 + 500,
+        }),
+      );
+    }
+    const sessions = getRecentPlanningSessions(db, 3);
+    expect(sessions).toHaveLength(3);
+  });
+
+  test("default limit is 20", async () => {
+    for (let i = 0; i < 25; i++) {
+      await insertPlanningSession(
+        db,
+        makeSession(`ps-${i}`, {
+          startedAt: i * 1000,
+          finishedAt: i * 1000 + 500,
+        }),
+      );
+    }
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(20);
+  });
+
+  test("issuesFiled JSON field serializes and deserializes correctly", async () => {
+    const issuesFiled = [
+      { identifier: "ENG-1", title: "Fix the bug" },
+      { identifier: "ENG-2", title: "Add the feature" },
+    ];
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { issuesFiled, issuesFiledCount: 2 }),
+    );
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].issuesFiled).toEqual(issuesFiled);
+    expect(sessions[0].issuesFiledCount).toBe(2);
+  });
+
+  test("findingsRejected JSON field serializes and deserializes correctly", async () => {
+    const findingsRejected = [
+      { finding: "Use better logging", reason: "Out of scope" },
+    ];
+    await insertPlanningSession(db, makeSession("ps-1", { findingsRejected }));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions[0].findingsRejected).toEqual(findingsRejected);
+  });
+
+  test("optional fields are undefined when not set", async () => {
+    await insertPlanningSession(db, makeSession("ps-1"));
+    const session = getRecentPlanningSessions(db)[0];
+    expect(session.summary).toBeUndefined();
+    expect(session.issuesFiled).toBeUndefined();
+    expect(session.findingsRejected).toBeUndefined();
+    expect(session.costUsd).toBeUndefined();
+  });
+
+  test("stores and retrieves optional fields when set", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", {
+        summary: "Planning complete",
+        costUsd: 0.15,
+        issuesFiledCount: 3,
+      }),
+    );
+    const session = getRecentPlanningSessions(db)[0];
+    expect(session.summary).toBe("Planning complete");
+    expect(session.costUsd).toBe(0.15);
+    expect(session.issuesFiledCount).toBe(3);
+  });
+
+  test("OR REPLACE upserts a session with the same id", async () => {
+    await insertPlanningSession(
+      db,
+      makeSession("ps-1", { status: "completed" }),
+    );
+    await insertPlanningSession(db, makeSession("ps-1", { status: "failed" }));
+    const sessions = getRecentPlanningSessions(db);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+  });
+
+  test("returns empty array when no sessions exist", () => {
+    expect(getRecentPlanningSessions(db)).toEqual([]);
+  });
+});
+
+describe("getFailuresByType", () => {
+  test("returns correct counts for mixed statuses", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "completed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r3", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r4", { status: "timed_out", finishedAt: now }),
+    );
+
+    const result = getFailuresByType(db);
+    expect(result).toHaveLength(2);
+    const failedEntry = result.find((e) => e.status === "failed");
+    const timedOutEntry = result.find((e) => e.status === "timed_out");
+    expect(failedEntry?.count).toBe(2);
+    expect(timedOutEntry?.count).toBe(1);
+  });
+
+  test("returns empty array when no failures exist", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "completed", finishedAt: now }),
+    );
+    expect(getFailuresByType(db)).toEqual([]);
+  });
+
+  test("returns empty array when database is empty", () => {
+    expect(getFailuresByType(db)).toEqual([]);
+  });
+
+  test("respects days parameter — excludes runs outside the window", async () => {
+    const now = Date.now();
+    const outside = now - 31 * 24 * 60 * 60 * 1000;
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: outside }),
+    );
+
+    const result = getFailuresByType(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].count).toBe(1);
+  });
+
+  test("orders results by count descending", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "timed_out", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r3", { status: "failed", finishedAt: now }),
+    );
+
+    const result = getFailuresByType(db);
+    expect(result[0].status).toBe("failed");
+    expect(result[0].count).toBe(2);
+    expect(result[1].status).toBe("timed_out");
+    expect(result[1].count).toBe(1);
+  });
+});
+
+describe("getFailureTrend", () => {
+  test("returns daily breakdown with correct failure rates", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "completed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r3", { status: "timed_out", finishedAt: now }),
+    );
+
+    const result = getFailureTrend(db);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalRuns).toBe(3);
+    expect(result[0].failureCount).toBe(2);
+    expect(result[0].failureRate).toBeCloseTo(2 / 3);
+  });
+
+  test("failure rate is 0 for days where all runs completed", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "completed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "completed", finishedAt: now }),
+    );
+
+    const result = getFailureTrend(db);
+    expect(result).toHaveLength(1);
+    expect(result[0].failureCount).toBe(0);
+    expect(result[0].failureRate).toBe(0);
+  });
+
+  test("respects days cutoff — excludes older runs", async () => {
+    const now = Date.now();
+    const outside = now - 31 * 24 * 60 * 60 * 1000;
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: outside }),
+    );
+
+    const result = getFailureTrend(db, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalRuns).toBe(1);
+  });
+
+  test("returns empty array when no runs exist", () => {
+    expect(getFailureTrend(db)).toEqual([]);
+  });
+
+  test("orders results by date ascending", async () => {
+    const now = Date.now();
+    const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "failed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "failed", finishedAt: twoDaysAgo }),
+    );
+
+    const result = getFailureTrend(db);
+    expect(result).toHaveLength(2);
+    expect(result[0].date < result[1].date).toBe(true);
+  });
+});
+
+describe("getRepeatFailures", () => {
+  test("finds issues that failed multiple times", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", {
+        issueId: "ENG-1",
+        issueTitle: "Fix bug",
+        status: "failed",
+        finishedAt: now - 2000,
+        error: "first error",
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", {
+        issueId: "ENG-1",
+        issueTitle: "Fix bug",
+        status: "failed",
+        finishedAt: now - 1000,
+        error: "second error",
+      }),
+    );
+
+    const result = getRepeatFailures(db);
+    expect(result).toHaveLength(1);
+    expect(result[0].issueId).toBe("ENG-1");
+    expect(result[0].issueTitle).toBe("Fix bug");
+    expect(result[0].failureCount).toBe(2);
+  });
+
+  test("returns correct lastError from most recent failure", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", {
+        issueId: "ENG-1",
+        issueTitle: "Fix bug",
+        status: "failed",
+        finishedAt: now - 2000,
+        error: "old error",
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", {
+        issueId: "ENG-1",
+        issueTitle: "Fix bug",
+        status: "timed_out",
+        finishedAt: now - 1000,
+        error: "latest error",
+      }),
+    );
+
+    const result = getRepeatFailures(db);
+    expect(result[0].lastError).toBe("latest error");
+    expect(result[0].lastFailedAt).toBe(now - 1000);
+  });
+
+  test("excludes issues below minFailures threshold", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", {
+        issueId: "ENG-1",
+        issueTitle: "One fail",
+        status: "failed",
+        finishedAt: now,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", {
+        issueId: "ENG-2",
+        issueTitle: "Two fails",
+        status: "failed",
+        finishedAt: now - 1000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r3", {
+        issueId: "ENG-2",
+        issueTitle: "Two fails",
+        status: "failed",
+        finishedAt: now - 500,
+      }),
+    );
+
+    const result = getRepeatFailures(db, 2);
+    expect(result).toHaveLength(1);
+    expect(result[0].issueId).toBe("ENG-2");
+  });
+
+  test("returns empty array when all runs succeed", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", { status: "completed", finishedAt: now }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", { status: "completed", finishedAt: now }),
+    );
+    expect(getRepeatFailures(db)).toEqual([]);
+  });
+
+  test("returns empty array when no runs exist", () => {
+    expect(getRepeatFailures(db)).toEqual([]);
+  });
+
+  test("respects days cutoff", async () => {
+    const now = Date.now();
+    const outside = now - 31 * 24 * 60 * 60 * 1000;
+    await insertAgentRun(
+      db,
+      makeResult("r1", {
+        issueId: "ENG-1",
+        issueTitle: "Old fail",
+        status: "failed",
+        finishedAt: outside,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", {
+        issueId: "ENG-1",
+        issueTitle: "Old fail",
+        status: "failed",
+        finishedAt: outside - 1000,
+      }),
+    );
+
+    const result = getRepeatFailures(db, 2, 30);
+    expect(result).toEqual([]);
+  });
+
+  test("orders results by failure count descending", async () => {
+    const now = Date.now();
+    // ENG-1: 2 failures
+    for (let i = 0; i < 2; i++) {
+      await insertAgentRun(
+        db,
+        makeResult(`r1-${i}`, {
+          issueId: "ENG-1",
+          issueTitle: "Less fails",
+          status: "failed",
+          finishedAt: now - i * 1000,
+        }),
+      );
+    }
+    // ENG-2: 3 failures
+    for (let i = 0; i < 3; i++) {
+      await insertAgentRun(
+        db,
+        makeResult(`r2-${i}`, {
+          issueId: "ENG-2",
+          issueTitle: "More fails",
+          status: "failed",
+          finishedAt: now - i * 1000,
+        }),
+      );
+    }
+
+    const result = getRepeatFailures(db);
+    expect(result[0].issueId).toBe("ENG-2");
+    expect(result[0].failureCount).toBe(3);
+    expect(result[1].issueId).toBe("ENG-1");
+    expect(result[1].failureCount).toBe(2);
+  });
+
+  test("lastError is null when error field is not set", async () => {
+    const now = Date.now();
+    await insertAgentRun(
+      db,
+      makeResult("r1", {
+        issueId: "ENG-1",
+        issueTitle: "No error message",
+        status: "failed",
+        finishedAt: now - 1000,
+      }),
+    );
+    await insertAgentRun(
+      db,
+      makeResult("r2", {
+        issueId: "ENG-1",
+        issueTitle: "No error message",
+        status: "failed",
+        finishedAt: now,
+      }),
+    );
+
+    const result = getRepeatFailures(db);
+    expect(result[0].lastError).toBeNull();
   });
 });

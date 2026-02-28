@@ -348,9 +348,9 @@ describe("findOrCreateLabel", () => {
 // getReadyIssues — raw GraphQL mock types and helpers
 // ---------------------------------------------------------------------------
 
-interface ReadyMockRelation {
+interface ReadyMockInverseRelation {
   type: string;
-  relatedIssue: { id: string; state: { type: string } | null } | null;
+  issue: { id: string; state: { type: string } | null } | null;
 }
 
 interface ReadyMockNode {
@@ -358,7 +358,7 @@ interface ReadyMockNode {
   identifier: string;
   title: string;
   priority?: number | null;
-  relations: { nodes: ReadyMockRelation[] };
+  inverseRelations: { nodes: ReadyMockInverseRelation[] };
   children: { nodes: Array<{ id: string }> };
 }
 
@@ -383,7 +383,7 @@ function makeReadyNode(opts: {
   id?: string;
   identifier?: string;
   priority?: number;
-  relations?: ReadyMockRelation[];
+  inverseRelations?: ReadyMockInverseRelation[];
   childrenCount?: number;
 }): ReadyMockNode {
   return {
@@ -391,7 +391,7 @@ function makeReadyNode(opts: {
     identifier: opts.identifier ?? "ENG-1",
     title: "Test Issue",
     priority: opts.priority,
-    relations: { nodes: opts.relations ?? [] },
+    inverseRelations: { nodes: opts.inverseRelations ?? [] },
     children: {
       nodes: Array.from({ length: opts.childrenCount ?? 0 }, (_, i) => ({
         id: `child-${i}`,
@@ -400,10 +400,10 @@ function makeReadyNode(opts: {
   };
 }
 
-function makeReadyRelation(type: string, stateType: string): ReadyMockRelation {
+function makeBlockingRelation(stateType: string): ReadyMockInverseRelation {
   return {
-    type,
-    relatedIssue: { id: "related-1", state: { type: stateType } },
+    type: "blocks",
+    issue: { id: "blocker-1", state: { type: stateType } },
   };
 }
 
@@ -513,7 +513,7 @@ describe("getReadyIssues", () => {
           nodes: [
             makeReadyNode({
               id: "blocked",
-              relations: [makeReadyRelation("blocks", "started")],
+              inverseRelations: [makeBlockingRelation("started")],
             }),
           ],
         },
@@ -525,14 +525,14 @@ describe("getReadyIssues", () => {
     expect(result).toHaveLength(0);
   });
 
-  test("includes issue when blocking relation's relatedIssue is completed", async () => {
+  test("includes issue when blocking relation's blocker issue is completed", async () => {
     readyRawResponse = {
       data: {
         issues: {
           nodes: [
             makeReadyNode({
               id: "done-blocker",
-              relations: [makeReadyRelation("blocks", "completed")],
+              inverseRelations: [makeBlockingRelation("completed")],
             }),
           ],
         },
@@ -545,14 +545,14 @@ describe("getReadyIssues", () => {
     expect((result[0] as { id: string }).id).toBe("done-blocker");
   });
 
-  test("includes issue when blocking relation's relatedIssue is canceled", async () => {
+  test("includes issue when blocking relation's blocker issue is canceled", async () => {
     readyRawResponse = {
       data: {
         issues: {
           nodes: [
             makeReadyNode({
               id: "canceled-blocker",
-              relations: [makeReadyRelation("blocks", "canceled")],
+              inverseRelations: [makeBlockingRelation("canceled")],
             }),
           ],
         },
@@ -571,7 +571,12 @@ describe("getReadyIssues", () => {
           nodes: [
             makeReadyNode({
               id: "related-only",
-              relations: [makeReadyRelation("related", "started")],
+              inverseRelations: [
+                {
+                  type: "related",
+                  issue: { id: "r-1", state: { type: "started" } },
+                },
+              ],
             }),
           ],
         },
@@ -583,14 +588,14 @@ describe("getReadyIssues", () => {
     expect(result).toHaveLength(1);
   });
 
-  test("handles null relatedIssue gracefully (treats as not blocking)", async () => {
+  test("handles null issue in inverse relation gracefully (treats as not blocking)", async () => {
     readyRawResponse = {
       data: {
         issues: {
           nodes: [
             makeReadyNode({
               id: "null-related",
-              relations: [{ type: "blocks", relatedIssue: null }],
+              inverseRelations: [{ type: "blocks", issue: null }],
             }),
           ],
         },

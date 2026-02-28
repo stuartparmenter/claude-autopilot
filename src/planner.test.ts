@@ -41,16 +41,38 @@ const mockRunClaude = mock(
     }),
 );
 
-// Queue of node counts to return for sequential countIssuesInState calls.
-// Inject via setClientForTesting to avoid mock.module("./lib/linear") which
-// causes Bun 1.3.9 mock/restore cross-file interference.
-let issueNodeCounts: number[] = [];
+// Mock state for sequential rawRequest calls.
+// First call: getReadyIssues (returns full issue nodes with inverseRelations/children)
+// Second call: countIssuesInState for triage (returns minimal {id} nodes + pageInfo)
+let readyIssueNodes: Array<{
+  id: string;
+  identifier: string;
+  title: string;
+  priority: number | null;
+  inverseRelations: { nodes: never[] };
+  children: { nodes: never[] };
+}> = [];
+let triageNodeCount = 0;
+let rawCallIndex = 0;
 const mockRawRequest = mock(async () => {
-  const count = issueNodeCounts.shift() ?? 0;
+  const callIndex = rawCallIndex++;
+  // First call is getReadyIssues (returns full issue nodes)
+  if (callIndex === 0) {
+    return {
+      data: {
+        issues: {
+          nodes: readyIssueNodes,
+        },
+      },
+    };
+  }
+  // Second call is countIssuesInState for triage (returns minimal nodes + pageInfo)
   return {
     data: {
       issues: {
-        nodes: Array.from({ length: count }, (_, i) => ({ id: `issue-${i}` })),
+        nodes: Array.from({ length: triageNodeCount }, (_, i) => ({
+          id: `triage-${i}`,
+        })),
         pageInfo: { hasNextPage: false, endCursor: null },
       },
     },
@@ -67,7 +89,9 @@ import { runPlanning, shouldRunPlanning } from "./planner";
 // NOTE: We intentionally do NOT mock ./lib/prompt — the real buildCTOPrompt
 // reads from prompts/ on disk and doesn't leak across test files.
 beforeEach(() => {
-  issueNodeCounts = [];
+  readyIssueNodes = [];
+  triageNodeCount = 0;
+  rawCallIndex = 0;
   mockRawRequest.mockClear();
   setClientForTesting({
     client: { rawRequest: mockRawRequest },
@@ -188,6 +212,17 @@ function makeLinearIds(): LinearIds {
   };
 }
 
+function makeReadyIssueNode(id: string) {
+  return {
+    id,
+    identifier: `ENG-${id}`,
+    title: `Test ${id}`,
+    priority: 3 as number | null,
+    inverseRelations: { nodes: [] as never[] },
+    children: { nodes: [] as never[] },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // shouldRunPlanning — schedule checks
 // ---------------------------------------------------------------------------
@@ -229,7 +264,12 @@ describe("shouldRunPlanning — backlog threshold", () => {
 
   test("returns false when backlog >= threshold (exactly at threshold)", async () => {
     // readyCount=3, triageCount=2 → backlog=5, threshold=5 → false
-    issueNodeCounts = [3, 2];
+    readyIssueNodes = [
+      makeReadyIssueNode("1"),
+      makeReadyIssueNode("2"),
+      makeReadyIssueNode("3"),
+    ];
+    triageNodeCount = 2;
 
     const result = await shouldRunPlanning({
       config: makeConfig(),
@@ -242,7 +282,8 @@ describe("shouldRunPlanning — backlog threshold", () => {
 
   test("returns true when backlog < threshold", async () => {
     // readyCount=2, triageCount=1 → backlog=3, threshold=5 → true
-    issueNodeCounts = [2, 1];
+    readyIssueNodes = [makeReadyIssueNode("1"), makeReadyIssueNode("2")];
+    triageNodeCount = 1;
 
     const result = await shouldRunPlanning({
       config: makeConfig(),
@@ -253,9 +294,9 @@ describe("shouldRunPlanning — backlog threshold", () => {
     expect(result).toBe(true);
   });
 
-  test("calls countIssuesInState with ready and triage state IDs", async () => {
+  test("queries ready state via getReadyIssues and triage via countIssuesInState", async () => {
     mockRawRequest.mockClear();
-    // issueNodeCounts stays empty — mockRawRequest defaults to 0 nodes per call
+    rawCallIndex = 0;
 
     const linearIds = makeLinearIds();
     await shouldRunPlanning({
@@ -264,18 +305,22 @@ describe("shouldRunPlanning — backlog threshold", () => {
       state,
     });
 
-    // Verify the state IDs queried via the rawRequest variables (second arg)
-    const calledStateIds = mockRawRequest.mock.calls.map(
-      (call: unknown[]) =>
-        (call[1] as { filter: { state: { id: { eq: string } } } })?.filter
-          ?.state?.id?.eq,
-    );
-    expect(calledStateIds).toContain("ready-id");
-    expect(calledStateIds).toContain("triage-id");
+    // First call: getReadyIssues filters by ready state
+    const firstCallFilter = (mockRawRequest.mock.calls[0] as unknown[])[1] as {
+      filter: { state: { id: { eq: string } } };
+    };
+    expect(firstCallFilter.filter.state.id.eq).toBe("ready-id");
+
+    // Second call: countIssuesInState for triage
+    const secondCallFilter = (mockRawRequest.mock.calls[1] as unknown[])[1] as {
+      filter: { state: { id: { eq: string } } };
+    };
+    expect(secondCallFilter.filter.state.id.eq).toBe("triage-id");
   });
 
-  test("forwards config labels filter to countIssuesInState", async () => {
+  test("forwards config labels filter to both queries", async () => {
     mockRawRequest.mockClear();
+    rawCallIndex = 0;
     const config = makeConfig();
     config.linear.labels = ["autopilot", "backend"];
 
@@ -289,7 +334,7 @@ describe("shouldRunPlanning — backlog threshold", () => {
           }
         )?.filter?.labels,
     );
-    // Both ready and triage calls should include the labels filter
+    // Both getReadyIssues and countIssuesInState should have labels filter
     expect(calledFilters[0]).toEqual({
       some: { name: { in: ["autopilot", "backend"] } },
     });
@@ -298,8 +343,9 @@ describe("shouldRunPlanning — backlog threshold", () => {
     });
   });
 
-  test("forwards config projects filter to countIssuesInState", async () => {
+  test("forwards config projects filter to both queries", async () => {
     mockRawRequest.mockClear();
+    rawCallIndex = 0;
     const config = makeConfig();
     config.linear.projects = ["Alpha"];
 
@@ -319,6 +365,7 @@ describe("shouldRunPlanning — backlog threshold", () => {
 
   test("omits label/project filters when config has empty arrays", async () => {
     mockRawRequest.mockClear();
+    rawCallIndex = 0;
     const config = makeConfig();
     // labels and projects default to [] in makeConfig()
 
@@ -350,7 +397,8 @@ describe("shouldRunPlanning — min interval check", () => {
     // Set lastRunAt to 30 minutes ago, interval is 60 minutes
     state.updatePlanning({ lastRunAt: Date.now() - 30 * 60 * 1000 });
     // Backlog is low so threshold check would pass
-    issueNodeCounts = [0, 0];
+    readyIssueNodes = [];
+    triageNodeCount = 0;
 
     const result = await shouldRunPlanning({
       config: makeConfig(),
@@ -367,7 +415,8 @@ describe("shouldRunPlanning — min interval check", () => {
     // Set lastRunAt to 90 minutes ago, interval is 60 minutes
     state.updatePlanning({ lastRunAt: Date.now() - 90 * 60 * 1000 });
     // Backlog is low so threshold check passes
-    issueNodeCounts = [0, 0];
+    readyIssueNodes = [];
+    triageNodeCount = 0;
 
     const result = await shouldRunPlanning({
       config: makeConfig(),
@@ -380,7 +429,8 @@ describe("shouldRunPlanning — min interval check", () => {
 
   test("returns true when lastRunAt is undefined (first run) and backlog is low", async () => {
     // No lastRunAt set — first run
-    issueNodeCounts = [0, 0];
+    readyIssueNodes = [];
+    triageNodeCount = 0;
 
     const result = await shouldRunPlanning({
       config: makeConfig(),
@@ -396,7 +446,8 @@ describe("shouldRunPlanning — min interval check", () => {
     config.planning.min_interval_minutes = 120;
     // Set lastRunAt to 60 minutes ago — within 120 minute interval
     state.updatePlanning({ lastRunAt: Date.now() - 60 * 60 * 1000 });
-    issueNodeCounts = [0, 0];
+    readyIssueNodes = [];
+    triageNodeCount = 0;
 
     const result = await shouldRunPlanning({
       config,
@@ -463,6 +514,24 @@ describe("runPlanning — success path", () => {
     expect(planning.running).toBe(false);
     expect(planning.lastResult).toBe("completed");
   });
+
+  test("records planning session in history on success", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("completed");
+    expect(sessions[0].costUsd).toBe(0.5);
+    expect(sessions[0].issuesFiledCount).toBe(0);
+    expect(sessions[0].startedAt).toBeDefined();
+    expect(sessions[0].finishedAt).toBeDefined();
+    expect(sessions[0].agentRunId).toMatch(/^planning-/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -505,6 +574,19 @@ describe("runPlanning — timeout path", () => {
     });
 
     expect(state.getPlanningStatus().running).toBe(false);
+  });
+
+  test("records planning session with timed_out status", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("timed_out");
   });
 });
 
@@ -549,6 +631,19 @@ describe("runPlanning — error path", () => {
 
     expect(state.getPlanningStatus().running).toBe(false);
   });
+
+  test("records planning session with failed status on error result", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -574,6 +669,21 @@ describe("runPlanning — crash path (runClaude rejects)", () => {
     expect(state.getPlanningStatus().running).toBe(false);
     expect(state.getPlanningStatus().lastResult).toBe("failed");
     expect(state.getHistory()[0].status).toBe("failed");
+  });
+
+  test("records planning session with failed status when runClaude rejects", async () => {
+    await runPlanning({
+      config: makeConfig(),
+      projectPath: "/project",
+      linearIds: makeLinearIds(),
+      state,
+    });
+
+    const sessions = state.getPlanningHistory();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("failed");
+    expect(sessions[0].issuesFiledCount).toBe(0);
+    expect(sessions[0].agentRunId).toMatch(/^planning-/);
   });
 });
 

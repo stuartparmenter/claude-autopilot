@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULTS } from "./lib/config";
-import { getConversationLog, openDb } from "./lib/db";
-import type { ActivityEntry } from "./state";
+import {
+  getConversationLog,
+  getRecentPlanningSessions,
+  openDb,
+} from "./lib/db";
+import type { ActivityEntry, PlanningSession } from "./state";
 import { AppState } from "./state";
 
 describe("AppState — agent lifecycle", () => {
@@ -660,5 +664,103 @@ describe("AppState — spend tracking", () => {
     // The old entry should be gone — monthly and daily should only see the new entry
     expect(state.getDailySpend()).toBeCloseTo(1.0);
     expect((state as any).spendLog).toHaveLength(1);
+  });
+});
+
+describe("AppState — planningHistory persistence", () => {
+  function makeSession(
+    id: string,
+    overrides?: Partial<PlanningSession>,
+  ): PlanningSession {
+    return {
+      id,
+      agentRunId: `run-${id}`,
+      startedAt: 1000,
+      finishedAt: 2000,
+      status: "completed",
+      issuesFiledCount: 0,
+      ...overrides,
+    };
+  }
+
+  test("addPlanningSession persists to DB when DB is set", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+
+    const session = makeSession("ps-1");
+    state.addPlanningSession(session);
+
+    // Allow async DB write to complete
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    const persisted = getRecentPlanningSessions(db);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].id).toBe("ps-1");
+
+    db.close();
+  });
+
+  test("addPlanningSession does not throw when DB is not set", () => {
+    const state = new AppState();
+    expect(() => state.addPlanningSession(makeSession("ps-1"))).not.toThrow();
+  });
+
+  test("setDb loads persisted planning sessions from DB", async () => {
+    const db = openDb(":memory:");
+    const state1 = new AppState();
+    state1.setDb(db);
+
+    // Add two sessions to the first state instance (persists to DB)
+    state1.addPlanningSession(
+      makeSession("ps-1", { startedAt: 1000, finishedAt: 2000 }),
+    );
+    state1.addPlanningSession(
+      makeSession("ps-2", { startedAt: 3000, finishedAt: 4000 }),
+    );
+
+    // Allow async DB writes to complete
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    // Create a second state instance wired to the same DB
+    const state2 = new AppState();
+    state2.setDb(db);
+
+    const history = state2.getPlanningHistory();
+    expect(history).toHaveLength(2);
+    // Newest-first (by finished_at)
+    expect(history[0].id).toBe("ps-2");
+    expect(history[1].id).toBe("ps-1");
+
+    db.close();
+  });
+
+  test("addPlanningSession persists all fields including JSON columns", async () => {
+    const state = new AppState();
+    const db = openDb(":memory:");
+    state.setDb(db);
+
+    const session = makeSession("ps-full", {
+      summary: "Planning done",
+      issuesFiledCount: 2,
+      issuesFiled: [
+        { identifier: "ENG-10", title: "First issue" },
+        { identifier: "ENG-11", title: "Second issue" },
+      ],
+      findingsRejected: [{ finding: "Add logging", reason: "Out of scope" }],
+      costUsd: 0.42,
+    });
+    state.addPlanningSession(session);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    const persisted = getRecentPlanningSessions(db)[0];
+    expect(persisted.summary).toBe("Planning done");
+    expect(persisted.issuesFiledCount).toBe(2);
+    expect(persisted.issuesFiled).toEqual(session.issuesFiled);
+    expect(persisted.findingsRejected).toEqual(session.findingsRejected);
+    expect(persisted.costUsd).toBe(0.42);
+
+    db.close();
   });
 });

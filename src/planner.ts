@@ -3,7 +3,7 @@ import type { SdkPluginConfig } from "@anthropic-ai/claude-agent-sdk";
 import { handleAgentResult } from "./lib/agent-result";
 import { buildMcpServers, runClaude } from "./lib/claude";
 import type { AutopilotConfig, LinearIds } from "./lib/config";
-import { countIssuesInState } from "./lib/linear";
+import { countIssuesInState, getReadyIssues } from "./lib/linear";
 import { info, warn } from "./lib/logger";
 import { AUTOPILOT_ROOT, buildPrompt } from "./lib/prompt";
 import type { AppState } from "./state";
@@ -35,10 +35,14 @@ export async function shouldRunPlanning(opts: {
     labels: config.linear.labels,
     projects: config.linear.projects,
   };
-  const [readyCount, triageCount] = await Promise.all([
-    countIssuesInState(linearIds, linearIds.states.ready, filters),
+  // Use getReadyIssues (not countIssuesInState) so the planner applies the
+  // same leaf + blocking filters the executor uses, giving an accurate count
+  // of actually-workable backlog.
+  const [readyIssues, triageCount] = await Promise.all([
+    getReadyIssues(linearIds, 250, filters),
     countIssuesInState(linearIds, linearIds.states.triage, filters),
   ]);
+  const readyCount = readyIssues.length;
   const backlogCount = readyCount + triageCount;
 
   state.updatePlanning({
@@ -70,7 +74,8 @@ export async function runPlanning(opts: {
   shutdownSignal?: AbortSignal;
 }): Promise<void> {
   const { config, projectPath, state } = opts;
-  const agentId = `planning-${Date.now()}`;
+  const startedAt = Date.now();
+  const agentId = `planning-${startedAt}`;
 
   state.addAgent(agentId, "planning", "Codebase planning");
   state.updatePlanning({ running: true });
@@ -112,11 +117,25 @@ export async function runPlanning(opts: {
       onActivity: (entry) => state.addActivity(agentId, entry),
     });
 
-    const { status } = handleAgentResult(result, state, agentId, "Planning");
+    const { status, metrics } = handleAgentResult(
+      result,
+      state,
+      agentId,
+      "Planning",
+    );
     state.updatePlanning({
       running: false,
       lastRunAt: Date.now(),
       lastResult: status,
+    });
+    state.addPlanningSession({
+      id: `ps-${startedAt}`,
+      agentRunId: agentId,
+      startedAt,
+      finishedAt: Date.now(),
+      status,
+      issuesFiledCount: 0,
+      costUsd: metrics.costUsd,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -126,6 +145,14 @@ export async function runPlanning(opts: {
       running: false,
       lastRunAt: Date.now(),
       lastResult: "failed",
+    });
+    state.addPlanningSession({
+      id: `ps-${startedAt}`,
+      agentRunId: agentId,
+      startedAt,
+      finishedAt: Date.now(),
+      status: "failed",
+      issuesFiledCount: 0,
     });
   }
 }
