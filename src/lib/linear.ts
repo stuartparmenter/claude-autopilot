@@ -496,8 +496,12 @@ export async function createIssue(opts: {
   priority?: number;
   labelIds?: string[];
   parentId?: string;
+  managedLabelId?: string;
 }): Promise<Issue> {
   const client = await getLinearClientAsync();
+  const labelIds = opts.managedLabelId
+    ? [...(opts.labelIds ?? []), opts.managedLabelId]
+    : opts.labelIds;
   const payload = await withRetry(
     () =>
       client.createIssue({
@@ -507,7 +511,7 @@ export async function createIssue(opts: {
         description: opts.description,
         stateId: opts.stateId,
         priority: opts.priority,
-        labelIds: opts.labelIds,
+        labelIds,
         parentId: opts.parentId,
       }),
     "createIssue",
@@ -592,6 +596,7 @@ export async function resolveLinearIds(
     inReviewState,
     doneState,
     blockedState,
+    managedLabel,
   ] = await Promise.all([
     findState(team.id, config.states.triage),
     findState(team.id, config.states.ready),
@@ -599,6 +604,7 @@ export async function resolveLinearIds(
     findState(team.id, config.states.in_review),
     findState(team.id, config.states.done),
     findState(team.id, config.states.blocked),
+    findOrCreateLabel(team.id, "autopilot:managed"),
   ]);
 
   let initiativeId: string | undefined;
@@ -614,6 +620,7 @@ export async function resolveLinearIds(
     teamKey: config.team,
     initiativeId,
     initiativeName,
+    managedLabelId: managedLabel.id,
     states: {
       triage: triageState.id,
       ready: readyState.id,

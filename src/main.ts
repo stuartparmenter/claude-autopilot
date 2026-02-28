@@ -28,6 +28,7 @@ import { initLinearAuth } from "./lib/linear-oauth";
 import { error, fatal, header, info, ok, warn } from "./lib/logger";
 import { sweepClones, sweepLegacyWorktrees } from "./lib/sandbox-clone";
 import { sanitizeMessage } from "./lib/sanitize";
+import { WebhookTrigger } from "./lib/webhooks";
 import { checkOpenPRs } from "./monitor";
 import { runPlanning, shouldRunPlanning } from "./planner";
 import { checkProjects } from "./projects";
@@ -101,6 +102,13 @@ for (const result of preflight.results) {
     ok(`${result.name}: ${result.detail}`);
   } else {
     error(`${result.name}: ${result.detail}`);
+  }
+}
+for (const result of preflight.warnings) {
+  if (result.pass) {
+    ok(`${result.name}: ${result.detail}`);
+  } else {
+    warn(`${result.name}: ${result.detail}`);
   }
 }
 if (!preflight.passed) {
@@ -177,39 +185,53 @@ if (config.persistence.enabled) {
   ok(`Persistence: ${authDbPath}`);
 }
 
-const app = createApp(state, {
-  authToken: dashboardToken,
-  secureCookie: !isLocalhost,
-  config,
-  db: authDb,
-  triggerPlanning: () => {
-    runPlanning({
-      config,
-      projectPath,
-      linearIds,
-      state,
-      shutdownSignal: shutdownController.signal,
-    });
+const webhookTrigger = config.webhooks?.enabled
+  ? new WebhookTrigger()
+  : undefined;
+const app = createApp(
+  state,
+  {
+    authToken: dashboardToken,
+    secureCookie: !isLocalhost,
+    config,
+    db: authDb,
+    triggerPlanning: () => {
+      runPlanning({
+        config,
+        projectPath,
+        linearIds,
+        state,
+        shutdownSignal: shutdownController.signal,
+      });
+    },
+    retryIssue: async (linearIssueId: string) => {
+      await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
+    },
+    triageIssues: async () => {
+      const issues = await getTriageIssues(linearIds);
+      return issues.map((i) => ({
+        id: i.id,
+        identifier: i.identifier,
+        title: i.title,
+        priority: i.priority ?? 4,
+      }));
+    },
+    approveTriageIssue: async (issueId: string) => {
+      await updateIssue(issueId, { stateId: linearIds.states.ready });
+    },
+    rejectTriageIssue: async (issueId: string) => {
+      await updateIssue(issueId, { stateId: linearIds.states.blocked });
+    },
   },
-  retryIssue: async (linearIssueId: string) => {
-    await updateIssue(linearIssueId, { stateId: linearIds.states.ready });
-  },
-  triageIssues: async () => {
-    const issues = await getTriageIssues(linearIds);
-    return issues.map((i) => ({
-      id: i.id,
-      identifier: i.identifier,
-      title: i.title,
-      priority: i.priority ?? 4,
-    }));
-  },
-  approveTriageIssue: async (issueId: string) => {
-    await updateIssue(issueId, { stateId: linearIds.states.ready });
-  },
-  rejectTriageIssue: async (issueId: string) => {
-    await updateIssue(issueId, { stateId: linearIds.states.blocked });
-  },
-});
+  webhookTrigger && config.webhooks
+    ? {
+        trigger: webhookTrigger,
+        linearSecret: config.webhooks.linear_secret,
+        githubSecret: config.webhooks.github_secret,
+        readyStateName: config.linear.states.ready,
+      }
+    : undefined,
+);
 
 if (!isLocalhost) {
   warn(`Dashboard bound to ${host}:${port} — accessible from the network.`);
@@ -464,18 +486,27 @@ while (!shuttingDown) {
     // Reset failure counter after a successful iteration
     consecutiveFailures = 0;
 
-    // Wait for any agent to finish or poll interval to elapse
+    // Wait for any agent to finish, poll interval, or webhook trigger
     if (running.size > 0) {
       const pollTimer = interruptibleSleep(
         POLL_INTERVAL_MS,
         shutdownController.signal,
       ).then(() => "poll" as const);
-      await Promise.race([pollTimer, ...running]);
+      const racers: Promise<unknown>[] = [pollTimer, ...running];
+      if (webhookTrigger) racers.push(webhookTrigger.wait());
+      await Promise.race(racers);
     } else {
       info(
         `No agents running. Polling again in ${POLL_INTERVAL_MS / 1000}s...`,
       );
-      await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      if (webhookTrigger) {
+        await Promise.race([
+          interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal),
+          webhookTrigger.wait(),
+        ]);
+      } else {
+        await interruptibleSleep(POLL_INTERVAL_MS, shutdownController.signal);
+      }
     }
   } catch (e) {
     const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);

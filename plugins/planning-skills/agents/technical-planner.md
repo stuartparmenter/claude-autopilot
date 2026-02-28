@@ -47,6 +47,8 @@ Before decomposing, think through the second and third-order effects of this cha
 - What pipelines, workflows, or state machines touch the affected area? Will they still work?
 - Are there implicit contracts (e.g., "all issues have a project", "all Ready issues are leaf issues") that this change violates?
 
+**Chesterton's Fence**: If the issue asks to unify, standardize, or make consistent behavior that currently varies, verify the variance is accidental. Read the existing code and its comments/history — different treatment of similar items may be intentional. If you find evidence the current behavior is deliberate, flag this back on the parent issue before proceeding with decomposition.
+
 If you identify downstream effects that the issue description doesn't account for:
 - **Add compensating sub-issues** to the decomposition that address the downstream effects
 - **Flag gaps back** — add a comment on the parent issue noting unaddressed systemic effects that may need companion issues

@@ -5,6 +5,7 @@ import { join } from "node:path";
 const TEST_TMP = join(process.cwd(), ".tmp", "tests");
 
 import {
+  checkAnthropicAuth,
   checkCloneDir,
   checkConfig,
   checkEnvVars,
@@ -59,9 +60,77 @@ describe("checkConfig", () => {
 });
 
 describe("checkEnvVars", () => {
+  const envKeys = ["LINEAR_API_KEY", "GITHUB_TOKEN"] as const;
+  const savedEnv: Partial<Record<(typeof envKeys)[number], string>> = {};
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      savedEnv[key] = process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      if (savedEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedEnv[key];
+      }
+    }
+  });
+
+  test("passes when all required variables are set", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_test";
+    process.env.GITHUB_TOKEN = "ghp_test";
+    const result = await checkEnvVars();
+    expect(result).toContain("all set");
+  });
+
+  test("throws with clear message when LINEAR_API_KEY is missing", async () => {
+    delete process.env.LINEAR_API_KEY;
+    process.env.GITHUB_TOKEN = "ghp_test";
+    await expect(checkEnvVars()).rejects.toThrow("LINEAR_API_KEY");
+  });
+
+  test("throws with clear message when GITHUB_TOKEN is missing", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_test";
+    delete process.env.GITHUB_TOKEN;
+    await expect(checkEnvVars()).rejects.toThrow("GITHUB_TOKEN");
+  });
+
+  test("does not check Anthropic keys (handled by checkAnthropicAuth)", async () => {
+    process.env.LINEAR_API_KEY = "lin_api_test";
+    process.env.GITHUB_TOKEN = "ghp_test";
+    // No Anthropic keys set — checkEnvVars should still pass
+    const result = await checkEnvVars();
+    expect(result).toContain("all set");
+  });
+
+  test("error message names all missing variables", async () => {
+    delete process.env.LINEAR_API_KEY;
+    delete process.env.GITHUB_TOKEN;
+    await expect(checkEnvVars()).rejects.toThrow("LINEAR_API_KEY");
+    await expect(checkEnvVars()).rejects.toThrow("GITHUB_TOKEN");
+  });
+
+  test("passes when LINEAR_API_KEY is missing but hasOAuth is true", async () => {
+    delete process.env.LINEAR_API_KEY;
+    process.env.GITHUB_TOKEN = "ghp_test";
+    const result = await checkEnvVars({ hasOAuth: true });
+    expect(result).toContain("all set");
+  });
+
+  test("still requires GITHUB_TOKEN even when hasOAuth is true", async () => {
+    delete process.env.LINEAR_API_KEY;
+    delete process.env.GITHUB_TOKEN;
+    await expect(checkEnvVars({ hasOAuth: true })).rejects.toThrow(
+      "GITHUB_TOKEN",
+    );
+  });
+});
+
+describe("checkAnthropicAuth", () => {
   const envKeys = [
-    "LINEAR_API_KEY",
-    "GITHUB_TOKEN",
     "ANTHROPIC_API_KEY",
     "CLAUDE_API_KEY",
     "CLAUDE_CODE_USE_BEDROCK",
@@ -85,84 +154,41 @@ describe("checkEnvVars", () => {
     }
   });
 
-  test("passes when all required variables are set", async () => {
-    process.env.LINEAR_API_KEY = "lin_api_test";
-    process.env.GITHUB_TOKEN = "ghp_test";
+  test("passes when ANTHROPIC_API_KEY is set", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const result = await checkEnvVars();
-    expect(result).toContain("all set");
+    const result = await checkAnthropicAuth();
+    expect(result).toContain("set");
   });
 
-  test("throws with clear message when LINEAR_API_KEY is missing", async () => {
-    delete process.env.LINEAR_API_KEY;
-    process.env.GITHUB_TOKEN = "ghp_test";
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    await expect(checkEnvVars()).rejects.toThrow("LINEAR_API_KEY");
-  });
-
-  test("throws with clear message when GITHUB_TOKEN is missing", async () => {
-    process.env.LINEAR_API_KEY = "lin_api_test";
-    delete process.env.GITHUB_TOKEN;
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    await expect(checkEnvVars()).rejects.toThrow("GITHUB_TOKEN");
-  });
-
-  test("throws when no Anthropic key variant is set", async () => {
-    process.env.LINEAR_API_KEY = "lin_api_test";
-    process.env.GITHUB_TOKEN = "ghp_test";
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.CLAUDE_API_KEY;
-    delete process.env.CLAUDE_CODE_USE_BEDROCK;
-    delete process.env.CLAUDE_CODE_USE_VERTEX;
-    await expect(checkEnvVars()).rejects.toThrow("ANTHROPIC_API_KEY");
-  });
-
-  test("passes when CLAUDE_API_KEY is set instead of ANTHROPIC_API_KEY", async () => {
-    process.env.LINEAR_API_KEY = "lin_api_test";
-    process.env.GITHUB_TOKEN = "ghp_test";
+  test("passes when CLAUDE_API_KEY is set instead", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     process.env.CLAUDE_API_KEY = "sk-ant-test";
-    const result = await checkEnvVars();
-    expect(result).toContain("all set");
+    const result = await checkAnthropicAuth();
+    expect(result).toContain("set");
   });
 
   test("passes when CLAUDE_CODE_USE_BEDROCK is set", async () => {
-    process.env.LINEAR_API_KEY = "lin_api_test";
-    process.env.GITHUB_TOKEN = "ghp_test";
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_API_KEY;
     process.env.CLAUDE_CODE_USE_BEDROCK = "1";
-    const result = await checkEnvVars();
-    expect(result).toContain("all set");
+    const result = await checkAnthropicAuth();
+    expect(result).toContain("set");
   });
 
-  test("error message names all missing variables", async () => {
-    delete process.env.LINEAR_API_KEY;
-    delete process.env.GITHUB_TOKEN;
+  test("throws when no Anthropic key variant is set", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_API_KEY;
     delete process.env.CLAUDE_CODE_USE_BEDROCK;
     delete process.env.CLAUDE_CODE_USE_VERTEX;
-    await expect(checkEnvVars()).rejects.toThrow("LINEAR_API_KEY");
-    await expect(checkEnvVars()).rejects.toThrow("GITHUB_TOKEN");
-    await expect(checkEnvVars()).rejects.toThrow("ANTHROPIC_API_KEY");
+    await expect(checkAnthropicAuth()).rejects.toThrow("ANTHROPIC_API_KEY");
   });
 
-  test("passes when LINEAR_API_KEY is missing but hasOAuth is true", async () => {
-    delete process.env.LINEAR_API_KEY;
-    process.env.GITHUB_TOKEN = "ghp_test";
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const result = await checkEnvVars({ hasOAuth: true });
-    expect(result).toContain("all set");
-  });
-
-  test("still requires GITHUB_TOKEN even when hasOAuth is true", async () => {
-    delete process.env.LINEAR_API_KEY;
-    delete process.env.GITHUB_TOKEN;
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    await expect(checkEnvVars({ hasOAuth: true })).rejects.toThrow(
-      "GITHUB_TOKEN",
-    );
+  test("error message mentions subscription auth is acceptable", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.CLAUDE_API_KEY;
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+    delete process.env.CLAUDE_CODE_USE_VERTEX;
+    await expect(checkAnthropicAuth()).rejects.toThrow("subscription auth");
   });
 });
 
@@ -282,10 +308,6 @@ describe("runPreflight", () => {
     writeMinimalConfig();
     delete process.env.LINEAR_API_KEY;
     delete process.env.GITHUB_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.CLAUDE_API_KEY;
-    delete process.env.CLAUDE_CODE_USE_BEDROCK;
-    delete process.env.CLAUDE_CODE_USE_VERTEX;
 
     const { loadConfig } = await import("./lib/config");
     const config = loadConfig(tmpDir);
@@ -301,6 +323,24 @@ describe("runPreflight", () => {
     writeMinimalConfig();
     delete process.env.LINEAR_API_KEY;
     delete process.env.GITHUB_TOKEN;
+
+    const { loadConfig } = await import("./lib/config");
+    const config = loadConfig(tmpDir);
+    const result = await runPreflight(tmpDir, config);
+
+    // runPreflight runs 5 blocking checks: env vars, git remote, clone dir, linear, github
+    expect(result.results).toHaveLength(5);
+    expect(result.results.every((r) => typeof r.name === "string")).toBe(true);
+    expect(result.results.every((r) => typeof r.pass === "boolean")).toBe(true);
+    expect(result.results.every((r) => typeof r.detail === "string")).toBe(
+      true,
+    );
+  });
+
+  test("missing Anthropic key is a warning, not a blocking failure", async () => {
+    writeMinimalConfig();
+    process.env.LINEAR_API_KEY = "lin_api_test";
+    process.env.GITHUB_TOKEN = "ghp_test";
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_API_KEY;
     delete process.env.CLAUDE_CODE_USE_BEDROCK;
@@ -310,12 +350,15 @@ describe("runPreflight", () => {
     const config = loadConfig(tmpDir);
     const result = await runPreflight(tmpDir, config);
 
-    // runPreflight runs 5 checks: env vars, git remote, clone dir, linear, github
-    expect(result.results).toHaveLength(5);
-    expect(result.results.every((r) => typeof r.name === "string")).toBe(true);
-    expect(result.results.every((r) => typeof r.pass === "boolean")).toBe(true);
-    expect(result.results.every((r) => typeof r.detail === "string")).toBe(
-      true,
+    // Anthropic check should be in warnings, not blocking results
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].name).toBe("Anthropic auth");
+    expect(result.warnings[0].pass).toBe(false);
+    // The overall preflight should NOT fail because of missing Anthropic key
+    // (other checks may fail due to test env, but Anthropic isn't the cause)
+    const envResult = result.results.find(
+      (r) => r.name === "Environment variables",
     );
+    expect(envResult?.pass).toBe(true);
   });
 });

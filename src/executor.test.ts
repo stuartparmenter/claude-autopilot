@@ -138,6 +138,7 @@ function makeConfig(parallelSlots = 3): AutopilotConfig {
       review_responder_timeout_minutes: 20,
     },
     github: { repo: "", automerge: false },
+    project: { name: "" },
     git: {
       user_name: "autopilot[bot]",
       user_email: "autopilot[bot]@users.noreply.github.com",
@@ -174,6 +175,7 @@ function makeLinearIds(): LinearIds {
   return {
     teamId: "team-id",
     teamKey: "ENG",
+    managedLabelId: "managed-label-id",
     states: {
       triage: "triage-id",
       ready: "ready-id",
@@ -691,11 +693,7 @@ describe("fillSlots", () => {
     const activeIssue = makeIssue();
     const freshIssue = makeIssue();
 
-    const hangingRunClaude = new Promise<
-      typeof mockRunClaude extends (...args: any[]) => Promise<infer R>
-        ? R
-        : never
-    >((resolve) => {
+    const hangingRunClaude = new Promise<ClaudeResult>((resolve) => {
       setTimeout(
         () =>
           resolve({
@@ -710,7 +708,7 @@ describe("fillSlots", () => {
         10000,
       );
     });
-    mockRunClaude.mockReturnValue(hangingRunClaude as any);
+    mockRunClaude.mockReturnValue(hangingRunClaude);
 
     const execPromise = executeIssue({
       issue: activeIssue,

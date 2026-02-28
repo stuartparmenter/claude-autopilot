@@ -15,7 +15,7 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.59",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.62",
     "@linear/sdk": "^76.0.0",
     "hono": "^4.12.3",
     "octokit": "^5.0.5",

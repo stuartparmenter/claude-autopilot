@@ -56,17 +56,23 @@ export async function checkOpenPRs(opts: {
     return [];
   }
 
-  // Query Linear for issues in "In Review" state
+  // Query Linear for issues in "In Review" state, applying label/project
+  // filters when configured so the monitor only acts on autopilot-managed issues.
   const client = getLinearClient();
+  const hasOwnershipFilter =
+    config.linear.labels.length > 0 || config.linear.projects.length > 0;
+  const filter = {
+    team: { id: { eq: linearIds.teamId } },
+    state: { id: { eq: linearIds.states.in_review } },
+    ...(config.linear.labels.length
+      ? { labels: { some: { name: { in: config.linear.labels } } } }
+      : {}),
+    ...(config.linear.projects.length
+      ? { project: { name: { in: config.linear.projects } } }
+      : {}),
+  };
   const result = await withRetry(
-    () =>
-      client.issues({
-        filter: {
-          team: { id: { eq: linearIds.teamId } },
-          state: { id: { eq: linearIds.states.in_review } },
-        },
-        first: 50,
-      }),
+    () => client.issues({ filter, first: 50 }),
     "checkOpenPRs",
   );
 
@@ -159,6 +165,19 @@ export async function checkOpenPRs(opts: {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       warn(`Failed to get status for PR #${prNumber}: ${msg}`);
+      continue;
+    }
+
+    // When labels or projects are configured, also verify this is an
+    // autopilot-managed branch so the monitor never acts on human PRs
+    // that happen to carry matching labels.
+    const isAutopilotBranch =
+      status.branch.startsWith("autopilot-") ||
+      status.branch.startsWith("worktree-");
+    if (hasOwnershipFilter && !isAutopilotBranch) {
+      warn(
+        `Skipping PR #${prNumber} (${issue.identifier}): branch '${status.branch}' is not autopilot-managed`,
+      );
       continue;
     }
 

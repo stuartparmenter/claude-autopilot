@@ -30,6 +30,7 @@ import { resetLinearAuth } from "./linear-oauth";
 const TEST_IDS: LinearIds = {
   teamId: "team-1",
   teamKey: "ENG",
+  managedLabelId: "managed-label-1",
   states: {
     triage: "s1",
     ready: "s2",
@@ -1173,6 +1174,67 @@ describe("createIssue", () => {
       }),
     ).rejects.toThrow("Failed to create issue");
   });
+
+  test("appends managedLabelId to labelIds when provided", async () => {
+    const created = { id: "new-3", title: "Labeled" };
+    mockCreateIssueData = created;
+
+    await linearCreateIssue({
+      teamId: "team-1",
+      projectId: "proj-1",
+      title: "Labeled",
+      description: "desc",
+      stateId: "state-1",
+      labelIds: ["lbl-existing"],
+      managedLabelId: "managed-lbl-1",
+    });
+
+    expect(mockCreateIssueFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labelIds: ["lbl-existing", "managed-lbl-1"],
+      }),
+    );
+  });
+
+  test("uses managedLabelId as sole label when no labelIds provided", async () => {
+    const created = { id: "new-4", title: "Managed Only" };
+    mockCreateIssueData = created;
+
+    await linearCreateIssue({
+      teamId: "team-1",
+      projectId: "proj-1",
+      title: "Managed Only",
+      description: "desc",
+      stateId: "state-1",
+      managedLabelId: "managed-lbl-1",
+    });
+
+    expect(mockCreateIssueFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labelIds: ["managed-lbl-1"],
+      }),
+    );
+  });
+
+  test("passes labelIds unchanged when no managedLabelId provided", async () => {
+    const created = { id: "new-5", title: "No Managed" };
+    mockCreateIssueData = created;
+
+    await linearCreateIssue({
+      teamId: "team-1",
+      projectId: "proj-1",
+      title: "No Managed",
+      description: "desc",
+      stateId: "state-1",
+      labelIds: ["lbl-a", "lbl-b"],
+    });
+
+    expect(mockCreateIssueFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labelIds: ["lbl-a", "lbl-b"],
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1267,10 +1329,12 @@ describe("resolveLinearIds", () => {
     mockWorkflowStatesNodes = [
       { id: "state-default", name: "State", type: "triage" },
     ];
+    mockIssueLabelsNodes = [{ id: "managed-lbl-1", name: "autopilot:managed" }];
     mockTeams.mockClear();
     mockProjects.mockClear();
     mockInitiatives.mockClear();
     mockWorkflowStates.mockClear();
+    mockIssueLabels.mockClear();
     setClientForTesting(makeStandardClient());
   });
 
@@ -1313,6 +1377,35 @@ describe("resolveLinearIds", () => {
     await resolveLinearIds(LINEAR_CONFIG);
 
     expect(mockWorkflowStates).toHaveBeenCalledTimes(6);
+  });
+
+  test("returns managedLabelId resolved from findOrCreateLabel", async () => {
+    const ids = await resolveLinearIds(LINEAR_CONFIG);
+
+    expect(ids.managedLabelId).toBe("managed-lbl-1");
+    expect(mockIssueLabels).toHaveBeenCalledWith({
+      filter: {
+        team: { id: { eq: "team-123" } },
+        name: { eq: "autopilot:managed" },
+      },
+    });
+  });
+
+  test("creates autopilot:managed label when it does not exist", async () => {
+    mockIssueLabelsNodes = [];
+    mockCreateIssueLabelData = {
+      id: "new-managed-lbl",
+      name: "autopilot:managed",
+    };
+
+    const ids = await resolveLinearIds(LINEAR_CONFIG);
+
+    expect(ids.managedLabelId).toBe("new-managed-lbl");
+    expect(mockCreateIssueLabel).toHaveBeenCalledWith({
+      teamId: "team-123",
+      name: "autopilot:managed",
+      color: "#888888",
+    });
   });
 
   test("propagates error when findTeam fails", async () => {

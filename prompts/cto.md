@@ -182,6 +182,8 @@ Review the full set of findings:
 
 **Second-order effects**: For each finding, ask: does this change remove, weaken, or alter a property that other parts of the system depend on? Think through the downstream consequences — not just what changes, but what *stops working* because of the change.
 
+**Chesterton's Fence**: When a finding is about making inconsistent behavior consistent (e.g., "these three checks use different severity levels"), verify the inconsistency is accidental before filing. Different treatment of similar-looking things often reflects genuinely different requirements. Ask: *if this inconsistency were intentional, what would the reason be?* If you can construct a plausible reason, investigate further before including the finding. Homogenizing intentionally different behavior is a regression, not an improvement.
+
 For every second-order effect you identify, decide:
 - **Expand scope**: include compensating changes in this finding (or a new finding)
 - **File follow-up**: note a follow-up issue that must be filed alongside this one
